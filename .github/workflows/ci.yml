@@ -24,7 +24,7 @@ jobs:
       - name: Install ALSA headers (cpal microphone capture)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
-      - name: Fetch verified sherpa-onnx prebuilt libs (ADR-008: verify + unpack outside target/)
+      - name: "Fetch verified sherpa-onnx prebuilt libs (ADR-008: verify, unpack outside target/)"
         run: python -I scripts/fetch-sherpa-libs.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
