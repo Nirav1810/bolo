@@ -1,5 +1,7 @@
 # Benchmarks — plan & methodology
 
+> **M1 final numbers** are in §9 and in the [M1 report](M1-REPORT.md).
+
 The benchmark subcommands of the `bolo` CLI decide which engines ship as defaults. They were built first and run on **your** voice, mic, and accent. Public benchmarks don't measure Hinglish dictation.
 
 ## 1. Record the clips (you)
@@ -81,10 +83,10 @@ Responses are cached in `bench-cache/<engine>/<sha256(audio ‖ options)>.json` 
 
 ## 5. Known limitations and next steps
 
-1. **Devanagari outputs.** Nemotron 3.5, Qwen3-ASR and (likely) Deepgram `multi` write Hindi words in Devanagari. The plan is a Devanagari → Roman Hinglish transliterator in `bolo-format`, with schwa deletion and common-spelling tables such as है→hai and नहीं→nahi. The bench will score both raw and transliterated output. Until then, read Hinglish **CER** for those engines with care.
+1. **Devanagari outputs.** Nemotron 3.5, Qwen3-ASR and Deepgram `multi` write Hindi words in Devanagari. `bolo-format` now transliterates them to Roman Hinglish and restores English loanwords (ADR-011), and the bench scores the transliterated output. Deepgram `multi` occasionally uses Urdu script instead, which is not handled yet (M2).
 2. **Sarvam `mode=translit` on `saaras:v4`.** The docs contradict each other. The first bench run will show whether the output is Roman.
 3. **RSS isolation.** All engines run in one process, sequentially, and each local model is released after its pass. Allocator retention can inflate later engines' baselines. If the numbers look odd, run one engine per invocation.
-4. **Streaming partials** are measured for cost (RTF) but not for quality. A "time to first partial" metric comes with capture in M1 phase 2.
+4. **Streaming partials** are measured for cost (RTF) but not for quality. `bolo replay` measures release → text through the live engine (§7, §8), but not time to first partial.
 5. **Not yet benchmarkable:** `qwen3-asr-hinglish` (Srota) and `whisper-base-hinglish` (Oriserve Swift). Neither has a sherpa-onnx export, and we will export both ourselves (`status: needs-export` in the manifest).
 
 ## 6. Decision rule (proposed)
@@ -158,3 +160,33 @@ $B replay -e deepgram
 - Accuracy is within run-to-run noise of batch. Streaming fixes some batch errors (repeated words at segment joins, such as "Traffic Traffic" and "Bro Bro") and adds a few of its own.
 - `multi` sometimes writes a Hindi word in Urdu script ("تیم" for "team"). The Devanagari romanizer doesn't handle it. This affects batch too and belongs to the M2 rules work.
 - Neither cloud engine reaches the 180 ms local bar from India. Nemotron stays the default, and `deepgram-stream` is the cloud option for the instant path.
+
+## 9. M1 final numbers
+
+The numbers M1 ships on, gathered from §7, §8 and the `bolo run` results (2026-11-09, 40 clips, Windows desktop in India).
+
+**Through the live engine (`bolo replay`, release → text, real time):**
+
+| engine | mode | WER en | WER hinglish | p50 / p95 ms |
+|---|---|---|---|---|
+| `local:nemotron-stream` (default) | Auto | 8.0% | 27.7% | 234 / 898 (engine-side p50 200) |
+| `local:nemotron-stream` | English | 8.0% | 83.0% | 243 / 4295* (engine-side p50 201) |
+| `local:nemotron-stream` | Hinglish | 67.6% | 27.7% | 196 / 338 (engine-side p50 188) |
+| `deepgram-stream` | Auto (`multi`) | 9.2% | 21.0% | 299 / 370 |
+| `deepgram` (batch) | Auto (`multi`) | 7.6% | 22.8% | 1306 / 1907 |
+
+\* One machine stall.
+
+**Engine comparison (`bolo run`, Hinglish transliterated, `--lang by-folder`):**
+
+| engine | WER en | WER hinglish | p50 / p95 ms | load ms | peak RSS MB | download MB |
+|---|---|---|---|---|---|---|
+| `local:nemotron-stream` | 8.0% | 31.2% | 158 / 171 | 2403 | 757 | 475 |
+| `local:parakeet-v2-en` | 4.6% | 69.6% | 361 / 555 | 2346 | 795 | 482 |
+| `local:qwen3-asr` | 5.3% | 32.1% | 1429 / 3599 | 3718 | 1688 | 879 |
+| `local:moonshine-tiny` | 15.6% | 95.1% | 118 / 207 | 706 | 111 | 30 |
+| `deepgram:nova-3` | 4.6% | 20.1% | 660 / 915 | – | – | – |
+
+Here Nemotron's Hinglish uses its built-in language detection; Auto mode (above) brings it to 27.7%. Groq, Sarvam and `parakeet-v3` were not re-run after transliteration landed.
+
+**Defaults chosen:** `local:nemotron-stream` in Auto on desktop (the only local engine with good Hinglish under 500 ms and 1.5 GB), `deepgram-stream` as the cloud option for the instant path, and LLM cleanup (`--polish`, +1043 ms p50, Hinglish WER 31.2% → 14.7%) only off the instant path (ADR-012).
