@@ -137,3 +137,24 @@ Run-to-run noise on this machine is about ±40 ms p50; the same Auto build measu
 - Hinglish if the share is ≥ 0.20.
 - English if it is ≤ 0.10.
 - Ambiguous if it is between those, or if there are fewer than 3 words. An ambiguous dictation reuses the previous dictation's language, or English if there is none.
+
+## 8. Deepgram live streaming
+
+`deepgram-stream` streams audio to Deepgram's live WebSocket while the user speaks and sends `Finalize` at release. Batch `deepgram` uploads at release instead (per VAD segment when Silero is installed).
+
+```sh
+$B replay -e deepgram-stream   # real time only: Deepgram takes live audio at ≤ 1.25× (replay refuses --speed > 1.25)
+$B replay -e deepgram
+```
+
+**Results (2026-11-09, Nova-3, `--lang auto` → `language=multi`, Windows desktop in India, one real-time run each, both runs at the same time, 0 failures):**
+
+| engine | WER en | WER hinglish | release→text p50 / p95 |
+|---|---|---|---|
+| `deepgram` (batch) | 7.6% | 22.8% | 1306 / 1907 ms |
+| `deepgram-stream` | 9.2% | 21.0% | **299 / 370 ms** |
+
+- Streaming cuts release→text by about 1 s at p50. What's left is about one network round trip plus Deepgram's flush of the last audio.
+- Accuracy is within run-to-run noise of batch. Streaming fixes some batch errors (repeated words at segment joins, such as "Traffic Traffic" and "Bro Bro") and adds a few of its own.
+- `multi` sometimes writes a Hindi word in Urdu script ("تیم" for "team"). The Devanagari romanizer doesn't handle it. This affects batch too and belongs to the M2 rules work.
+- Neither cloud engine reaches the 180 ms local bar from India. Nemotron stays the default, and `deepgram-stream` is the cloud option for the instant path.

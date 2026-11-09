@@ -36,7 +36,7 @@ For the developer tools, copy `.env.example` to `.env` (git-ignored) and paste y
 | provider | env var | used for |
 |---|---|---|
 | Groq | `GROQ_API_KEY` | Whisper large-v3-turbo STT |
-| Deepgram | `DEEPGRAM_API_KEY` | Nova-3 STT |
+| Deepgram | `DEEPGRAM_API_KEY` | Nova-3 STT: `deepgram` (batch) or `deepgram-stream` (live WebSocket) |
 | Sarvam AI | `SARVAM_API_KEY` | Saaras v4 STT, Roman Hinglish (`translit`) |
 | Anthropic | (M2) | Claude Haiku cleanup |
 

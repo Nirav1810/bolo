@@ -17,7 +17,7 @@ sherpa-shared = ["sherpa-onnx?/shared"]
 # Single static exe. The prebuilt Windows static lib needs MSVC >= 14.44 (VS 17.14) and
 # the static CRT (`-C target-feature=+crt-static`). Mutually exclusive with sherpa-shared.
 sherpa-static = ["sherpa-onnx?/static"]
-cloud = ["dep:reqwest", "dep:rustls", "dep:serde_json"]
+cloud = ["dep:reqwest", "dep:rustls", "dep:serde_json", "dep:tokio-tungstenite", "dep:rustls-platform-verifier", "dep:futures", "tokio/net", "tokio/macros"]
 
 [dependencies]
 bolo-audio = { workspace = true }
@@ -30,7 +30,10 @@ serde_json = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["time", "sync", "rt"] }
 reqwest = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
+tokio-tungstenite = { workspace = true, optional = true }
+rustls-platform-verifier = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
 sherpa-onnx = { workspace = true, optional = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "net"] }

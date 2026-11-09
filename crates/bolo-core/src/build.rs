@@ -1,4 +1,4 @@
-//! Turn engine specs ("local:nemotron-stream", "deepgram", "groq:whisper-large-v3")
+//! Turn engine specs ("local:nemotron-stream", "deepgram", "deepgram-stream", "groq:whisper-large-v3")
 //! into a ready `SttEngine`, with a fallback chain when several are configured.
 
 use std::path::PathBuf;
@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bolo_models::Manifest;
-use bolo_stt::cloud::{DeepgramEngine, GroqEngine, SarvamEngine, deepgram, groq, sarvam};
+use bolo_stt::cloud::{
+    DeepgramEngine, DeepgramStreamEngine, GroqEngine, SarvamEngine, deepgram, deepgram_stream, groq, sarvam,
+};
 use bolo_stt::fallback::{DEFAULT_CLOUD_TIMEOUT, FallbackEngine};
 use bolo_stt::local::LocalEngine;
 use bolo_stt::{ApiKey, SttEngine};
@@ -65,6 +67,19 @@ pub fn build_one(
                 deepgram::DEFAULT_BASE_URL,
                 arg.unwrap_or(deepgram::DEFAULT_MODEL),
             ))
+        }
+        "deepgram-stream" => {
+            let k = key(config, "deepgram")?;
+            Arc::new(
+                DeepgramStreamEngine::with_urls(
+                    http.clone(),
+                    k,
+                    deepgram::DEFAULT_BASE_URL,
+                    deepgram_stream::DEFAULT_WS_URL,
+                    arg.unwrap_or(deepgram::DEFAULT_MODEL),
+                )
+                .map_err(|e| cfg(&e))?,
+            )
         }
         "sarvam" => {
             let k = key(config, "sarvam")?;

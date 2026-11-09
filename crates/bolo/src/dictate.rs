@@ -63,10 +63,10 @@ impl EngineEvents for Events {
 }
 
 /// `-e` accepts a bare local model id (`nemotron-stream`) as well as full engine specs
-/// (`local:<id>`, `deepgram`, `groq[:model]`, `sarvam[:model]`).
+/// (`local:<id>`, `deepgram`, `deepgram-stream`, `groq[:model]`, `sarvam[:model]`).
 pub(crate) fn engine_spec(arg: &str) -> String {
     let kind = arg.split(':').next().unwrap_or_default();
-    if arg.contains(':') || ["deepgram", "groq", "sarvam"].contains(&kind) {
+    if arg.contains(':') || ["deepgram", "deepgram-stream", "groq", "sarvam"].contains(&kind) {
         arg.to_owned()
     } else {
         format!("local:{arg}")
@@ -267,6 +267,7 @@ mod tests {
         assert_eq!(engine_spec("nemotron-stream"), "local:nemotron-stream");
         assert_eq!(engine_spec("local:parakeet-v2-en"), "local:parakeet-v2-en");
         assert_eq!(engine_spec("deepgram"), "deepgram");
+        assert_eq!(engine_spec("deepgram-stream"), "deepgram-stream");
         assert_eq!(engine_spec("groq:whisper-large-v3"), "groq:whisper-large-v3");
         assert_eq!(engine_spec("sarvam"), "sarvam");
     }

@@ -8,21 +8,28 @@ use std::time::Duration;
 use crate::{Result, SttError};
 
 pub mod deepgram;
+pub mod deepgram_stream;
 pub mod groq;
 pub mod sarvam;
 
 pub use deepgram::DeepgramEngine;
+pub use deepgram_stream::DeepgramStreamEngine;
 pub use groq::GroqEngine;
 pub use sarvam::SarvamEngine;
 
 static INSTALL_PROVIDER: Once = Once::new();
 
-/// Build the shared HTTP client. Call once per process and clone the result (cheap, `Arc`).
-pub fn http_client() -> Result<reqwest::Client> {
+/// Make ring the process-wide rustls crypto provider (ADR-004).
+pub(crate) fn install_ring() {
     INSTALL_PROVIDER.call_once(|| {
         // Err means another provider was installed first, which is fine.
         let _ = rustls::crypto::ring::default_provider().install_default();
     });
+}
+
+/// Build the shared HTTP client. Call once per process and clone the result (cheap, `Arc`).
+pub fn http_client() -> Result<reqwest::Client> {
+    install_ring();
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(3))
         .pool_idle_timeout(Duration::from_secs(90))

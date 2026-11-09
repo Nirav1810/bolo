@@ -45,23 +45,28 @@ impl DeepgramEngine {
     }
 
     fn query(&self, opts: &SttOptions) -> Vec<(&'static str, String)> {
-        let lang = match opts.language {
-            Language::En => "en",
-            // Hindi output script from Deepgram is undocumented (likely Devanagari);
-            // `multi` handles English+Hindi code-switching. Measured in bench.
-            Language::Hi | Language::Auto => "multi",
-        };
-        let mut q = vec![
-            ("model", self.model.clone()),
-            ("language", lang.to_owned()),
-            ("smart_format", "true".to_owned()),
-            ("punctuate", "true".to_owned()),
-        ];
-        for t in opts.dictionary.iter().map(|t| t.trim()).filter(|t| !t.is_empty()).take(MAX_KEYTERMS) {
-            q.push(("keyterm", t.to_owned()));
-        }
-        q
+        listen_params(&self.model, opts)
     }
+}
+
+/// `/v1/listen` query parameters shared by the batch and the live (streaming) endpoint.
+pub(crate) fn listen_params(model: &str, opts: &SttOptions) -> Vec<(&'static str, String)> {
+    let lang = match opts.language {
+        Language::En => "en",
+        // Hindi output script from Deepgram is undocumented (likely Devanagari);
+        // `multi` handles English+Hindi code-switching. Measured in bench.
+        Language::Hi | Language::Auto => "multi",
+    };
+    let mut q = vec![
+        ("model", model.to_owned()),
+        ("language", lang.to_owned()),
+        ("smart_format", "true".to_owned()),
+        ("punctuate", "true".to_owned()),
+    ];
+    for t in opts.dictionary.iter().map(|t| t.trim()).filter(|t| !t.is_empty()).take(MAX_KEYTERMS) {
+        q.push(("keyterm", t.to_owned()));
+    }
+    q
 }
 
 #[derive(Deserialize)]
