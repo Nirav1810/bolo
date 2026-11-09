@@ -98,6 +98,13 @@ pub trait SttEngine: Send + Sync {
         false
     }
 
+    /// Whether each stream can be forced to one language ([`SttOptions::language`] set per
+    /// [`Self::stream`] call) on one loaded model. The Auto language mode then decodes
+    /// English and Hindi side by side (ADR-0014). Implies [`Self::supports_streaming`].
+    fn per_stream_language(&self) -> bool {
+        false
+    }
+
     /// Get ready for a dictation: load the model (local) or open a TLS connection (cloud).
     /// Must be idempotent and cheap when already warm.
     async fn prewarm(&self) -> Result<()> {

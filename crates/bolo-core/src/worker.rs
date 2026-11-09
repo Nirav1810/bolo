@@ -4,6 +4,11 @@
 //! Every ~10 ms while the mic is open it drains audio, resamples to 16 kHz, and either
 //! feeds the dictation or keeps a short pre-roll ring when idle-warm. Timers close the mic
 //! after `mic_warm_secs` and unload the model after `idle_unload_secs`.
+//!
+//! In the Auto language mode on an engine with a per-stream language option, a
+//! dictation has two streaming passes, forced to English and to Hindi, fed the same
+//! audio on two threads. Partials come from whichever pass the language decision
+//! currently favours; at release both are finished in parallel and one is chosen.
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
@@ -11,16 +16,18 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bolo_audio::resample::StreamResampler;
+use bolo_format::language::{Detected, detect};
 use bolo_models::Manifest;
 use bolo_stt::vad::{Vad, VadConfig};
-use bolo_stt::{SttEngine, SttError, SttOptions, SttStream, Transcript};
+use bolo_stt::{Language, SttEngine, SttError, SttOptions, SttStream, Transcript};
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 
 use crate::audio::{AudioFactory, AudioSource};
 use crate::build::{BuiltStt, build_stt};
 use crate::{
-    BoloError, DictationState, EngineConfig, EngineEvents, FormattedOutput, HinglishScript, TargetContext, Timings,
+    BoloError, DictationState, EngineConfig, EngineEvents, FormattedOutput, HinglishScript, LanguageMode,
+    TargetContext, Timings,
 };
 
 /// Audio kept from just before the hotkey while the mic is warm (seconds).
@@ -46,12 +53,23 @@ struct Mic {
     warm_until: Instant,
 }
 
+/// One streaming decode of a dictation, forced to `language` (or left to the engine's
+/// own detection when it is `Auto`).
+struct Pass {
+    language: Language,
+    stream: Box<dyn SttStream>,
+    /// Latest partial hypothesis, raw.
+    partial: String,
+}
+
 struct Dictation {
-    stream: Option<Box<dyn SttStream>>,
+    /// Streaming decodes: none (batch engine), one, or English + Hindi in Auto mode.
+    passes: Vec<Pass>,
     vad: Option<Vad>,
     segments: Vec<JoinHandle<Result<Transcript, SttError>>>,
     audio: Vec<f32>,
-    last_partial: String,
+    /// The partial last sent to the host: which pass, and its raw text.
+    shown: (Language, String),
     last_level: Instant,
 }
 
@@ -70,6 +88,9 @@ pub(crate) struct Worker {
     unload_at: Option<Instant>,
     mic: Option<Mic>,
     dictation: Option<Dictation>,
+    /// The language of the previous dictation (`En` or `Hi`), for ambiguous Auto ones.
+    /// Lives as long as the engine.
+    previous_language: Option<Language>,
 }
 
 fn pad(seg: &[f32]) -> Vec<f32> {
@@ -79,6 +100,18 @@ fn pad(seg: &[f32]) -> Vec<f32> {
     v.extend_from_slice(seg);
     v.extend(std::iter::repeat_n(0.0, n));
     v
+}
+
+/// Feed every pass the same audio. Two passes decode on two threads, so Auto costs
+/// wall-clock time only for whichever pass is slower.
+fn accept_all(passes: &mut [Pass], pcm: &[f32]) {
+    match passes {
+        [a, b] => std::thread::scope(|scope| {
+            scope.spawn(|| b.stream.accept(pcm));
+            a.stream.accept(pcm);
+        }),
+        _ => passes.iter_mut().for_each(|p| p.stream.accept(pcm)),
+    }
 }
 
 impl Worker {
@@ -111,6 +144,7 @@ impl Worker {
             unload_at: None,
             mic: None,
             dictation: None,
+            previous_language: None,
         })
     }
 
@@ -121,11 +155,36 @@ impl Worker {
         self.events.on_state(s);
     }
 
-    fn opts(&self) -> SttOptions {
-        SttOptions {
-            language: self.config.language,
-            script: self.config.script,
-            dictionary: self.config.dictionary.clone(),
+    fn opts(&self, language: Language) -> SttOptions {
+        SttOptions { language, script: self.config.script, dictionary: self.config.dictionary.clone() }
+    }
+
+    /// Stream languages for a dictation on a streaming engine.
+    fn pass_languages(&self, engine: &dyn SttEngine) -> Vec<Language> {
+        match self.config.language {
+            LanguageMode::Auto if engine.per_stream_language() => vec![Language::En, Language::Hi],
+            mode => vec![mode.stt_language()],
+        }
+    }
+
+    /// The Auto language decision for a dictation whose Hindi pass says `hindi_text`.
+    fn decide(&self, hindi_text: &str) -> Language {
+        match detect(hindi_text) {
+            Detected::English => Language::En,
+            Detected::Hinglish => Language::Hi,
+            Detected::Ambiguous => self.previous_language.unwrap_or(Language::En),
+        }
+    }
+
+    /// Which of `passes` the user should see: the only one, or Auto's current choice.
+    fn favoured<'a>(&self, passes: &'a [Pass]) -> Option<&'a Pass> {
+        match passes {
+            [only] => Some(only),
+            _ => {
+                let hindi = passes.iter().find(|p| p.language == Language::Hi).map_or("", |p| p.partial.as_str());
+                let choice = self.decide(hindi);
+                passes.iter().find(|p| p.language == choice).or(passes.first())
+            }
         }
     }
 
@@ -174,22 +233,32 @@ impl Worker {
         self.model_loaded = true;
         self.unload_at = None;
         // Streaming engines decode as audio arrives; batch engines get VAD segmentation.
-        let stream = if engine.supports_streaming() { engine.stream(&self.opts()) } else { None };
-        let vad = match (&stream, self.stt.as_ref().and_then(|b| b.vad_model.clone())) {
-            (None, Some(model)) => Vad::new(&model, VadConfig::default()).ok(),
+        let passes: Vec<Pass> = if engine.supports_streaming() {
+            self.pass_languages(engine.as_ref())
+                .into_iter()
+                .filter_map(|language| {
+                    let stream = engine.stream(&self.opts(language))?;
+                    Some(Pass { language, stream, partial: String::new() })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let vad = match self.stt.as_ref().and_then(|b| b.vad_model.clone()) {
+            Some(model) if passes.is_empty() => Vad::new(&model, VadConfig::default()).ok(),
             _ => None,
         };
-        if stream.is_none() {
+        if passes.is_empty() {
             // Cloud: open the TLS connection while the user speaks.
             let e = engine.clone();
             self.rt.spawn(async move { e.prewarm().await });
         }
         let mut dictation = Dictation {
-            stream,
+            passes,
             vad,
             segments: Vec::new(),
             audio: Vec::new(),
-            last_partial: String::new(),
+            shown: (Language::Auto, String::new()),
             last_level: Instant::now(),
         };
         // Warm mic: include what was said just before the hotkey.
@@ -206,13 +275,18 @@ impl Worker {
 
     fn feed(&self, s: &mut Dictation, pcm: &[f32]) {
         s.audio.extend_from_slice(pcm);
-        if let Some(stream) = s.stream.as_mut() {
-            stream.accept(pcm);
-            if let Some(p) = stream.partial()
-                && p != s.last_partial
+        if !s.passes.is_empty() {
+            accept_all(&mut s.passes, pcm);
+            for pass in &mut s.passes {
+                if let Some(p) = pass.stream.partial() {
+                    pass.partial = p;
+                }
+            }
+            if let Some(pass) = self.favoured(&s.passes)
+                && pass.partial != s.shown.1
             {
-                s.last_partial.clone_from(&p);
-                self.events.on_partial(self.romanize(&p));
+                s.shown = (pass.language, pass.partial.clone());
+                self.events.on_partial(self.romanize(&pass.partial));
             }
         } else if let Some(vad) = s.vad.as_mut() {
             vad.accept(pcm);
@@ -223,7 +297,7 @@ impl Worker {
     }
 
     fn spawn_transcribe(&self, audio: Vec<f32>) -> JoinHandle<Result<Transcript, SttError>> {
-        let opts = self.opts();
+        let opts = self.opts(self.config.language.stt_language());
         let engine = self.stt.as_ref().map(|b| b.engine.clone());
         self.rt.spawn(async move {
             match engine {
@@ -258,8 +332,9 @@ impl Worker {
             self.feed(&mut s, &tail);
         }
 
-        let result: Result<(String, String), BoloError> = if let Some(stream) = s.stream.take() {
-            stream.finish().map(|t| (t.text, t.engine_id)).map_err(|e| BoloError::Stt(e.to_string()))
+        let result: Result<(String, String, LanguageMode), BoloError> = if !s.passes.is_empty() {
+            self.finish_passes(std::mem::take(&mut s.passes))
+                .map(|(t, language)| (t.text, t.engine_id, LanguageMode::from_stt_language(language)))
         } else {
             if let Some(vad) = s.vad.as_mut() {
                 for seg in vad.flush() {
@@ -271,26 +346,32 @@ impl Worker {
                 s.segments.push(self.spawn_transcribe(s.audio.clone()));
             }
             let handles = std::mem::take(&mut s.segments);
-            self.rt.block_on(async move {
-                let mut parts = Vec::new();
-                let mut engine_id = String::new();
-                for h in handles {
-                    let t = h
-                        .await
-                        .map_err(|e| BoloError::Stt(e.to_string()))?
-                        .map_err(|e| BoloError::Stt(e.to_string()))?;
-                    engine_id = t.engine_id;
-                    if !t.text.trim().is_empty() {
-                        parts.push(t.text.trim().to_owned());
+            self.rt
+                .block_on(async move {
+                    let mut parts = Vec::new();
+                    let mut engine_id = String::new();
+                    for h in handles {
+                        let t = h
+                            .await
+                            .map_err(|e| BoloError::Stt(e.to_string()))?
+                            .map_err(|e| BoloError::Stt(e.to_string()))?;
+                        engine_id = t.engine_id;
+                        if !t.text.trim().is_empty() {
+                            parts.push(t.text.trim().to_owned());
+                        }
                     }
-                }
-                Ok((parts.join(" "), engine_id))
-            })
+                    Ok((parts.join(" "), engine_id))
+                })
+                .map(|(text, engine_id)| (text, engine_id, self.config.language))
         };
         let stt_ms = released.elapsed().as_secs_f64() * 1e3;
 
         match result {
-            Ok((raw, engine_id)) => {
+            Ok((raw, engine_id, language)) => {
+                self.previous_language = match language {
+                    LanguageMode::Auto => self.previous_language,
+                    known => Some(known.stt_language()),
+                };
                 let t_rules = Instant::now();
                 let text = self.romanize(raw.trim());
                 let rules_ms = t_rules.elapsed().as_secs_f64() * 1e3;
@@ -301,6 +382,7 @@ impl Worker {
                     html: None,
                     timings: Timings { stt_ms, rules_ms, llm_ms: 0.0, format_ms: 0.0, total_ms },
                     engine_id,
+                    language,
                 });
                 self.set_state(DictationState::Done);
             }
@@ -308,6 +390,60 @@ impl Worker {
         }
         self.set_state(DictationState::Idle);
         self.unload_at = Some(Instant::now() + Duration::from_secs(u64::from(self.config.idle_unload_secs)));
+    }
+
+    /// Finish the passes and pick the result.
+    ///
+    /// When the Hindi pass's text at release already decides the language, only the
+    /// chosen pass is finished, so Auto costs no more after release than a forced mode:
+    /// finishing two passes at once measured ~260 ms p50 against ~190 ms for one.
+    /// Otherwise both are finished in parallel and Auto decides on their final text,
+    /// falling back to the other pass if the chosen one fails.
+    fn finish_passes(&self, mut passes: Vec<Pass>) -> Result<(Transcript, Language), BoloError> {
+        if passes.len() > 1 {
+            let hindi = passes.iter().find(|p| p.language == Language::Hi).map_or("", |p| p.partial.as_str());
+            let early = match detect(hindi) {
+                Detected::English => Some(Language::En),
+                Detected::Hinglish => Some(Language::Hi),
+                Detected::Ambiguous => None,
+            };
+            if let Some(choice) = early {
+                passes.retain(|p| p.language == choice);
+            }
+        }
+        let finished: Vec<(Language, Result<Transcript, SttError>)> = std::thread::scope(|scope| {
+            let running: Vec<_> =
+                passes.into_iter().map(|p| (p.language, scope.spawn(move || p.stream.finish()))).collect();
+            running
+                .into_iter()
+                .map(|(language, h)| {
+                    (language, h.join().unwrap_or_else(|_| Err(SttError::Model("decoder thread panicked".into()))))
+                })
+                .collect()
+        });
+        let choice = match finished.as_slice() {
+            [(only, _)] => *only,
+            _ => {
+                let hindi = finished.iter().find_map(|(l, r)| match r {
+                    Ok(t) if *l == Language::Hi => Some(t.text.as_str()),
+                    _ => None,
+                });
+                self.decide(hindi.unwrap_or_default())
+            }
+        };
+        let mut finished = finished;
+        finished.sort_by_key(|(l, _)| *l != choice); // the choice first, then the other pass
+        let mut last_err = None;
+        for (language, r) in finished {
+            match r {
+                Ok(t) => return Ok((t, language)),
+                Err(e) => {
+                    tracing::warn!(?language, error = %e, "stt pass failed");
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(BoloError::Stt(last_err.map_or_else(|| "no stt pass".to_owned(), |e| e.to_string())))
     }
 
     fn cancel(&mut self) {

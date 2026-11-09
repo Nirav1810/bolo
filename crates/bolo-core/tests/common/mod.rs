@@ -11,7 +11,8 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use bolo_core::{
-    BoloError, DictationState, Engine, EngineConfig, EngineEvents, FormattedOutput, Language, TargetContext, WavSource,
+    BoloError, DictationState, Engine, EngineConfig, EngineEvents, FormattedOutput, Language, LanguageMode,
+    TargetContext, WavSource,
 };
 use bolo_stt::{SttEngine, SttOptions, SttStream, Transcript};
 
@@ -30,10 +31,11 @@ pub struct Script {
     pub final_text: String,
 }
 
-/// A streaming STT engine that returns preset text per stream language.
+/// A streaming STT engine that returns preset text per stream language. Like Nemotron,
+/// it takes a per-stream language, so the Auto language mode runs two passes on it.
 #[derive(Default)]
 pub struct FakeStt {
-    scripts: Vec<(Language, Script)>,
+    scripts: Mutex<Vec<(Language, Script)>>,
     opened: Mutex<Vec<Language>>,
 }
 
@@ -43,12 +45,19 @@ impl FakeStt {
     }
 
     /// Script what a stream opened with `language` returns.
-    pub fn script(mut self, language: Language, partials: &[&str], final_text: &str) -> Self {
+    pub fn script(self, language: Language, partials: &[&str], final_text: &str) -> Self {
+        self.set_script(language, partials, final_text);
+        self
+    }
+
+    /// Re-script between dictations (streams opened from now on use it).
+    pub fn set_script(&self, language: Language, partials: &[&str], final_text: &str) {
         let script =
             Script { partials: partials.iter().map(|p| (*p).to_owned()).collect(), final_text: final_text.into() };
-        self.scripts.retain(|(l, _)| *l != language);
-        self.scripts.push((language, script));
-        self
+        if let Ok(mut g) = self.scripts.lock() {
+            g.retain(|(l, _)| *l != language);
+            g.push((language, script));
+        }
     }
 
     /// Languages of every stream opened so far, in order.
@@ -57,7 +66,8 @@ impl FakeStt {
     }
 
     fn script_for(&self, language: Language) -> Script {
-        self.scripts.iter().find(|(l, _)| *l == language).map(|(_, s)| s.clone()).unwrap_or_default()
+        let g = self.scripts.lock();
+        g.ok().and_then(|g| g.iter().find(|(l, _)| *l == language).map(|(_, s)| s.clone())).unwrap_or_default()
     }
 }
 
@@ -68,6 +78,10 @@ impl SttEngine for FakeStt {
     }
 
     fn supports_streaming(&self) -> bool {
+        true
+    }
+
+    fn per_stream_language(&self) -> bool {
         true
     }
 
@@ -175,7 +189,7 @@ pub struct Harness {
 }
 
 impl Harness {
-    pub fn new(stt: FakeStt, language: Language) -> Self {
+    pub fn new(stt: FakeStt, language: LanguageMode) -> Self {
         let config = EngineConfig {
             engines: Vec::new(), // unused: the STT engine is injected
             language,

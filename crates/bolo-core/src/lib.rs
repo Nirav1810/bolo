@@ -7,6 +7,10 @@
 //! stop_dictation ─► flush last chunk / segment ─► romanize (Layer 1) ─► on_final ◄───┘
 //! ```
 //!
+//! In the Auto [`LanguageMode`] on an engine with a per-stream language option
+//! (Nemotron), the streaming STT runs twice, forced to English and to Hindi, and one
+//! result is chosen at release (ADR-0014).
+//!
 //! All work happens on one engine thread, so every method here returns immediately.
 //! Results arrive through [`EngineEvents`].
 
@@ -50,6 +54,44 @@ pub struct TargetContext {
     pub code_mode: bool,
 }
 
+/// Which language a dictation is in (GLOSSARY: Language mode).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LanguageMode {
+    /// Decide once per dictation. Engines with a per-stream language option decode
+    /// English and Hindi side by side and Bolo picks one at release; an ambiguous
+    /// dictation reuses the previous dictation's language (English the first time).
+    /// Other engines use their own multilingual mode (Deepgram `language=multi`).
+    #[default]
+    Auto,
+    /// English only: one pass, never read as Hindi.
+    #[serde(alias = "en")]
+    English,
+    /// Hindi-English mixed speech, written in the configured [`HinglishScript`].
+    #[serde(alias = "hi")]
+    Hinglish,
+}
+
+impl LanguageMode {
+    /// The hint for a single STT request in this mode.
+    pub fn stt_language(self) -> Language {
+        match self {
+            Self::Auto => Language::Auto,
+            Self::English => Language::En,
+            Self::Hinglish => Language::Hi,
+        }
+    }
+
+    /// The mode a single-language STT hint corresponds to.
+    pub fn from_stt_language(language: Language) -> Self {
+        match language {
+            Language::Auto => Self::Auto,
+            Language::En => Self::English,
+            Language::Hi => Self::Hinglish,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DictationState {
     Idle,
@@ -78,6 +120,9 @@ pub struct FormattedOutput {
     pub html: Option<String>,
     pub timings: Timings,
     pub engine_id: String,
+    /// The language the text is in: English or Hinglish when Bolo knows (a forced mode,
+    /// or Auto's choice), `Auto` when the engine's own multilingual mode decided.
+    pub language: LanguageMode,
 }
 
 #[derive(Debug, Clone, thiserror::Error, Serialize, Deserialize)]
@@ -136,7 +181,7 @@ pub struct EngineConfig {
     /// Fallback chain of engine specs: `local:<model-id>`, `deepgram`, `groq[:model]`,
     /// `sarvam[:model]`. The first one is primary.
     pub engines: Vec<String>,
-    pub language: Language,
+    pub language: LanguageMode,
     pub script: HinglishScript,
     pub dictionary: Vec<String>,
     /// Unload the local model after this many idle seconds (30 desktop, 20 Android).
@@ -155,7 +200,7 @@ impl Default for EngineConfig {
     fn default() -> Self {
         Self {
             engines: vec!["local:nemotron-stream".into()],
-            language: Language::Auto,
+            language: LanguageMode::Auto,
             script: HinglishScript::Roman,
             dictionary: Vec::new(),
             idle_unload_secs: 30,
@@ -295,5 +340,19 @@ mod tests {
         assert!(!json.contains("dg_secret_123") && !json.contains("api_keys"));
         c.api_keys.set("deepgram", "  ");
         assert!(c.api_keys.get("deepgram").is_none());
+    }
+
+    #[test]
+    fn language_mode_settings_round_trip() {
+        let parse = |s: &str| serde_json::from_str::<LanguageMode>(s).ok();
+        assert_eq!(parse(r#""auto""#), Some(LanguageMode::Auto));
+        assert_eq!(parse(r#""english""#), Some(LanguageMode::English));
+        assert_eq!(parse(r#""hinglish""#), Some(LanguageMode::Hinglish));
+        assert_eq!(parse(r#""en""#), Some(LanguageMode::English));
+        assert_eq!(parse(r#""hi""#), Some(LanguageMode::Hinglish));
+        assert_eq!(serde_json::to_string(&LanguageMode::Hinglish).ok().as_deref(), Some(r#""hinglish""#));
+        for mode in [LanguageMode::Auto, LanguageMode::English, LanguageMode::Hinglish] {
+            assert_eq!(LanguageMode::from_stt_language(mode.stt_language()), mode);
+        }
     }
 }
