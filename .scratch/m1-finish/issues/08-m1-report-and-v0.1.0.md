@@ -12,7 +12,11 @@ Then `v0.1.0` is cut through the release pipeline, and work stops until the user
 
 **Status:** ready-for-agent
 
-- [ ] docs/BENCH.md and README show the final M1 numbers and explain how to download and run `bolo`.
+- [x] docs/BENCH.md and README show the final M1 numbers and explain how to download and run `bolo`.
 - [ ] The release PR for `v0.1.0` is merged, and the tag pushed, only after the user approves the report.
 - [ ] The `v0.1.0` GitHub Release is published as a prerelease, because the CLI preview is unsigned (ADR-0013).
 - [ ] Work stops for M1 sign-off.
+
+## Comments
+
+- 2026-11-09: M1 report written in `docs/M1-REPORT.md`; BENCH.md §9 and README ("Try it") carry the final numbers and download steps. Waiting for the user to approve the report before `python -I scripts/release.py 0.1.0`.

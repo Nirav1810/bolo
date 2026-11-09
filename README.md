@@ -7,7 +7,27 @@ Open-source, local-first voice dictation for **Windows** and **Android**. Hold a
 - **Private**: no telemetry, no accounts. Audio leaves the device only if you configure a cloud provider.
 - **Lean**: models load only while you dictate and unload when idle.
 
-> **Status: Milestone 1 (core + benchmark).** There is no end-user app yet. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+> **Status: Milestone 1 done: core engine + `bolo` CLI preview.** There is no desktop app or Android keyboard yet. See the [M1 report](docs/M1-REPORT.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Try it (Windows x64)
+
+1. Download `bolo-vX.Y.Z-windows-x64.zip` from the [latest release](https://github.com/Nirav1810/bolo/releases) (optionally check it against the `.sha256` next to it) and unzip it anywhere. Keep `bolo.exe` next to the DLLs.
+2. In PowerShell, in that folder:
+
+   ```powershell
+   .olo.exe sysinfo                      # RAM and the recommended model
+   .olo.exe download nemotron-stream     # ~475 MB, SHA-256 verified
+   .olo.exe dictate                      # Enter starts and stops; the text goes to the clipboard
+   ```
+
+`dictate` uses Auto language mode: speak English or Hinglish and Bolo picks one per dictation. Pin it with `--lang en` or `--lang hi`. For a cloud engine, put `DEEPGRAM_API_KEY=…` in a `.env` file in that folder and run `.olo.exe dictate -e deepgram-stream`. Releases are unsigned previews, so SmartScreen may warn on first run.
+
+**M1 numbers** (40 clips, one speaker; details in [docs/BENCH.md](docs/BENCH.md) §9):
+
+| engine | WER English | WER Hinglish | release → text p50 |
+|---|---|---|---|
+| `local:nemotron-stream`, Auto (default, offline) | 8.0% | 27.7% | 234 ms |
+| `deepgram-stream` (cloud, BYOK) | 9.2% | 21.0% | 299 ms |
 
 ## Build (developers)
 
@@ -38,7 +58,7 @@ For the developer tools, copy `.env.example` to `.env` (git-ignored) and paste y
 | Groq | `GROQ_API_KEY` | Whisper large-v3-turbo STT |
 | Deepgram | `DEEPGRAM_API_KEY` | Nova-3 STT: `deepgram` (batch) or `deepgram-stream` (live WebSocket) |
 | Sarvam AI | `SARVAM_API_KEY` | Saaras v4 STT, Roman Hinglish (`translit`) |
-| Anthropic | (M2) | Claude Haiku cleanup |
+| Anthropic | `ANTHROPIC_API_KEY` | Claude Haiku cleanup (`bolo dictate --polish`) |
 
 In the apps, keys go to Windows Credential Manager or the Android Keystore. They are never written to plain files or logs.
 

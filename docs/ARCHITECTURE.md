@@ -4,11 +4,11 @@
 
 | crate | role | status |
 |---|---|---|
-| `bolo-core` | Dictation state machine, pipeline orchestration, public `Engine` API | API surface (M1); orchestration lands in M1 phase 2 |
-| `bolo-audio` | 16 kHz mono pipeline; WAV encode/decode; FFT resampling (rubato); live capture (cpal, feature `capture`) | encode/decode/resample ✅; capture next |
+| `bolo-core` | Dictation state machine, pipeline orchestration, public `Engine` API | ✅ live engine, Auto language mode |
+| `bolo-audio` | 16 kHz mono pipeline; WAV encode/decode; FFT resampling (rubato); live capture (cpal, feature `capture`) | ✅ |
 | `bolo-stt` | `SttEngine` trait; local (sherpa-onnx), Groq, Deepgram (batch and live WebSocket), Sarvam; fallback chain with per-engine timeout | ✅ |
 | `bolo-models` | `models/manifest.json` registry; resumable SHA-256-verified downloader (GitHub API fallback); RAM-tier recommendation | ✅ |
-| `bolo-format` | Rules engine, LLM cleanup, formatter, Devanagari→Roman transliteration | M2 |
+| `bolo-format` | Devanagari→Roman transliteration, loanword lexicon, language detector, LLM cleanup guard ✅; rules engine and formatter M2 |
 | `bolo-store` | Settings TOML, SQLite history, secrets | M3 |
 | `bolo-ffi` | UniFFI → Kotlin | M5 (not a default workspace member) |
 | `bolo` | CLI: `dictate` and `replay` on the engine, plus the benchmark subcommands (`run`, `transcribe`, `download`, …) | ✅ |
