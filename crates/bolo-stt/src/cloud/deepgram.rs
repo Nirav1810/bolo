@@ -135,4 +135,19 @@ mod tests {
         assert_eq!(q.iter().filter(|(k, _)| *k == "keyterm").count(), 2);
         assert!(q.contains(&("language", "multi".to_owned())));
     }
+
+    #[test]
+    fn auto_uses_native_multilingual_mode() {
+        let Ok(client) = crate::cloud::http_client() else { return };
+        let e = DeepgramEngine::new(client, ApiKey::new("k"));
+        let lang = |language| {
+            e.query(&SttOptions { language, ..Default::default() })
+                .into_iter()
+                .find(|(k, _)| *k == "language")
+                .map(|(_, v)| v)
+        };
+        assert_eq!(lang(Language::Auto).as_deref(), Some("multi"));
+        assert_eq!(lang(Language::Hi).as_deref(), Some("multi"));
+        assert_eq!(lang(Language::En).as_deref(), Some("en"));
+    }
 }

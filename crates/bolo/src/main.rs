@@ -100,6 +100,14 @@ enum Cmd {
     Replay {
         #[arg(long, short, default_value = "local:nemotron-stream")]
         engine: String,
+        /// Language mode: `auto` decodes English and Hindi side by side and picks one per
+        /// clip (on engines that support it); `en` and `hi` force one language.
+        #[arg(long, value_enum, default_value = "auto")]
+        lang: ModeArg,
+        /// Play clips this many times faster than real time. Use it for quick WER and
+        /// language-choice checks; latency is only realistic at 1.
+        #[arg(long, default_value_t = 1.0)]
+        speed: f64,
         #[arg(long, default_value = "testdata/clips")]
         clips: PathBuf,
         #[arg(long, default_value_t = usize::MAX)]
@@ -147,6 +155,24 @@ enum LangArg {
     Auto,
     En,
     Hi,
+}
+
+/// The engine's language mode (`bolo replay`).
+#[derive(Clone, Copy, ValueEnum)]
+enum ModeArg {
+    Auto,
+    En,
+    Hi,
+}
+
+impl From<ModeArg> for bolo_core::LanguageMode {
+    fn from(m: ModeArg) -> Self {
+        match m {
+            ModeArg::Auto => Self::Auto,
+            ModeArg::En => Self::English,
+            ModeArg::Hi => Self::Hinglish,
+        }
+    }
 }
 
 impl LangArg {
@@ -254,9 +280,14 @@ async fn main() -> Result<()> {
         Cmd::CleanupEval { csv, engines, out, clips } => {
             cleanup::run(&csv, &engines, &out, &load_aliases(&clips)).await?;
         }
-        Cmd::Replay { engine, clips, limit } => {
+        Cmd::Replay { engine, lang, speed, clips, limit } => {
+            if !(speed.is_finite() && speed > 0.0) {
+                bail!("--speed must be a positive number");
+            }
             let aliases = load_aliases(&clips);
-            tokio::task::block_in_place(|| replay::run(&engine, &clips, &models_dir, &aliases, limit))?;
+            tokio::task::block_in_place(|| {
+                replay::run(&engine, lang.into(), speed, &clips, &models_dir, &aliases, limit)
+            })?;
         }
         Cmd::MicTest => record::mic_test()?,
         Cmd::Run(args) => run(args, &manifest, &models_dir).await?,

@@ -25,6 +25,20 @@ capture (cpal) 16 kHz f32 ──► Silero VAD ──► STT
 hotkey up ──► finalize last segment ──► rules (<1 ms) ──► [LLM, skippable] ──► format ──► insert
 ```
 
+### Language mode (ADR-0014)
+
+`EngineConfig::language` is a `LanguageMode`: **Auto**, **English** or **Hinglish**.
+
+- **English / Hinglish**: one stream forced to `en` / `hi`. Hinglish output is romanized (Layer 1).
+- **Auto on Nemotron** (`SttEngine::per_stream_language`): two streams on the one loaded recognizer, forced to `en` and `hi`, fed the same audio on two threads. `bolo_format::language` measures the share of Hindi function words in the Hindi pass:
+  - ≥ 0.20 → Hinglish;
+  - ≤ 0.10 → English;
+  - fewer than 3 words, or in between → ambiguous, which reuses the previous dictation's language (English the first time). That memory lives in the engine thread for the life of the process.
+- **Partials** come from whichever pass the rule currently favours.
+- **At release**, if the Hindi pass's latest text already decides the language, only the chosen pass is finished, so Auto adds nothing after release. Otherwise both are finished in parallel and the rule runs on their final text.
+- **Auto on other engines**: their own multilingual mode (Deepgram `language=multi`).
+- `FormattedOutput::language` reports the choice (`Auto` when the engine decided).
+
 ## Engine lifecycle (RAM/battery)
 
 - `LocalEngine` holds `Mutex<Option<Recognizer>>`. Weights are loaded by `prewarm()` or on first use and dropped by `release()`.

@@ -4,8 +4,10 @@
 //! 3. output formatter — Plain / Markdown / HTML per target app
 //!
 //! Available now: [`translit`] (Devanagari → Roman Hinglish), needed because Nemotron
-//! and Qwen3-ASR emit Hindi in Devanagari.
+//! and Qwen3-ASR emit Hindi in Devanagari, and [`language`], which tells English from
+//! Hinglish for the Auto language mode.
 
+pub mod language;
 #[cfg(feature = "llm")]
 pub mod llm;
 pub mod loanwords;

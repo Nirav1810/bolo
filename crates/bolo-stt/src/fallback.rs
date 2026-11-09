@@ -36,6 +36,10 @@ impl SttEngine for FallbackEngine {
         self.chain.first().is_some_and(|(e, _)| e.supports_streaming())
     }
 
+    fn per_stream_language(&self) -> bool {
+        self.chain.first().is_some_and(|(e, _)| e.per_stream_language())
+    }
+
     async fn prewarm(&self) -> Result<()> {
         // Warm only the primary; warming a local fallback would cost RAM for nothing.
         match self.chain.first() {

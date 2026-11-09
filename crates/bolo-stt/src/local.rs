@@ -239,6 +239,10 @@ impl SttEngine for LocalEngine {
         self.0.entry.streaming
     }
 
+    fn per_stream_language(&self) -> bool {
+        self.0.entry.streaming && self.0.entry.options.contains_key("stream_language_option")
+    }
+
     async fn prewarm(&self) -> Result<()> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.0.load_blocking().map(|_| ()))

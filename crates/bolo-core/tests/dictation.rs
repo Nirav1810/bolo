@@ -5,7 +5,7 @@ mod common;
 
 use std::time::Duration;
 
-use bolo_core::{DictationState, Language};
+use bolo_core::{DictationState, Language, LanguageMode};
 use common::{ENGINE_ID, FakeStt, Harness, errors, finals, partials, states};
 
 fn english() -> FakeStt {
@@ -18,7 +18,7 @@ fn english() -> FakeStt {
 
 #[test]
 fn a_dictation_yields_the_scripted_final_with_timings() {
-    let h = Harness::new(english(), Language::En);
+    let h = Harness::new(english(), LanguageMode::English);
     let events = h.dictate();
 
     assert!(errors(&events).is_empty(), "unexpected errors: {events:?}");
@@ -38,7 +38,7 @@ fn a_dictation_yields_the_scripted_final_with_timings() {
 
 #[test]
 fn dictation_states_go_idle_listening_processing_done_idle() {
-    let h = Harness::new(english(), Language::En);
+    let h = Harness::new(english(), LanguageMode::English);
     assert_eq!(h.engine.state(), DictationState::Idle);
 
     let events = h.dictate();
@@ -52,7 +52,7 @@ fn dictation_states_go_idle_listening_processing_done_idle() {
 
 #[test]
 fn cancel_produces_no_final_and_returns_to_idle() {
-    let h = Harness::new(english(), Language::En);
+    let h = Harness::new(english(), LanguageMode::English);
     h.start_and_speak();
     h.engine.cancel_dictation();
 

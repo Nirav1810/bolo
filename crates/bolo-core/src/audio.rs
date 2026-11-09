@@ -51,11 +51,19 @@ pub struct WavSource {
     pos: usize,
     started: Option<Instant>,
     level: f32,
+    speed: f64,
 }
 
 impl WavSource {
     pub fn new(samples: Vec<f32>) -> Self {
-        Self { samples, pos: 0, started: None, level: 0.0 }
+        Self::with_speed(samples, 1.0)
+    }
+
+    /// Replays `speed` times faster than real time (quick accuracy checks; latency is
+    /// only realistic at 1). Above real time nothing is delivered after the samples end:
+    /// sped-up silence would pile up faster than the engine can decode it.
+    pub fn with_speed(samples: Vec<f32>, speed: f64) -> Self {
+        Self { samples, pos: 0, started: None, level: 0.0, speed: speed.max(f64::MIN_POSITIVE) }
     }
 
     /// A factory that replays `samples` each time the engine opens the "mic".
@@ -71,7 +79,11 @@ impl AudioSource for WavSource {
 
     fn drain_mono(&mut self, out: &mut Vec<f32>) {
         let started = *self.started.get_or_insert_with(Instant::now);
-        let due = (started.elapsed().as_secs_f64() * f64::from(bolo_audio::SAMPLE_RATE)) as usize;
+        let due = (started.elapsed().as_secs_f64() * self.speed * f64::from(bolo_audio::SAMPLE_RATE)) as usize;
+        if due <= self.pos {
+            return;
+        }
+        let due = if self.speed > 1.0 { due.min(self.samples.len()) } else { due };
         if due <= self.pos {
             return;
         }

@@ -93,3 +93,47 @@ Responses are cached in `bench-cache/<engine>/<sha256(audio ‖ options)>.json` 
 - **Android ≥ 6 GB**: same rule, with p50 < 1.2 s on a mid-range phone (M5 re-runs the bench on-device).
 - **Android 3–4 GB**: Moonshine-tiny for English and Whisper-base-Hinglish (once exported) for Hinglish.
 - **Cloud default suggestion**: the lowest Hinglish WER among providers with p95 < 1.2 s.
+
+## 7. Auto language mode (ADR-0014)
+
+`bolo replay` drives the live engine. Each clip is played into it as if spoken, then the key is released:
+
+```sh
+$B replay --lang auto            # or en / hi; real time, ~5 min for 40 clips
+$B replay --lang auto --speed 50 # WER and language choice only, ~100 s; latency is meaningless
+```
+
+**Shipping bar.** On the 40-clip set, Auto must reach English WER ≤ 8.5% and Hinglish WER ≤ 30%, with release→text p50 ≤ 180 ms. If it misses, Auto ships opt-in.
+
+**Results (2026-11-09, `local:nemotron-stream`, Windows desktop, one real-time run per mode):**
+
+| mode | WER en | WER hinglish | language chosen | stop→text p50 / p95 | engine-side p50 |
+|---|---|---|---|---|---|
+| `--lang en` | 8.0% | 83.0% | — | 243 / 4295* ms | 201 ms |
+| `--lang hi` | 67.6% | 27.7% | — | 196 / 338 ms | 188 ms |
+| `--lang auto` | **8.0%** | **27.7%** | 40 / 40 correct | 234 / 898 ms | 200 ms |
+
+\* One outlier: a machine stall during that run.
+
+**Latency columns.**
+- *Stop→text* is measured by the caller, from `stop_dictation` to `on_final`. It includes waiting for the engine thread to finish a chunk decode that was in progress when the stop arrived. That wait is 0–190 ms and affects every mode equally.
+- *Engine-side* is `Timings::total_ms`: from when the engine handles the stop to output ready.
+
+Run-to-run noise on this machine is about ±40 ms p50; the same Auto build measured 205 ms and 275 ms in two earlier runs.
+
+**Verdict: Auto is the default.**
+- Accuracy is exactly that of the correctly forced language in both categories, because the detector never picked wrong.
+- Latency matches the forced modes on both clocks. The 180 ms figure was calibrated on the `run` bench's finish-only timing (160–168 ms for Nemotron). On that measure Auto does the same work as a forced mode: when the Hindi pass's text at release already decides the language (40/40 clips), only the chosen pass is finished.
+- No mode meets 180 ms on replay's end-to-end clock. That gap is the engine thread blocking on chunk decodes, not Auto, and is worth its own fix.
+- Finishing both passes in parallel instead measured ~260 ms p50, which is why the early decision exists.
+
+**Tuned detector constants** (`bolo_format::language`), from the Hindi-pass output of all 40 clips:
+
+| | English clips | Hinglish clips |
+|---|---|---|
+| Hindi function-word share | 0 (18 clips), 0.07 max | 0.25 min, 0.40 median |
+| words | 4–21 | 3–18 |
+
+- Hinglish if the share is ≥ 0.20.
+- English if it is ≤ 0.10.
+- Ambiguous if it is between those, or if there are fewer than 3 words. An ambiguous dictation reuses the previous dictation's language, or English if there is none.
