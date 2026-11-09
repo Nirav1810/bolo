@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn roundtrip_and_key_sensitivity() {
-        let dir = std::env::temp_dir().join(format!("bolo-bench-cache-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("bolo-cache-{}", std::process::id()));
         let c = Cache::new(&dir);
         let k = Cache::key(&[0.1, 0.2], "lang=auto");
         assert_ne!(k, Cache::key(&[0.1, 0.2], "lang=en"));

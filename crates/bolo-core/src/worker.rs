@@ -1,8 +1,8 @@
-//! The engine thread. It owns the mic, the STT engine and the current session, and is
+//! The engine thread. It owns the mic, the STT engine and the current dictation, and is
 //! driven by commands from [`crate::Engine`].
 //!
 //! Every ~10 ms while the mic is open it drains audio, resamples to 16 kHz, and either
-//! feeds the session or keeps a short pre-roll ring when idle-warm. Timers close the mic
+//! feeds the dictation or keeps a short pre-roll ring when idle-warm. Timers close the mic
 //! after `mic_warm_secs` and unload the model after `idle_unload_secs`.
 
 use std::collections::VecDeque;
@@ -20,7 +20,7 @@ use tokio::task::JoinHandle;
 use crate::audio::{AudioFactory, AudioSource};
 use crate::build::{BuiltStt, build_stt};
 use crate::{
-    BoloError, EngineConfig, EngineEvents, FormattedOutput, HinglishScript, SessionState, TargetContext, Timings,
+    BoloError, DictationState, EngineConfig, EngineEvents, FormattedOutput, HinglishScript, TargetContext, Timings,
 };
 
 /// Audio kept from just before the hotkey while the mic is warm (seconds).
@@ -46,7 +46,7 @@ struct Mic {
     warm_until: Instant,
 }
 
-struct Session {
+struct Dictation {
     stream: Option<Box<dyn SttStream>>,
     vad: Option<Vad>,
     segments: Vec<JoinHandle<Result<Transcript, SttError>>>,
@@ -58,7 +58,7 @@ struct Session {
 pub(crate) struct Worker {
     config: EngineConfig,
     events: Arc<dyn EngineEvents>,
-    state: Arc<Mutex<SessionState>>,
+    state: Arc<Mutex<DictationState>>,
     factory: AudioFactory,
     manifest: Manifest,
     http: reqwest::Client,
@@ -67,7 +67,7 @@ pub(crate) struct Worker {
     model_loaded: bool,
     unload_at: Option<Instant>,
     mic: Option<Mic>,
-    session: Option<Session>,
+    dictation: Option<Dictation>,
 }
 
 fn pad(seg: &[f32]) -> Vec<f32> {
@@ -83,7 +83,7 @@ impl Worker {
     pub(crate) fn new(
         config: EngineConfig,
         events: Arc<dyn EngineEvents>,
-        state: Arc<Mutex<SessionState>>,
+        state: Arc<Mutex<DictationState>>,
         factory: AudioFactory,
     ) -> Result<Self, BoloError> {
         let rt = tokio::runtime::Builder::new_multi_thread()
@@ -106,11 +106,11 @@ impl Worker {
             model_loaded: false,
             unload_at: None,
             mic: None,
-            session: None,
+            dictation: None,
         })
     }
 
-    fn set_state(&self, s: SessionState) {
+    fn set_state(&self, s: DictationState) {
         if let Ok(mut g) = self.state.lock() {
             *g = s;
         }
@@ -158,7 +158,7 @@ impl Worker {
     }
 
     fn start(&mut self, ctx: TargetContext) -> Result<(), BoloError> {
-        if self.session.is_some() {
+        if self.dictation.is_some() {
             return Err(BoloError::Busy);
         }
         let _ = ctx; // per-app format/tone lands with the formatter (M2/M3)
@@ -177,7 +177,7 @@ impl Worker {
             let e = engine.clone();
             self.rt.spawn(async move { e.prewarm().await });
         }
-        let mut session = Session {
+        let mut dictation = Dictation {
             stream,
             vad,
             segments: Vec::new(),
@@ -189,15 +189,15 @@ impl Worker {
         if let Some(mic) = self.mic.as_mut() {
             let pre: Vec<f32> = mic.preroll.drain(..).collect();
             if !pre.is_empty() {
-                self.feed(&mut session, &pre);
+                self.feed(&mut dictation, &pre);
             }
         }
-        self.session = Some(session);
-        self.set_state(SessionState::Listening);
+        self.dictation = Some(dictation);
+        self.set_state(DictationState::Listening);
         Ok(())
     }
 
-    fn feed(&self, s: &mut Session, pcm: &[f32]) {
+    fn feed(&self, s: &mut Dictation, pcm: &[f32]) {
         s.audio.extend_from_slice(pcm);
         if let Some(stream) = s.stream.as_mut() {
             stream.accept(pcm);
@@ -239,8 +239,8 @@ impl Worker {
         let released = Instant::now();
         // Take the last audio that is already buffered.
         self.tick_audio();
-        let Some(mut s) = self.session.take() else { return };
-        self.set_state(SessionState::Processing);
+        let Some(mut s) = self.dictation.take() else { return };
+        self.set_state(DictationState::Processing);
         let mut tail = Vec::new();
         if let Some(mic) = self.mic.as_mut() {
             let _ = mic.resampler.flush(&mut tail);
@@ -295,20 +295,20 @@ impl Worker {
                     timings: Timings { stt_ms, rules_ms, llm_ms: 0.0, format_ms: 0.0, total_ms },
                     engine_id,
                 });
-                self.set_state(SessionState::Done);
+                self.set_state(DictationState::Done);
             }
             Err(e) => self.events.on_error(e),
         }
-        self.set_state(SessionState::Idle);
+        self.set_state(DictationState::Idle);
         self.unload_at = Some(Instant::now() + Duration::from_secs(u64::from(self.config.idle_unload_secs)));
     }
 
     fn cancel(&mut self) {
-        if let Some(s) = self.session.take() {
+        if let Some(s) = self.dictation.take() {
             for h in s.segments {
                 h.abort();
             }
-            self.set_state(SessionState::Idle);
+            self.set_state(DictationState::Idle);
         }
     }
 
@@ -320,7 +320,7 @@ impl Worker {
         self.unload_at = None;
     }
 
-    /// Drain the mic into the session, or into the pre-roll ring when idle-warm.
+    /// Drain the mic into the dictation, or into the pre-roll ring when idle-warm.
     fn tick_audio(&mut self) {
         let Some(mic) = self.mic.as_mut() else { return };
         let mut dev = Vec::new();
@@ -331,7 +331,7 @@ impl Worker {
             return;
         }
         let level = mic.source.level();
-        if let Some(mut s) = self.session.take() {
+        if let Some(mut s) = self.dictation.take() {
             if !pcm.is_empty() {
                 self.feed(&mut s, &pcm);
             }
@@ -339,7 +339,7 @@ impl Worker {
                 s.last_level = Instant::now();
                 self.events.on_level(level);
             }
-            self.session = Some(s);
+            self.dictation = Some(s);
         } else if let Some(mic) = self.mic.as_mut() {
             let cap = (PREROLL_SECS * bolo_audio::SAMPLE_RATE as f32) as usize;
             mic.preroll.extend(pcm);
@@ -350,11 +350,11 @@ impl Worker {
 
     fn tick_timers(&mut self) {
         let now = Instant::now();
-        if self.session.is_none() && self.mic.as_ref().is_some_and(|m| now >= m.warm_until) {
+        if self.dictation.is_none() && self.mic.as_ref().is_some_and(|m| now >= m.warm_until) {
             self.mic = None; // closes the device; Windows mic indicator goes off
             tracing::debug!("mic closed after warm window");
         }
-        if self.session.is_none() && self.model_loaded && self.unload_at.is_some_and(|t| now >= t) {
+        if self.dictation.is_none() && self.model_loaded && self.unload_at.is_some_and(|t| now >= t) {
             self.release();
             tracing::debug!("model released after idle timeout");
         }
@@ -362,7 +362,7 @@ impl Worker {
 
     pub(crate) fn run(mut self, rx: Receiver<Cmd>) {
         loop {
-            let wait = if self.session.is_some() || self.mic.is_some() { 10 } else { 200 };
+            let wait = if self.dictation.is_some() || self.mic.is_some() { 10 } else { 200 };
             match rx.recv_timeout(Duration::from_millis(wait)) {
                 Ok(Cmd::Prewarm) => self.prewarm(),
                 Ok(Cmd::Start(ctx, reply)) => {

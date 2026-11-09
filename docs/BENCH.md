@@ -1,6 +1,6 @@
-# bolo-bench — plan & methodology
+# Benchmarks — plan & methodology
 
-`bolo-bench` decides which engines ship as defaults. It was built first and runs on **your** voice, mic, and accent. Public benchmarks don't measure Hinglish dictation.
+The benchmark subcommands of the `bolo` CLI decide which engines ship as defaults. They were built first and run on **your** voice, mic, and accent. Public benchmarks don't measure Hinglish dictation.
 
 ## 1. Record the clips (you)
 
@@ -23,8 +23,8 @@ testdata/clips/
 
 ```sh
 python -I scripts/fetch-sherpa-libs.py         # once per machine (verified prebuilt libs)
-cargo build --release -p bolo-bench
-B=target/release/bolo-bench
+cargo build --release -p bolo
+B=target/release/bolo
 
 $B models                                       # what's available / installed
 $B download nemotron-stream parakeet-v2-en parakeet-v3 qwen3-asr moonshine-tiny silero-vad

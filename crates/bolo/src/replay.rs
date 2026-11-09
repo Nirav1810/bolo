@@ -1,5 +1,5 @@
-//! `bolo-bench replay`: end-to-end test of `bolo_core::Engine`. Each clip is played
-//! into the engine in real time as if spoken into the mic, then `stop_session` is
+//! `bolo replay`: end-to-end test of `bolo_core::Engine`. Each clip is played
+//! into the engine in real time as if spoken into the mic, then `stop_dictation` is
 //! called. We measure stop → `on_final`, the latency a user feels.
 
 use std::collections::HashMap;
@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use bolo_core::{
-    AudioFactory, AudioSource, BoloError, Engine, EngineConfig, EngineEvents, FormattedOutput, SessionState,
+    AudioFactory, AudioSource, BoloError, DictationState, Engine, EngineConfig, EngineEvents, FormattedOutput,
     TargetContext, WavSource,
 };
 
@@ -36,7 +36,7 @@ impl EngineEvents for Events {
             let _ = tx.send(Ev::Error(err));
         }
     }
-    fn on_state(&self, _: SessionState) {}
+    fn on_state(&self, _: DictationState) {}
 }
 
 /// Silence after the clip before "releasing the key", like a person letting go.
@@ -54,7 +54,7 @@ pub fn run(
     let mut config = EngineConfig {
         engines: vec![engine_spec.to_owned()],
         models_dir: models_dir.to_path_buf(),
-        mic_warm_secs: 0, // reopen the "mic" (next clip) every session
+        mic_warm_secs: 0, // reopen the "mic" (next clip) every dictation
         idle_unload_secs: 3600,
         ..Default::default()
     };
@@ -81,10 +81,10 @@ pub fn run(
         if let Ok(mut g) = current.lock() {
             g.clone_from(&clip.audio);
         }
-        engine.start_session(TargetContext::default())?;
+        engine.start_dictation(TargetContext::default())?;
         std::thread::sleep(Duration::from_secs_f64(bolo_audio::duration_secs(&clip.audio)) + TRAILING_SILENCE);
         let t_stop = Instant::now();
-        engine.stop_session()?;
+        engine.stop_dictation()?;
         let out = match rx.recv_timeout(Duration::from_secs(15)) {
             Ok(Ev::Final(o)) => Ok(o),
             Ok(Ev::Error(e)) => Err(anyhow!("{e}")),

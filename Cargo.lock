@@ -218,19 +218,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "bolo-audio"
-version = "0.1.0"
-dependencies = [
- "cpal",
- "hound",
- "ringbuf",
- "rubato",
- "thiserror 2.0.21",
- "tracing",
-]
-
-[[package]]
-name = "bolo-bench"
+name = "bolo"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -252,6 +240,18 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "bolo-audio"
+version = "0.1.0"
+dependencies = [
+ "cpal",
+ "hound",
+ "ringbuf",
+ "rubato",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]

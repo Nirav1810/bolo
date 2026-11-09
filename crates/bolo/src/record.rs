@@ -1,4 +1,4 @@
-//! `bolo-bench record`: guided recording of benchmark clips.
+//! `bolo record`: guided recording of benchmark clips.
 //!
 //! Shows one prompt at a time; Enter starts, Enter stops. Saves
 //! `<clips>/<set>/NN-slug.wav` (16 kHz mono) and the prompt as `NN-slug.txt`.

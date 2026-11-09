@@ -125,7 +125,7 @@ impl SttEngine for SarvamEngine {
         if audio.is_empty() {
             return Err(SttError::InvalidInput("empty audio".into()));
         }
-        // Normally the session splits on VAD pauses well before 30 s; this is a backstop.
+        // Normally the engine splits a dictation on VAD pauses well before 30 s; this is a backstop.
         let mut parts = Vec::new();
         let mut language = None;
         for chunk in audio.chunks(MAX_CHUNK_SAMPLES) {

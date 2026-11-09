@@ -1,4 +1,4 @@
-//! `bolo-bench dictate`: try Bolo's instant path from the terminal.
+//! `bolo dictate`: try Bolo's instant path from the terminal.
 //!
 //! Enter starts, Enter stops. While you speak, mic audio streams (lock-free capture →
 //! streaming resampler) into a streaming STT engine that decodes as you go. After you
