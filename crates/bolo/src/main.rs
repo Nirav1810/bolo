@@ -77,9 +77,12 @@ enum Cmd {
         /// provider (`deepgram`, `groq`, `sarvam`; key from DEEPGRAM_API_KEY etc.).
         #[arg(long, short, default_value = "nemotron-stream", alias = "model")]
         engine: String,
+        /// Language mode: `auto` decodes English and Hindi side by side and picks one per
+        /// dictation (on engines that support it); `en` and `hi` force one language.
         #[arg(long, value_enum, default_value = "auto")]
-        lang: LangArg,
-        /// Also run Claude cleanup afterwards (needs ANTHROPIC_API_KEY).
+        lang: ModeArg,
+        /// After the instant text is on the clipboard, run the Claude polish and replace
+        /// it (needs ANTHROPIC_API_KEY).
         #[arg(long)]
         polish: bool,
     },
@@ -157,7 +160,7 @@ enum LangArg {
     Hi,
 }
 
-/// The engine's language mode (`bolo replay`).
+/// The engine's language mode (`bolo dictate`, `bolo replay`).
 #[derive(Clone, Copy, ValueEnum)]
 enum ModeArg {
     Auto,
@@ -275,7 +278,7 @@ async fn main() -> Result<()> {
             record::run(&prompts, &clips, &set)?;
         }
         Cmd::Dictate { engine, lang, polish } => {
-            dictate::run(&manifest, &models_dir, &engine, lang.resolve("auto"), polish).await?;
+            dictate::run(&manifest, &models_dir, &engine, lang.into(), polish).await?;
         }
         Cmd::CleanupEval { csv, engines, out, clips } => {
             cleanup::run(&csv, &engines, &out, &load_aliases(&clips)).await?;
@@ -319,6 +322,17 @@ impl std::ops::Deref for Built {
 /// A non-empty environment variable (an empty `.env` placeholder counts as unset).
 pub(crate) fn env_nonempty(var: &str) -> Option<String> {
     std::env::var(var).ok().map(|v| v.trim().to_owned()).filter(|v| !v.is_empty())
+}
+
+/// API keys for the engine from `<PROVIDER>_API_KEY` variables. Never printed.
+pub(crate) fn api_keys_from_env() -> bolo_core::ApiKeys {
+    let mut keys = bolo_core::ApiKeys::default();
+    for p in ["deepgram", "groq", "sarvam"] {
+        if let Some(k) = env_nonempty(&format!("{}_API_KEY", p.to_uppercase())) {
+            keys.set(p, k);
+        }
+    }
+    keys
 }
 
 fn env_key(var: &str) -> Result<ApiKey> {
