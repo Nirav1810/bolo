@@ -1,7 +1,10 @@
+#!/usr/bin/env python3
 """Lint a PR title as a Conventional Commit (ADR-0013).
 
-Squash merges use the PR title as the commit subject on `main`, and git-cliff builds the
-changelog from those subjects, so the title is what we lint. CI passes it via $PR_TITLE.
+Squash merges use the PR title as the commit on `main`, and git-cliff builds the changelog
+from those commits, so the title is what we lint. The pr-title workflow runs this.
+
+Usage: PR_TITLE="feat(core): add X" python -I scripts/pr_title.py
 """
 
 import os
@@ -11,11 +14,11 @@ import sys
 TYPES = ("feat", "fix", "perf", "refactor", "docs", "test", "ci", "build", "chore", "revert")
 
 # type, optional (scope), optional ! for breaking changes, ": ", non-blank description.
-PATTERN = re.compile(rf"^(?:{'|'.join(TYPES)})(?:\([\w./-]+\))?!?: \S")
+CONVENTIONAL_TITLE = re.compile(rf"^(?:{'|'.join(TYPES)})(?:\([\w./-]+\))?!?: \S")
 
 
 def is_conventional(title: str) -> bool:
-    return PATTERN.match(title) is not None
+    return CONVENTIONAL_TITLE.match(title) is not None
 
 
 def main() -> int:
