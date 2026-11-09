@@ -219,7 +219,7 @@ dependencies = [
 
 [[package]]
 name = "bolo"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -244,7 +244,7 @@ dependencies = [
 
 [[package]]
 name = "bolo-audio"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "cpal",
  "hound",
@@ -256,7 +256,7 @@ dependencies = [
 
 [[package]]
 name = "bolo-core"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "bolo-audio",
@@ -273,14 +273,14 @@ dependencies = [
 
 [[package]]
 name = "bolo-ffi"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "bolo-core",
 ]
 
 [[package]]
 name = "bolo-format"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "reqwest",
  "serde",
@@ -290,7 +290,7 @@ dependencies = [
 
 [[package]]
 name = "bolo-models"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "bzip2 0.6.1",
  "hex",
@@ -306,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "bolo-store"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -315,7 +315,7 @@ dependencies = [
 
 [[package]]
 name = "bolo-stt"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "bolo-audio",
