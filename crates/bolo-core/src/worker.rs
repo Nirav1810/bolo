@@ -60,6 +60,8 @@ pub(crate) struct Worker {
     events: Arc<dyn EngineEvents>,
     state: Arc<Mutex<DictationState>>,
     factory: AudioFactory,
+    /// Set by `Engine::with_stt_engine`: used instead of building from `config.engines`.
+    injected_stt: Option<Arc<dyn SttEngine>>,
     manifest: Manifest,
     http: reqwest::Client,
     rt: Runtime,
@@ -85,6 +87,7 @@ impl Worker {
         events: Arc<dyn EngineEvents>,
         state: Arc<Mutex<DictationState>>,
         factory: AudioFactory,
+        injected_stt: Option<Arc<dyn SttEngine>>,
     ) -> Result<Self, BoloError> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -99,6 +102,7 @@ impl Worker {
             events,
             state,
             factory,
+            injected_stt,
             manifest,
             http,
             rt,
@@ -127,7 +131,10 @@ impl Worker {
 
     fn ensure_stt(&mut self) -> Result<Arc<dyn SttEngine>, BoloError> {
         if self.stt.is_none() {
-            self.stt = Some(build_stt(&self.config, &self.manifest, &self.http)?);
+            self.stt = Some(match &self.injected_stt {
+                Some(engine) => BuiltStt { engine: engine.clone(), vad_model: None },
+                None => build_stt(&self.config, &self.manifest, &self.http)?,
+            });
         }
         self.stt.as_ref().map(|b| b.engine.clone()).ok_or_else(|| BoloError::Config("engine unavailable".into()))
     }
