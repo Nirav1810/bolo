@@ -6,7 +6,7 @@
 |---|---|---|
 | `bolo-core` | Dictation state machine, pipeline orchestration, public `Engine` API | API surface (M1); orchestration lands in M1 phase 2 |
 | `bolo-audio` | 16 kHz mono pipeline; WAV encode/decode; FFT resampling (rubato); live capture (cpal, feature `capture`) | encode/decode/resample ✅; capture next |
-| `bolo-stt` | `SttEngine` trait; local (sherpa-onnx), Groq, Deepgram, Sarvam; fallback chain with per-engine timeout | ✅ |
+| `bolo-stt` | `SttEngine` trait; local (sherpa-onnx), Groq, Deepgram (batch and live WebSocket), Sarvam; fallback chain with per-engine timeout | ✅ |
 | `bolo-models` | `models/manifest.json` registry; resumable SHA-256-verified downloader (GitHub API fallback); RAM-tier recommendation | ✅ |
 | `bolo-format` | Rules engine, LLM cleanup, formatter, Devanagari→Roman transliteration | M2 |
 | `bolo-store` | Settings TOML, SQLite history, secrets | M3 |
@@ -21,6 +21,7 @@ Dependency direction: `core → {audio, stt, format}`, `stt → {audio, models}`
 hotkey down / mic tap ──► prewarm(): local model load  |  HEAD to provider (TLS + h2 ready)
 capture (cpal) 16 kHz f32 ──► Silero VAD ──► STT
      streaming (Nemotron): frames → OnlineStream, partials → on_partial
+     streaming (deepgram-stream): PCM16 frames → WebSocket, interim results → on_partial
      batch (Parakeet/Qwen3/Moonshine/Whisper/cloud): each VAD segment decoded at the pause
 hotkey up ──► finalize last segment ──► rules (<1 ms) ──► [LLM, skippable] ──► format ──► insert
 ```
@@ -38,6 +39,17 @@ hotkey up ──► finalize last segment ──► rules (<1 ms) ──► [LLM
 - **At release**, if the Hindi pass's latest text already decides the language, only the chosen pass is finished, so Auto adds nothing after release. Otherwise both are finished in parallel and the rule runs on their final text.
 - **Auto on other engines**: their own multilingual mode (Deepgram `language=multi`).
 - `FormattedOutput::language` reports the choice (`Auto` when the engine decided).
+
+### Deepgram live streaming
+
+The `deepgram-stream` engine spec (`bolo_stt::cloud::DeepgramStreamEngine`) opens one WebSocket per dictation, on its own thread with a single-threaded tokio runtime:
+
+- `accept` turns audio into 40 ms PCM16 frames and queues them, so it stays a channel send. Audio spoken before the connection is up is queued, not lost.
+- Interim `Results` replace the running text and final ones append to it. Each change becomes a partial.
+- At release it sends `Finalize` then `CloseStream`. The dictation ends on the `from_finalize` result, or on `Metadata` or the close frame when Deepgram sends no flush. The budget is 2.5 s.
+- TLS is rustls with ring and the OS verifier, the same trust as the shared reqwest client. The key goes only in the upgrade request's `Authorization` header.
+- `transcribe` (used by `bolo run` and fallback chains) goes to the batch endpoint.
+- **Fallback.** In a chain, `FallbackEngine::stream` keeps the dictation's audio next to the primary's stream. If the stream fails at release (refused key, dropped connection, timeout), the rest of the chain transcribes that audio.
 
 ## Engine lifecycle (RAM/battery)
 

@@ -74,7 +74,7 @@ enum Cmd {
     /// Live dictation from the terminal: Enter = start/stop; result is copied to the clipboard.
     Dictate {
         /// Engine: a local model id (`nemotron-stream`, `parakeet-v2-en`, …) or a cloud
-        /// provider (`deepgram`, `groq`, `sarvam`; key from DEEPGRAM_API_KEY etc.).
+        /// provider (`deepgram`, `deepgram-stream`, `groq`, `sarvam`; key from DEEPGRAM_API_KEY etc.).
         #[arg(long, short, default_value = "nemotron-stream", alias = "model")]
         engine: String,
         /// Language mode: `auto` decodes English and Hindi side by side and picks one per
@@ -286,6 +286,10 @@ async fn main() -> Result<()> {
         Cmd::Replay { engine, lang, speed, clips, limit } => {
             if !(speed.is_finite() && speed > 0.0) {
                 bail!("--speed must be a positive number");
+            }
+            // Deepgram's live endpoint accepts audio at no more than 1.25x real time.
+            if engine.starts_with("deepgram-stream") && speed > 1.25 {
+                bail!("deepgram-stream takes audio at up to 1.25x real time; use --speed 1");
             }
             let aliases = load_aliases(&clips);
             tokio::task::block_in_place(|| {

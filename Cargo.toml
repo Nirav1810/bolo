@@ -63,6 +63,10 @@ bzip2 = "0.6"
 # (no cmake/nasm), and is smaller. See docs/DECISIONS.md ADR-004.
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "json", "multipart", "query"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+# Deepgram live streaming (WebSocket). Our own rustls ClientConfig (ring + the platform
+# verifier, same trust store as reqwest) is passed in, so the bundled roots stay unused.
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
+rustls-platform-verifier = "0.7"
 
 # audio
 cpal = "0.18"
