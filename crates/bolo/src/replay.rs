@@ -53,19 +53,15 @@ pub fn run(
 ) -> Result<()> {
     let clips = crate::load_clips(clips_dir)?;
     let clips: Vec<_> = clips.into_iter().take(limit).collect();
-    let mut config = EngineConfig {
+    let config = EngineConfig {
         engines: vec![engine_spec.to_owned()],
         language,
         models_dir: models_dir.to_path_buf(),
         mic_warm_secs: 0, // reopen the "mic" (next clip) every dictation
         idle_unload_secs: 3600,
+        api_keys: crate::api_keys_from_env(),
         ..Default::default()
     };
-    for p in ["deepgram", "groq", "sarvam"] {
-        if let Some(k) = crate::env_nonempty(&format!("{}_API_KEY", p.to_uppercase())) {
-            config.api_keys.set(p, k);
-        }
-    }
     // The "mic" plays whichever clip is current.
     let current: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
     let cur = current.clone();
