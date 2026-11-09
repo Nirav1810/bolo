@@ -56,6 +56,19 @@ Models are downloaded on demand from upstream, SHA-256 verified, and never bundl
 
 Direct pushes, force pushes and merge commits on `main` are blocked. GitHub's Revert button titles its PR `Revert "…"`, so rename it to `revert: …` before merging.
 
+### Releasing
+
+One version for everything, cut from `main` as `vX.Y.Z` (stable) or `vX.Y.Z-beta.N` (beta prerelease). Before 1.0 every release is marked as a prerelease, because the Windows build isn't code-signed yet. You need [git-cliff](https://git-cliff.org) (`pip install git-cliff`) and the GitHub CLI.
+
+```sh
+python -I scripts/release.py 0.1.0 --dry-run   # show the version bump and changelog diff
+python -I scripts/release.py 0.1.0             # branch, bump, regenerate CHANGELOG.md, open the PR
+# after the `chore(release): v0.1.0` PR is squash-merged, on the updated main:
+python -I scripts/release.py tag 0.1.0         # tag and push; .github/workflows/release.yml publishes
+```
+
+The tag workflow builds `bolo` for Windows x64 and zips it with the sherpa-onnx DLLs, `README.txt` and the licences. It runs the unzipped `bolo --help` with nothing but Windows on `PATH`, then publishes the GitHub Release with that version's `CHANGELOG.md` section as notes. Don't edit `CHANGELOG.md` by hand. Each release PR regenerates it from the commit titles ([cliff.toml](cliff.toml)), and a stable release folds its betas into one section.
+
 ## License
 
 MIT OR Apache-2.0.

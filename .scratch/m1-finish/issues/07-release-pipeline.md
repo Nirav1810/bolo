@@ -11,17 +11,21 @@ It is proven end to end by publishing `v0.1.0-beta.1`.
 
 **Status:** ready-for-agent
 
-- [ ] Release script:
+- [x] Release script:
   - takes `X.Y.Z` or `X.Y.Z-beta.N`;
   - refuses to run unless on a clean, up-to-date `main`;
   - creates a release branch, bumps the workspace version and regenerates `CHANGELOG.md` with git-cliff;
   - opens a `chore(release): vX.Y.Z` PR;
   - `--dry-run` prints the planned changes.
-- [ ] git-cliff config groups commits by Conventional Commit type and skips `chore(release)` commits.
-- [ ] CI runs the release script's dry run and checks that the version is consistent across manifests.
-- [ ] Tag workflow (`v*`):
+- [x] git-cliff config groups commits by Conventional Commit type and skips `chore(release)` commits.
+- [x] CI runs the release script's dry run and checks that the version is consistent across manifests.
+- [x] Tag workflow (`v*`):
   - builds `bolo` in release mode on Windows x64;
   - zips it with the sherpa-onnx shared libs, README and licence files;
   - publishes a GitHub Release with that version's changelog section;
   - marks `-beta.` tags as prereleases.
 - [ ] `v0.1.0-beta.1` is published, and the downloaded zip runs `bolo --help` on a clean Windows machine or profile.
+
+## Comments
+
+- 2026-11-09: Pipeline landed in the `ci(release)` PR. `scripts/release.py` (prepare / tag / check / notes / package / publish), `cliff.toml`, `.github/workflows/release.yml`. `bolo.exe` now links the MSVC CRT statically (`.cargo/config.toml`): before that it imported `VCRUNTIME140.dll`, which a clean Windows machine lacks. The tag workflow smoke-tests the unzipped CLI with only `System32` on PATH. 0.x releases are marked prerelease (unsigned preview, per ticket 08), and betas always are. Remaining: publish `v0.1.0-beta.1` and run the zip on a clean profile.

@@ -1,0 +1,61 @@
+name: release
+
+# Pushing a `vX.Y.Z` or `vX.Y.Z-beta.N` tag (made by `scripts/release.py tag`, ADR-0013)
+# builds the Windows x64 `bolo` CLI zip and publishes the GitHub Release. Notes come from
+# the tagged CHANGELOG.md; `-beta.` and 0.x tags are prereleases.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    permissions:
+      contents: write # create the release and upload the zip
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Tag matches the manifests and is on main
+        run: python -I scripts/release.py check --tag "$GITHUB_REF_NAME" --on-main
+      - uses: dtolnay/rust-toolchain@stable
+      # No build cache: release binaries are built from scratch.
+      - name: "Fetch verified sherpa-onnx prebuilt libs (ADR-008)"
+        run: python -I scripts/fetch-sherpa-libs.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # .cargo/config.toml links the C runtime statically, so the zip needs no VC++ redist.
+      - run: cargo build --release --locked -p bolo
+      - name: Zip bolo.exe with the sherpa-onnx DLLs, README and licences
+        run: python -I scripts/release.py package "$GITHUB_REF_NAME"
+      # Unzip into an empty folder and run it with only Windows' own folders on PATH, so a
+      # DLL that only the build machine has fails here instead of on a user's machine.
+      - name: Smoke-test the zip in isolation
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP smoke
+          Expand-Archive (Get-Item dist\*.zip).FullName $dir
+          $exe = (Get-ChildItem $dir -Recurse -Filter bolo.exe).FullName
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          & $exe --help
+          if ($LASTEXITCODE -ne 0) { throw "bolo --help exited $LASTEXITCODE" }
+          $version = & $exe --version
+          if ($version -ne "bolo $($env:GITHUB_REF_NAME.Substring(1))") { throw "unexpected version: $version" }
+          Write-Output "ok: $version"
+      - name: Publish the GitHub Release
+        run: python -I scripts/release.py publish "$GITHUB_REF_NAME" dist/*.zip dist/*.zip.sha256
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -4,3 +4,9 @@
 # Outside target/ so CI caches can't restore a build-script result without its libs.
 [env]
 SHERPA_ONNX_LIB_DIR = { value = ".cache/sherpa-lib", relative = true }
+
+# Link the MSVC C runtime statically, so `bolo.exe` runs on a clean Windows install that
+# has no Visual C++ Redistributable (the release zip ships no VCRUNTIME140.dll). The
+# sherpa-onnx libs above are the matching static-CRT ("MT") build.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

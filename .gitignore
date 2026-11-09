@@ -13,3 +13,4 @@ apps/android/local.properties
 *.jks
 .env
 __pycache__/
+/dist
