@@ -1,0 +1,91 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/bolo-core",
+    "crates/bolo-audio",
+    "crates/bolo-stt",
+    "crates/bolo-format",
+    "crates/bolo-models",
+    "crates/bolo-store",
+    "crates/bolo-ffi",
+    "crates/bolo-bench",
+]
+default-members = [
+    "crates/bolo-core",
+    "crates/bolo-audio",
+    "crates/bolo-stt",
+    "crates/bolo-format",
+    "crates/bolo-models",
+    "crates/bolo-store",
+    "crates/bolo-bench",
+]
+
+# Single source of truth for the version: Tauri and Gradle both read this.
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bolo-dictation/bolo"
+authors = ["Bolo contributors"]
+
+[workspace.dependencies]
+# internal
+bolo-core = { path = "crates/bolo-core" }
+bolo-audio = { path = "crates/bolo-audio" }
+bolo-stt = { path = "crates/bolo-stt" }
+bolo-format = { path = "crates/bolo-format" }
+bolo-models = { path = "crates/bolo-models" }
+bolo-store = { path = "crates/bolo-store" }
+
+# async / errors / logging
+tokio = { version = "1.54", default-features = false }
+futures = { version = "0.3", default-features = false, features = ["std"] }
+async-trait = "0.1"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi"] }
+
+# data
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+sha2 = "0.11"
+hex = "0.4"
+tar = { version = "0.4", default-features = false }
+bzip2 = "0.6"
+
+# net (rustls only; no OpenSSL anywhere). We use the `ring` crypto provider instead of
+# reqwest's default aws-lc-rs: ring builds with plain `cc` on MSVC and the Android NDK
+# (no cmake/nasm), and is smaller. See docs/DECISIONS.md ADR-004.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "json", "multipart", "query"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+
+# audio
+cpal = "0.18"
+rubato = "5"
+hound = "3.5"
+ringbuf = "0.6"
+
+# local inference: prebuilt libs downloaded by sherpa-onnx-sys (no cmake). Link mode is
+# chosen by bolo-stt features `sherpa-shared` (default) / `sherpa-static`. ADR-003.
+sherpa-onnx = { version = "=2.0.1", default-features = false }
+
+# cli
+clap = { version = "4.6", features = ["derive"] }
+csv = "1.4"
+directories = "6"
+sysinfo = { version = "0.40", default-features = false, features = ["system"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
+opt-level = 3
+
+# Bench needs symbols-free but fast builds; inherits release.
+[profile.bench-release]
+inherits = "release"
+panic = "unwind"

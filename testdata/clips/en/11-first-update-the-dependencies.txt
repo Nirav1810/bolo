@@ -1,0 +1,1 @@
+First, update the dependencies. Second, run the tests. Third, deploy to staging.

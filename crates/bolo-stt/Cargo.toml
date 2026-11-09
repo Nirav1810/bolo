@@ -1,0 +1,35 @@
+[package]
+name = "bolo-stt"
+description = "Speech-to-text engines for Bolo: local (sherpa-onnx) and BYOK cloud (Groq, Deepgram, Sarvam)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["local", "cloud", "sherpa-shared"]
+local = ["dep:sherpa-onnx", "dep:bolo-models"]
+# sherpa-onnx + onnxruntime as DLLs next to the exe (copied by sherpa-onnx-sys). Works with
+# any MSVC toolset; Android/iOS are always shared.
+sherpa-shared = ["sherpa-onnx?/shared"]
+# Single static exe. The prebuilt Windows static lib needs MSVC >= 14.44 (VS 17.14) and
+# the static CRT (`-C target-feature=+crt-static`). Mutually exclusive with sherpa-shared.
+sherpa-static = ["sherpa-onnx?/static"]
+cloud = ["dep:reqwest", "dep:rustls", "dep:serde_json"]
+
+[dependencies]
+bolo-audio = { workspace = true }
+bolo-models = { workspace = true, optional = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["time", "sync", "rt"] }
+reqwest = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+sherpa-onnx = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

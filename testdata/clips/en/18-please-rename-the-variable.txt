@@ -1,0 +1,1 @@
+Please rename the variable user count to active users and move it into the config file.

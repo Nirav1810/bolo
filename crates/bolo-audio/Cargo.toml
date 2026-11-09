@@ -1,0 +1,23 @@
+[package]
+name = "bolo-audio"
+description = "Audio capture, 16 kHz resampling, VAD and encoding for Bolo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["wav-file"]
+# Read .wav files (bench, tests).
+wav-file = ["dep:hound"]
+# Live microphone capture (desktop: WASAPI, Android: AAudio). Implemented in M1 phase 2.
+capture = ["dep:cpal", "dep:ringbuf"]
+
+[dependencies]
+thiserror = { workspace = true }
+tracing = { workspace = true }
+rubato = { workspace = true }
+hound = { workspace = true, optional = true }
+cpal = { workspace = true, optional = true }
+ringbuf = { workspace = true, optional = true }

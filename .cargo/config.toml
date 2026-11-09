@@ -1,0 +1,5 @@
+# sherpa-onnx-sys downloads prebuilt libs without verifying them, and GitHub's direct
+# release-download route is sometimes unavailable. We pre-fetch the exact archive with a
+# SHA-256 check (scripts/fetch-sherpa-libs.py) and point the build script at it.
+[env]
+SHERPA_ONNX_ARCHIVE_DIR = { value = ".cache/sherpa-archives", relative = true }

@@ -1,0 +1,15 @@
+[package]
+name = "bolo-ffi"
+description = "UniFFI bindings to Kotlin for the Android app (M5)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["lib", "cdylib"]
+name = "bolo_ffi"
+
+[dependencies]
+bolo-core = { workspace = true }

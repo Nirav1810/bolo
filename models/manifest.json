@@ -1,0 +1,304 @@
+{
+  "schema_version": 1,
+  "manifest_version": "2026.11.09",
+  "sherpa_onnx_version": "2.0.1",
+  "verified_at": "2026-11-09",
+  "notes": "Sizes and sha256 from the GitHub release API `digest` field (k2-fsa/sherpa-onnx, tag asr-models) and HF tree API. sherpa re-uploads packages occasionally (e.g. Parakeet on 2026-11-07); a hash mismatch means re-verify, never skip verification. Models are never bundled; they are downloaded on demand.",
+  "models": [
+    {
+      "id": "nemotron-stream",
+      "name": "NVIDIA Nemotron 3.5 ASR Streaming 0.6B (int8, 320 ms chunks)",
+      "kind": "asr",
+      "family": "online-transducer",
+      "streaming": true,
+      "languages": ["en", "hi", "auto"],
+      "hindi_script": "devanagari",
+      "status": "available",
+      "min_sherpa_onnx": "1.13.5",
+      "license": {
+        "id": "OpenMDW-1.1",
+        "redistributable": true,
+        "commercial": true,
+        "url": "https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b",
+        "attribution": "NVIDIA Nemotron 3.5 ASR Streaming 0.6B, OpenMDW-1.1. Keep license text and notices."
+      },
+      "upstream": { "repo": "nvidia/nemotron-3.5-asr-streaming-0.6b", "revision": "ea30d66debe3740a08b573244286791d423d6b3e" },
+      "download": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-320ms-int8-2026-06-11.tar.bz2",
+        "sha256": "5f311142337a5c161e92d49f7a3009d8607d3836f39d610bff5307c74d1d2c53",
+        "size_bytes": 475272949,
+        "archive": "tar.bz2",
+        "root_dir": "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-320ms-int8-2026-06-11"
+      },
+      "files": { "encoder": "encoder.int8.onnx", "decoder": "decoder.int8.onnx", "joiner": "joiner.int8.onnx", "tokens": "tokens.txt" },
+      "options": { "stream_language_option": "language" },
+      "unpacked_size_bytes": 682215356,
+      "min_ram_mb": 1400,
+      "tiers": ["desktop", "android-high"],
+      "notes": "Cache-aware FastConformer-RNNT, 40 locales; hi-IN is transcription-ready. Language set per stream via SetOption(\"language\", \"en\"|\"hi\"|\"auto\"). Code-switched Hinglish not claimed by NVIDIA; Hindi words come out in Devanagari, so Roman output needs transliteration (bolo-format). Other chunk sizes: 80/160/560/1120 ms (see nemotron-stream-560)."
+    },
+    {
+      "id": "nemotron-stream-560",
+      "name": "NVIDIA Nemotron 3.5 ASR Streaming 0.6B (int8, 560 ms chunks)",
+      "kind": "asr",
+      "family": "online-transducer",
+      "streaming": true,
+      "languages": ["en", "hi", "auto"],
+      "hindi_script": "devanagari",
+      "status": "available",
+      "min_sherpa_onnx": "1.13.5",
+      "license": {
+        "id": "OpenMDW-1.1",
+        "redistributable": true,
+        "commercial": true,
+        "url": "https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b",
+        "attribution": "NVIDIA Nemotron 3.5 ASR Streaming 0.6B, OpenMDW-1.1. Keep license text and notices."
+      },
+      "upstream": { "repo": "nvidia/nemotron-3.5-asr-streaming-0.6b", "revision": "ea30d66debe3740a08b573244286791d423d6b3e" },
+      "download": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11.tar.bz2",
+        "sha256": "c6bf5e0df765f9d5b43bc9e0536d4b4b3e7d40bdf5ecf13e45f134c51c05ae3a",
+        "size_bytes": 475271763,
+        "archive": "tar.bz2",
+        "root_dir": "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11"
+      },
+      "files": { "encoder": "encoder.int8.onnx", "decoder": "decoder.int8.onnx", "joiner": "joiner.int8.onnx", "tokens": "tokens.txt" },
+      "options": { "stream_language_option": "language" },
+      "unpacked_size_bytes": 682215356,
+      "min_ram_mb": 1400,
+      "tiers": ["desktop"],
+      "notes": "Bench candidate: larger chunks trade partial-text latency for accuracy."
+    },
+    {
+      "id": "parakeet-v3",
+      "name": "NVIDIA Parakeet TDT 0.6B v3 (int8)",
+      "kind": "asr",
+      "family": "offline-nemo-transducer",
+      "streaming": false,
+      "languages": ["en", "bg", "hr", "cs", "da", "nl", "et", "fi", "fr", "de", "el", "hu", "it", "lv", "lt", "mt", "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru", "uk"],
+      "hindi_script": null,
+      "status": "available",
+      "min_sherpa_onnx": "1.12.9",
+      "license": {
+        "id": "CC-BY-4.0",
+        "redistributable": true,
+        "commercial": true,
+        "url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3",
+        "attribution": "NVIDIA Parakeet TDT 0.6B v3, CC-BY-4.0."
+      },
+      "upstream": { "repo": "csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8", "revision": "ed5d745623472f97cfc2e6c2916ee248798fc5a8" },
+      "download": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
+        "sha256": "1495e91b59d7fc53ddca91f3431758ec99f8fa253fdb0e1e851be0f72b14b0f9",
+        "size_bytes": 487211443,
+        "archive": "tar.bz2",
+        "root_dir": "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
+      },
+      "files": { "encoder": "encoder.int8.onnx", "decoder": "decoder.int8.onnx", "joiner": "joiner.int8.onnx", "tokens": "tokens.txt" },
+      "options": { "model_type": "nemo_transducer" },
+      "unpacked_size_bytes": 670576784,
+      "min_ram_mb": 1300,
+      "tiers": ["desktop"],
+      "notes": "25 European languages, not English-only as the spec assumed; no Hindi. For English-only dictation prefer parakeet-v2-en (lower English WER per sherpa's model card)."
+    },
+    {
+      "id": "parakeet-v2-en",
+      "name": "NVIDIA Parakeet TDT 0.6B v2 English (int8)",
+      "kind": "asr",
+      "family": "offline-nemo-transducer",
+      "streaming": false,
+      "languages": ["en"],
+      "hindi_script": null,
+      "status": "available",
+      "min_sherpa_onnx": "1.12.0",
+      "license": {
+        "id": "CC-BY-4.0",
+        "redistributable": true,
+        "commercial": true,
+        "url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2",
+        "attribution": "NVIDIA Parakeet TDT 0.6B v2, CC-BY-4.0."
+      },
+      "upstream": { "repo": "nvidia/parakeet-tdt-0.6b-v2", "revision": null },
+      "download": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
+        "sha256": "6fc4426b54aa549a0019b8a75b8dea59164e71790a37ac56a045ad57f915f714",
+        "size_bytes": 482440461,
+        "archive": "tar.bz2",
+        "root_dir": "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8"
+      },
+      "files": { "encoder": "encoder.int8.onnx", "decoder": "decoder.int8.onnx", "joiner": "joiner.int8.onnx", "tokens": "tokens.txt" },
+      "options": { "model_type": "nemo_transducer" },
+      "unpacked_size_bytes": null,
+      "min_ram_mb": 1300,
+      "tiers": ["desktop"],
+      "notes": "Added beyond the spec: the English-only Parakeet the spec intended. min_sherpa_onnx not separately verified (predates v3 support); we pin 2.0.1 anyway."
+    },
+    {
+      "id": "qwen3-asr",
+      "name": "Qwen3-ASR 0.6B (int8)",
+      "kind": "asr",
+      "family": "offline-qwen3-asr",
+      "streaming": false,
+      "languages": ["en", "hi", "auto"],
+      "hindi_script": "devanagari",
+      "status": "available",
+      "min_sherpa_onnx": "1.13.7",
+      "license": {
+        "id": "Apache-2.0",
+        "redistributable": true,
+        "commercial": true,
+        "url": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B",
+        "attribution": "Qwen3-ASR-0.6B by Alibaba Qwen, Apache-2.0."
+      },
+      "upstream": { "repo": "csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25", "revision": "68818b2313fe77bd06f6a7c5068ff3ef59d02b8a" },
+      "download": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25.tar.bz2",
+        "sha256": "393f8a14e2f5fb96746aaab342997a40641001fbd5bf9592a080a8329178ee96",
+        "size_bytes": 878702423,
+        "archive": "tar.bz2",
+        "root_dir": "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25"
+      },
+      "files": { "conv_frontend": "conv_frontend.onnx", "encoder": "encoder.int8.onnx", "decoder": "decoder.int8.onnx", "tokenizer": "tokenizer" },
+      "options": {},
+      "unpacked_size_bytes": 982554174,
+      "min_ram_mb": 1800,
+      "tiers": ["desktop"],
+      "notes": "Base model; the baseline for the Srota Hinglish fine-tune and a usable Hindi/English engine on its own. Supports hotwords."
+    },
+    {
+      "id": "qwen3-asr-hinglish",
+      "name": "Qwen3-ASR 0.6B Hinglish fine-tune (Srota)",
+      "kind": "asr",
+      "family": "offline-qwen3-asr",
+      "streaming": false,
+      "languages": ["en", "hi", "auto"],
+      "hindi_script": "mixed",
+      "status": "needs-export",
+      "min_sherpa_onnx": "1.13.7",
+      "license": {
+        "id": "Apache-2.0",
+        "redistributable": true,
+        "commercial": true,
+        "url": "https://huggingface.co/moorlee/qwen3-asr-0.6b-hinglish",
+        "attribution": "Srota (moorlee/qwen3-asr-0.6b-hinglish), Apache-2.0, fine-tune of Qwen3-ASR-0.6B."
+      },
+      "upstream": {
+        "repo": "moorlee/qwen3-asr-0.6b-hinglish",
+        "revision": "188ae2b61f932feb998e3b3c7a868e927a467031",
+        "source_file": "model.safetensors",
+        "source_sha256": "87dfcb5780623483746dddf5121ec0f324e7bf40b1938628b0102d868eb330a0",
+        "source_size_bytes": 1564926456
+      },
+      "download": null,
+      "files": { "conv_frontend": "conv_frontend.onnx", "encoder": "encoder.int8.onnx", "decoder": "decoder.int8.onnx", "tokenizer": "tokenizer" },
+      "options": {},
+      "unpacked_size_bytes": null,
+      "min_ram_mb": 1800,
+      "tiers": ["desktop"],
+      "notes": "Only safetensors upstream; no ONNX anywhere. We must export with the Qwen3-ASR-onnx script that sherpa docs reference, int8-quantize, and host on GitHub Releases (Apache-2.0 allows it). Output mixes Devanagari and Latin, so Roman output needs transliteration. Clean export of a fine-tuned checkpoint is unverified."
+    },
+    {
+      "id": "moonshine-tiny",
+      "name": "Moonshine v2 Tiny English (quantized)",
+      "kind": "asr",
+      "family": "offline-moonshine-v2",
+      "streaming": false,
+      "languages": ["en"],
+      "hindi_script": null,
+      "status": "available",
+      "min_sherpa_onnx": "2.0.0",
+      "license": {
+        "id": "MIT",
+        "redistributable": true,
+        "commercial": true,
+        "url": "https://github.com/moonshine-ai/moonshine",
+        "attribution": "Moonshine (English models) by Moonshine AI, MIT. Non-English Moonshine models use a non-commercial community license: never add them."
+      },
+      "upstream": { "repo": "csukuangfj2/sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27", "revision": "d1e6c30921780b8508d04b492dfb3ce8a51605d4" },
+      "download": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27.tar.bz2",
+        "sha256": "9ec31b342d8fa3240c3b81b8f82e1cf7e3ac467c93ca5a999b741d5887164f8d",
+        "size_bytes": 29858559,
+        "archive": "tar.bz2",
+        "root_dir": "sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27"
+      },
+      "files": { "encoder": "encoder_model.ort", "merged_decoder": "decoder_model_merged.ort", "tokens": "tokens.txt" },
+      "options": {},
+      "unpacked_size_bytes": 44243206,
+      "min_ram_mb": 250,
+      "tiers": ["desktop", "android-high", "android-low"],
+      "notes": "Low-end phones, English only. Pair with VAD for pseudo-streaming."
+    },
+    {
+      "id": "whisper-base-hinglish",
+      "name": "Whisper-base Hinglish (Oriserve Whisper-Hindi2Hinglish-Swift)",
+      "kind": "asr",
+      "family": "offline-whisper",
+      "streaming": false,
+      "languages": ["en", "hi", "auto"],
+      "hindi_script": "roman",
+      "status": "needs-export",
+      "min_sherpa_onnx": "2.0.0",
+      "license": {
+        "id": "Apache-2.0",
+        "redistributable": true,
+        "commercial": true,
+        "url": "https://huggingface.co/Oriserve/Whisper-Hindi2Hinglish-Swift",
+        "attribution": "Whisper-Hindi2Hinglish-Swift by Oriserve, Apache-2.0, fine-tune of openai/whisper-base (MIT)."
+      },
+      "upstream": {
+        "repo": "Oriserve/Whisper-Hindi2Hinglish-Swift",
+        "revision": "cd0d4d013062d542569135460a79025337df1982",
+        "source_file": "model.safetensors",
+        "source_sha256": "235b2a5dfee28f64da3659954f8f644decc82dada8a07971b9a2246ded9594cb",
+        "source_size_bytes": 290403936
+      },
+      "download": null,
+      "files": { "encoder": "base-encoder.int8.onnx", "decoder": "base-decoder.int8.onnx", "tokens": "base-tokens.txt" },
+      "options": { "whisper_language": "", "whisper_task": "transcribe" },
+      "unpacked_size_bytes": null,
+      "min_ram_mb": 350,
+      "tiers": ["android-low", "desktop"],
+      "notes": "Outputs Roman-script Hinglish natively, which is exactly what we want. Existing HF ONNX copies use the optimum/transformers.js layout, which sherpa can't load. Export path: HF->OpenAI .pt (the repo's convert_hf2openai), then sherpa scripts/whisper/export-onnx.py patched to load a local .pt, reusing the multilingual base-tokens.txt. Then int8 and host on GitHub Releases with NOTICE."
+    },
+    {
+      "id": "silero-vad",
+      "name": "Silero VAD (k2-fsa export)",
+      "kind": "vad",
+      "family": "silero-vad",
+      "streaming": true,
+      "languages": [],
+      "hindi_script": null,
+      "status": "available",
+      "min_sherpa_onnx": "1.12.6",
+      "license": {
+        "id": "MIT",
+        "redistributable": true,
+        "commercial": true,
+        "url": "https://github.com/snakers4/silero-vad",
+        "attribution": "Silero VAD, MIT."
+      },
+      "upstream": { "repo": "snakers4/silero-vad", "revision": null },
+      "download": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx",
+        "sha256": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+        "size_bytes": 643854,
+        "archive": null,
+        "root_dir": null
+      },
+      "files": { "model": "silero_vad.onnx" },
+      "options": {},
+      "unpacked_size_bytes": 643854,
+      "min_ram_mb": 20,
+      "tiers": ["desktop", "android-high", "android-low"],
+      "notes": "16 kHz only. int8 variant: silero_vad.int8.onnx (212860 B, sha256 c36d490aff5ab924ca6c7aeec4d8f6bd3d22db6fa17611b9c5b17eae58ac3a20). Small enough to ship inside the app (MIT); kept as download for uniformity. TEN-VAD is rejected: Apache-2.0 plus non-compete conditions."
+    }
+  ],
+  "defaults": {
+    "desktop": "nemotron-stream",
+    "android-high": "nemotron-stream",
+    "android-low": "moonshine-tiny",
+    "android-low-hinglish": "whisper-base-hinglish"
+  },
+  "tier_thresholds_mb": { "android-high": 6000 }
+}

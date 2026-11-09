@@ -1,0 +1,34 @@
+[package]
+name = "bolo-bench"
+description = "Benchmark STT engines on recorded clips: WER/CER, latency, RSS, cost"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "bolo-bench"
+path = "src/main.rs"
+
+[dependencies]
+bolo-audio = { workspace = true, features = ["capture"] }
+bolo-stt = { workspace = true }
+bolo-models = { workspace = true }
+bolo-format = { workspace = true, features = ["llm"] }
+anyhow = { workspace = true }
+# loads keys from the git-ignored .env (dev convenience; apps use the OS keychain)
+dotenvy = "0.15"
+# clipboard for `dictate` (bench only; the apps use native clipboard APIs)
+arboard = { version = "3.7", default-features = false }
+clap = { workspace = true }
+csv = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+sysinfo = { workspace = true }
+directories = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "fs"] }

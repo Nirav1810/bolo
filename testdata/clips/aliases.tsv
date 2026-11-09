@@ -1,0 +1,5 @@
+# variant<TAB>canonical — accepted Hinglish spelling variants for WER (see docs/BENCH.md).
+# Avoid entries that collide with English words (e.g. "he", "main").
+nahin	nahi
+nhi	nahi
+kia	kya

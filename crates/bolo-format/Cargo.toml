@@ -1,0 +1,19 @@
+[package]
+name = "bolo-format"
+description = "Rules engine, LLM cleanup and output formatting for Bolo (M2)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+# Layer 2 LLM cleanup (Claude BYOK). Off by default so formatting stays dependency-free.
+llm = ["dep:reqwest", "dep:serde_json", "dep:thiserror"]
+
+[dependencies]
+serde = { workspace = true }
+reqwest = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }

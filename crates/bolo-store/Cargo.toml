@@ -1,0 +1,13 @@
+[package]
+name = "bolo-store"
+description = "Settings (TOML), history (SQLite) and secrets abstraction for Bolo (M3)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }

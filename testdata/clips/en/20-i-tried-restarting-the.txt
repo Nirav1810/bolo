@@ -1,0 +1,1 @@
+I tried restarting the server twice but the error keeps coming back, so I think it's a memory leak in the cache layer.

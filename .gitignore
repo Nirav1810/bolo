@@ -1,0 +1,14 @@
+/target
+/.cache
+/bench-results
+/bench-cache
+# user recordings stay local; references (.txt) and aliases.tsv may be committed
+testdata/clips/**/*.wav
+apps/desktop/node_modules
+apps/android/.gradle
+apps/android/build
+apps/android/app/build
+apps/android/local.properties
+*.keystore
+*.jks
+.env

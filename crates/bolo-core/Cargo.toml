@@ -1,0 +1,16 @@
+[package]
+name = "bolo-core"
+description = "Bolo session state machine and pipeline orchestration"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bolo-audio = { workspace = true }
+bolo-stt = { workspace = true, default-features = false }
+bolo-format = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

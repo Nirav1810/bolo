@@ -1,0 +1,21 @@
+# One utterance per line. Short / medium / long mix, real dictation style.
+Sounds good, see you tomorrow.
+Can you send me the report by Friday?
+Thanks, that works for me.
+I'll be ten minutes late, start without me.
+Please book a meeting room for three people at 4 pm on Thursday.
+The invoice number is 4 5 7 2 and the total comes to 1,250 dollars.
+Hey Priya, quick reminder that the design review moved to Monday morning.
+Let's go with option two, it's cheaper and we can ship it this week.
+Remind me to call the bank and ask about the credit card limit.
+Add milk, eggs, bread and coffee to the shopping list.
+First, update the dependencies. Second, run the tests. Third, deploy to staging.
+Let's meet on Tuesday, actually no, make it Wednesday after lunch.
+I pushed the fix to the main branch, can someone review the pull request?
+The function should return an empty vector if the input is null.
+Hi team, the release went out last night and so far we haven't seen any errors in the logs.
+Could you share the slides from yesterday's client call? I want to reuse the pricing section.
+My flight lands at 6 30 in the evening, so I can join the call from the airport.
+Please rename the variable user count to active users and move it into the config file.
+We need to finalize the budget, hire one more engineer, and decide on the launch date before the end of the quarter.
+I tried restarting the server twice but the error keeps coming back, so I think it's a memory leak in the cache layer.

@@ -1,0 +1,21 @@
+# Roman Hinglish, the way you'd type it on WhatsApp. One utterance per line.
+Haan theek hai, kal milte hain.
+Main thodi der mein call karta hoon.
+Bhai kahan pahunche?
+Kal meeting hai na, agenda bhej dena.
+Mujhe aaj office se jaldi nikalna hai, doctor ka appointment hai.
+Report Friday tak bhej dena please, client wait kar raha hai.
+Mummy ko bol dena ki main raat ko dinner pe nahi aaunga.
+Ye wala design zyada accha lag raha hai, isko final kar dete hain.
+Ghar ke liye doodh, bread, ande aur sabzi le aana.
+Pehle code review karo, phir tests chalao, aur uske baad deploy karna.
+Kal shaam ko chalte hain, nahi wait, parson chalte hain.
+Server phir se down ho gaya hai, koi check kar sakta hai kya?
+Maine payment kar diya hai, screenshot WhatsApp pe bhej diya.
+Team, is week ka standup Wednesday ko shift ho gaya hai.
+Aaj traffic bahut zyada hai, main pandrah minute late ho jaunga.
+Bro wo movie dekhi kya, mujhe toh second half bilkul pasand nahi aaya.
+Presentation mein pricing wala slide update karna hai, purane numbers galat hain.
+Agar budget approve ho gaya toh hum next month se naya project start kar sakte hain.
+Mujhe laga tha ki bug fix ho gaya hai lekin production mein abhi bhi wahi error aa raha hai.
+Sab log Saturday ko party ke liye free ho na, location main group mein share kar dunga.
