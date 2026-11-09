@@ -30,6 +30,18 @@ jobs:
         run: python -I scripts/fetch-sherpa-libs.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # sherpa-onnx-sys copies its shared libs into target/<profile> only when its build
+      # script runs, and rust-cache restores target/ without them. Point the loader at the
+      # verified libs directly so test binaries that link sherpa (bolo-core tests) start.
+      - name: Put sherpa-onnx shared libs on the runtime library path
+        shell: bash
+        run: |
+          lib="$GITHUB_WORKSPACE/.cache/sherpa-lib"
+          if [ "$RUNNER_OS" = Windows ]; then
+            cygpath -w "$lib" >> "$GITHUB_PATH"
+          else
+            echo "LD_LIBRARY_PATH=$lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          fi
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
