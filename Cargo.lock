@@ -258,6 +258,7 @@ dependencies = [
 name = "bolo-core"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "bolo-audio",
  "bolo-format",
  "bolo-models",

@@ -191,6 +191,27 @@ impl Engine {
         events: Box<dyn EngineEvents>,
         factory: AudioFactory,
     ) -> Result<Self, BoloError> {
+        Self::spawn(config, events, factory, None)
+    }
+
+    /// Engine on a custom audio source and an injected STT engine, which replaces the one
+    /// `config.engines` would build (and survives `update_config`). For tests that drive a
+    /// whole dictation with no models and no network.
+    pub fn with_stt_engine(
+        config: EngineConfig,
+        events: Box<dyn EngineEvents>,
+        factory: AudioFactory,
+        stt: Arc<dyn bolo_stt::SttEngine>,
+    ) -> Result<Self, BoloError> {
+        Self::spawn(config, events, factory, Some(stt))
+    }
+
+    fn spawn(
+        config: EngineConfig,
+        events: Box<dyn EngineEvents>,
+        factory: AudioFactory,
+        injected_stt: Option<Arc<dyn bolo_stt::SttEngine>>,
+    ) -> Result<Self, BoloError> {
         let state = Arc::new(Mutex::new(DictationState::Idle));
         let (tx, rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::channel();
@@ -199,7 +220,7 @@ impl Engine {
         // device handles are not guaranteed to be `Send`.
         let thread = std::thread::Builder::new()
             .name("bolo-engine".into())
-            .spawn(move || match Worker::new(config, Arc::from(events), st, factory) {
+            .spawn(move || match Worker::new(config, Arc::from(events), st, factory, injected_stt) {
                 Ok(worker) => {
                     let _ = ready_tx.send(Ok(()));
                     worker.run(rx);

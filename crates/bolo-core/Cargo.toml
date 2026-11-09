@@ -21,3 +21,4 @@ tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+async-trait = { workspace = true }
