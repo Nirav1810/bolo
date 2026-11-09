@@ -186,7 +186,8 @@ class Package(unittest.TestCase):
                         "bolo.exe", "onnxruntime.dll", "sherpa-onnx-c-api.dll"]
             self.assertEqual(names, sorted(f"{stem}/{n}" for n in expected))
             self.assertIn("Bolo 0.1.0-beta.1", readme)
-            self.assertTrue((tmp / "dist" / f"{stem}.zip.sha256").read_text().endswith(f"  {stem}.zip\n"))
+            sums = (tmp / "dist" / f"{stem}.zip.sha256").read_bytes()
+            self.assertRegex(sums, rb"^[0-9a-f]{64}  " + stem.encode() + rb"\.zip\n$")  # LF only
 
 
 if __name__ == "__main__":

@@ -358,7 +358,7 @@ def changelog_section(changelog: str, version: str) -> str:
 def notes(tag_name: str, output: str | None) -> int:
     text = changelog_section((ROOT / "CHANGELOG.md").read_text("utf-8"), parse_tag(tag_name))
     if output:
-        Path(output).write_text(text, "utf-8")
+        Path(output).write_bytes(text.encode("utf-8"))
     else:
         sys.stdout.buffer.write(text.encode("utf-8"))
     return 0
@@ -395,7 +395,9 @@ def package(tag_name: str) -> int:
         for name, data in files.items():
             z.writestr(f"{stem}/{name}", data)
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    (dist / f"{stem}.zip.sha256").write_text(f"{digest}  {archive.name}\n", "utf-8")
+    # Bytes, not write_text: on Windows that writes CRLF, and `sha256sum -c` then reads the
+    # CR as part of the file name.
+    (dist / f"{stem}.zip.sha256").write_bytes(f"{digest}  {archive.name}\n".encode())
     print(f"{archive.relative_to(ROOT)}: {archive.stat().st_size} bytes, sha256 {digest}")
     return 0
 
