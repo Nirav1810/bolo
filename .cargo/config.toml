@@ -1,5 +1,6 @@
 # sherpa-onnx-sys downloads prebuilt libs without verifying them, and GitHub's direct
-# release-download route is sometimes unavailable. We pre-fetch the exact archive with a
-# SHA-256 check (scripts/fetch-sherpa-libs.py) and point the build script at it.
+# release-download route is sometimes unavailable. scripts/fetch-sherpa-libs.py fetches
+# the exact archive for this host, checks its SHA-256 and unpacks lib/ here (ADR-008).
+# Outside target/ so CI caches can't restore a build-script result without its libs.
 [env]
-SHERPA_ONNX_ARCHIVE_DIR = { value = ".cache/sherpa-archives", relative = true }
+SHERPA_ONNX_LIB_DIR = { value = ".cache/sherpa-lib", relative = true }
