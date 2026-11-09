@@ -1,6 +1,6 @@
 [package]
-name = "bolo-bench"
-description = "Benchmark STT engines on recorded clips: WER/CER, latency, RSS, cost"
+name = "bolo"
+description = "Bolo from the terminal: dictate, replay clips through the engine, and benchmark STT engines"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "bolo-bench"
+name = "bolo"
 path = "src/main.rs"
 
 [dependencies]
@@ -21,7 +21,7 @@ bolo-format = { workspace = true, features = ["llm"] }
 anyhow = { workspace = true }
 # loads keys from the git-ignored .env (dev convenience; apps use the OS keychain)
 dotenvy = "0.15"
-# clipboard for `dictate` (bench only; the apps use native clipboard APIs)
+# clipboard for `dictate` (CLI only; the apps use native clipboard APIs)
 arboard = { version = "3.7", default-features = false }
 clap = { workspace = true }
 csv = { workspace = true }

@@ -1,10 +1,10 @@
-//! Session state machine and pipeline orchestration, shared by the Windows app and the
+//! Dictation state machine and pipeline orchestration, shared by the Windows app and the
 //! Android IME (via `bolo-ffi`).
 //!
 //! ```text
-//! start_session ─► mic (warm or opened) ─► 16 kHz ─┬─► streaming STT (partials) ─┐
-//!                                                  └─► VAD ─► per-segment batch STT ┤
-//! stop_session ─► flush last chunk / segment ─► romanize (Layer 1) ─► on_final ◄───┘
+//! start_dictation ─► mic (warm or opened) ─► 16 kHz ─┬─► streaming STT (partials) ─┐
+//!                                                     └─► VAD ─► per-segment batch STT ┤
+//! stop_dictation ─► flush last chunk / segment ─► romanize (Layer 1) ─► on_final ◄───┘
 //! ```
 //!
 //! All work happens on one engine thread, so every method here returns immediately.
@@ -51,14 +51,14 @@ pub struct TargetContext {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SessionState {
+pub enum DictationState {
     Idle,
     Listening,
     Processing,
     Done,
 }
 
-/// Per-stage latency in milliseconds, measured from `stop_session`.
+/// Per-stage latency in milliseconds, measured from `stop_dictation`.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct Timings {
     /// Stop → STT final text.
@@ -90,7 +90,7 @@ pub enum BoloError {
     ModelMissing(String),
     #[error("configuration error: {0}")]
     Config(String),
-    #[error("a session is already running")]
+    #[error("a dictation is already running")]
     Busy,
     #[error("the engine has shut down")]
     Stopped,
@@ -104,7 +104,7 @@ pub trait EngineEvents: Send + Sync {
     fn on_partial(&self, text: String);
     fn on_final(&self, out: FormattedOutput);
     fn on_error(&self, err: BoloError);
-    fn on_state(&self, state: SessionState);
+    fn on_state(&self, state: DictationState);
 }
 
 /// Provider → API key. Never printed, never serialized into settings.
@@ -169,7 +169,7 @@ impl Default for EngineConfig {
 
 pub struct Engine {
     tx: Sender<Cmd>,
-    state: Arc<Mutex<SessionState>>,
+    state: Arc<Mutex<DictationState>>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -191,7 +191,7 @@ impl Engine {
         events: Box<dyn EngineEvents>,
         factory: AudioFactory,
     ) -> Result<Self, BoloError> {
-        let state = Arc::new(Mutex::new(SessionState::Idle));
+        let state = Arc::new(Mutex::new(DictationState::Idle));
         let (tx, rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::channel();
         let st = state.clone();
@@ -223,18 +223,18 @@ impl Engine {
     }
 
     /// Start listening. Returns once the mic is open, so audio from now on is captured.
-    pub fn start_session(&self, ctx: TargetContext) -> Result<(), BoloError> {
+    pub fn start_dictation(&self, ctx: TargetContext) -> Result<(), BoloError> {
         let (reply, rx) = mpsc::channel();
         self.send(Cmd::Start(ctx, reply))?;
         rx.recv().map_err(|_| BoloError::Stopped)?
     }
 
     /// Finish; the result arrives via `on_final` (or `on_error`).
-    pub fn stop_session(&self) -> Result<(), BoloError> {
+    pub fn stop_dictation(&self) -> Result<(), BoloError> {
         self.send(Cmd::Stop)
     }
 
-    pub fn cancel_session(&self) {
+    pub fn cancel_dictation(&self) {
         let _ = self.send(Cmd::Cancel);
     }
 
@@ -247,8 +247,8 @@ impl Engine {
         let _ = self.send(Cmd::UpdateConfig(Box::new(config)));
     }
 
-    pub fn state(&self) -> SessionState {
-        self.state.lock().map(|g| *g).unwrap_or(SessionState::Idle)
+    pub fn state(&self) -> DictationState {
+        self.state.lock().map(|g| *g).unwrap_or(DictationState::Idle)
     }
 }
 

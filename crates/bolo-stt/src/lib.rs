@@ -80,7 +80,7 @@ pub enum SttError {
 
 pub type Result<T, E = SttError> = std::result::Result<T, E>;
 
-/// Incremental recognizer for streaming engines. Not `Sync`: owned by one session thread.
+/// Incremental recognizer for streaming engines. Not `Sync`: owned by the thread running one dictation.
 pub trait SttStream: Send {
     /// Feed 16 kHz mono samples. Must be cheap; decoding may happen here or lazily.
     fn accept(&mut self, samples: &[f32]);
@@ -98,7 +98,7 @@ pub trait SttEngine: Send + Sync {
         false
     }
 
-    /// Get ready for a session: load the model (local) or open a TLS connection (cloud).
+    /// Get ready for a dictation: load the model (local) or open a TLS connection (cloud).
     /// Must be idempotent and cheap when already warm.
     async fn prewarm(&self) -> Result<()> {
         Ok(())

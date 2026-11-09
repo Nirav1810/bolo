@@ -1,4 +1,4 @@
-//! `bolo-bench cleanup-eval`: run Layer-2 LLM cleanup over transcripts saved by a bench
+//! `bolo cleanup-eval`: run Layer-2 LLM cleanup over transcripts saved by a bench
 //! run, then score before vs after against the references. No STT calls are made.
 
 use std::collections::{BTreeMap, HashMap};

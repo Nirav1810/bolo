@@ -16,7 +16,7 @@ Requirements: Rust stable (≥1.88), Python 3 (for the lib fetch script), and on
 ```sh
 python -I scripts/fetch-sherpa-libs.py      # verified prebuilt sherpa-onnx libs → .cache/
 cargo test --workspace
-cargo build --release -p bolo-bench
+cargo build --release -p bolo
 ```
 
 ## Benchmark engines on your own voice
@@ -24,16 +24,16 @@ cargo build --release -p bolo-bench
 See [docs/BENCH.md](docs/BENCH.md). In short:
 
 ```sh
-bolo-bench download nemotron-stream moonshine-tiny
-bolo-bench transcribe my.wav -e local:nemotron-stream
-bolo-bench run --engines local:nemotron-stream,groq,sarvam
+bolo download nemotron-stream moonshine-tiny
+bolo transcribe my.wav -e local:nemotron-stream
+bolo run --engines local:nemotron-stream,groq,sarvam
 ```
 
 ## BYOK setup
 
-For the developer tools, copy `.env.example` to `.env` (git-ignored) and paste your keys there. `bolo-bench` loads it automatically.
+For the developer tools, copy `.env.example` to `.env` (git-ignored) and paste your keys there. The `bolo` CLI loads it automatically.
 
-| provider | env var (bench) | used for |
+| provider | env var | used for |
 |---|---|---|
 | Groq | `GROQ_API_KEY` | Whisper large-v3-turbo STT |
 | Deepgram | `DEEPGRAM_API_KEY` | Nova-3 STT |

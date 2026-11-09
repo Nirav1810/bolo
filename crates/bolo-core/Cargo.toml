@@ -1,6 +1,6 @@
 [package]
 name = "bolo-core"
-description = "Bolo session state machine and pipeline orchestration"
+description = "Bolo dictation state machine and pipeline orchestration"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

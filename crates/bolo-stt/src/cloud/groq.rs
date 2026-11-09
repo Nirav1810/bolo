@@ -14,7 +14,7 @@ use crate::{
 
 pub const DEFAULT_BASE_URL: &str = "https://api.groq.com/openai/v1";
 pub const DEFAULT_MODEL: &str = "whisper-large-v3-turbo";
-/// USD per hour of audio (turbo). Used by bolo-bench cost estimates.
+/// USD per hour of audio (turbo). Used by `bolo run` cost estimates.
 pub const PRICE_USD_PER_HOUR: f64 = 0.04;
 pub const MIN_BILLED_SECONDS: f64 = 10.0;
 

@@ -1,4 +1,5 @@
-//! `bolo-bench`: compare STT engines on the user's own clips.
+//! `bolo`: Bolo from the terminal. Try dictation, replay clips through the live engine,
+//! and compare STT engines on the user's own clips.
 //!
 //! See docs/BENCH.md for the clip layout and methodology.
 
@@ -27,7 +28,11 @@ use crate::cache::{Cache, Cached};
 use crate::metrics::{ErrorCount, cer, contains_devanagari, percentile, wer};
 
 #[derive(Parser)]
-#[command(name = "bolo-bench", version, about = "Benchmark Bolo STT engines on recorded clips")]
+#[command(
+    name = "bolo",
+    version,
+    about = "Bolo from the terminal: dictate, and benchmark STT engines on recorded clips"
+)]
 struct Cli {
     /// Where models are installed (default: %LOCALAPPDATA%\Bolo\data\models or the platform equivalent).
     #[arg(long, global = true)]
@@ -296,7 +301,7 @@ fn build_engine(spec: &str, manifest: &Manifest, models_dir: &Path, threads: Opt
             let id = arg.ok_or_else(|| anyhow!("use local:<model-id>"))?;
             let entry = manifest.get(id)?.clone();
             if !entry.is_installed(models_dir) {
-                bail!("{id} is not installed; run `bolo-bench download {id}`");
+                bail!("{id} is not installed; run `bolo download {id}`");
             }
             Built::Local(LocalEngine::new(entry, models_dir, threads)?)
         }

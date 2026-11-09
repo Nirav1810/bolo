@@ -8,7 +8,7 @@ members = [
     "crates/bolo-models",
     "crates/bolo-store",
     "crates/bolo-ffi",
-    "crates/bolo-bench",
+    "crates/bolo",
 ]
 default-members = [
     "crates/bolo-core",
@@ -17,7 +17,7 @@ default-members = [
     "crates/bolo-format",
     "crates/bolo-models",
     "crates/bolo-store",
-    "crates/bolo-bench",
+    "crates/bolo",
 ]
 
 # Single source of truth for the version: Tauri and Gradle both read this.
