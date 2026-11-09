@@ -17,6 +17,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history and tags: the release dry run renders the changelog from them.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -24,8 +27,17 @@ jobs:
       - name: Install ALSA headers (cpal microphone capture)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
-      - name: Test repo scripts (PR-title lint, workspace manifests)
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff@2.14.2
+      # Includes the release script's dry run (files it would change, versions consistent).
+      - name: Test repo scripts (PR-title lint, workspace manifests, release script)
         run: python -I -m unittest discover -s scripts -v
+      - name: Version strings agree across manifests
+        run: python -I scripts/release.py check
+      - name: Release dry run (ADR-0013)
+        if: runner.os == 'Linux'
+        run: python -I scripts/release.py 99.0.0-beta.1 --dry-run
       - name: "Fetch verified sherpa-onnx prebuilt libs (ADR-008: verify, unpack outside target/)"
         run: python -I scripts/fetch-sherpa-libs.py
         env:
