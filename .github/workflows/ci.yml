@@ -21,6 +21,9 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Install ALSA headers (cpal microphone capture)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
       - name: Fetch verified sherpa-onnx prebuilt libs (ADR-008)
         run: python -I scripts/fetch-sherpa-libs.py
         env:
