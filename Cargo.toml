@@ -28,6 +28,8 @@ rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/bolo-dictation/bolo"
 authors = ["Bolo contributors"]
+# Crates are internal to the apps; never published to crates.io (ADR-0013).
+publish = false
 
 [workspace.dependencies]
 # internal

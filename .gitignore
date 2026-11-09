@@ -12,3 +12,4 @@ apps/android/local.properties
 *.keystore
 *.jks
 .env
+__pycache__/

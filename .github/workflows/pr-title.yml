@@ -1,0 +1,25 @@
+name: pr-title
+
+# The PR title becomes the squash commit on `main`, so it must be a Conventional Commit
+# (ADR-0013; rules in scripts/pr_title.py). This is a separate workflow so that editing
+# the title re-runs only this check, not the Rust build.
+on:
+  pull_request:
+    # `synchronize` too: a required check must report on every new head commit.
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Lint PR title as a Conventional Commit
+        run: python -I scripts/pr_title.py
+        env:
+          # Via env, never interpolated into the script: the title is untrusted input.
+          PR_TITLE: ${{ github.event.pull_request.title }}
