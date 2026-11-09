@@ -15,6 +15,8 @@ pub mod cloud;
 pub mod fallback;
 #[cfg(feature = "local")]
 pub mod local;
+#[cfg(feature = "local")]
+pub mod vad;
 
 /// Language hint passed to the engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

@@ -7,6 +7,7 @@ mod cleanup;
 mod dictate;
 mod metrics;
 mod record;
+mod replay;
 mod rss;
 
 use std::collections::{BTreeMap, HashMap};
@@ -89,6 +90,15 @@ enum Cmd {
         out: PathBuf,
         #[arg(long, default_value = "testdata/clips")]
         clips: PathBuf,
+    },
+    /// End-to-end test of the live engine: replay clips in real time, measure stop→text.
+    Replay {
+        #[arg(long, short, default_value = "local:nemotron-stream")]
+        engine: String,
+        #[arg(long, default_value = "testdata/clips")]
+        clips: PathBuf,
+        #[arg(long, default_value_t = usize::MAX)]
+        limit: usize,
     },
     /// Measure microphone start-up delay (leading digital silence).
     MicTest,
@@ -239,6 +249,10 @@ async fn main() -> Result<()> {
         Cmd::CleanupEval { csv, engines, out, clips } => {
             cleanup::run(&csv, &engines, &out, &load_aliases(&clips)).await?;
         }
+        Cmd::Replay { engine, clips, limit } => {
+            let aliases = load_aliases(&clips);
+            tokio::task::block_in_place(|| replay::run(&engine, &clips, &models_dir, &aliases, limit))?;
+        }
         Cmd::MicTest => record::mic_test()?,
         Cmd::Run(args) => run(args, &manifest, &models_dir).await?,
     }
@@ -337,14 +351,14 @@ fn cloud_cost_per_hour(engine_id: &str, durations: &[f64], has_dictionary: bool)
     Some(rate * billed_secs / total)
 }
 
-struct Clip {
+pub(crate) struct Clip {
     name: String,
     category: String,
     audio: Vec<f32>,
     reference: String,
 }
 
-fn load_clips(dir: &Path) -> Result<Vec<Clip>> {
+pub(crate) fn load_clips(dir: &Path) -> Result<Vec<Clip>> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {

@@ -236,6 +236,7 @@ dependencies = [
  "anyhow",
  "arboard",
  "bolo-audio",
+ "bolo-core",
  "bolo-format",
  "bolo-models",
  "bolo-stt",
@@ -259,9 +260,13 @@ version = "0.1.0"
 dependencies = [
  "bolo-audio",
  "bolo-format",
+ "bolo-models",
  "bolo-stt",
+ "reqwest",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
+ "tokio",
  "tracing",
 ]
 
