@@ -1,0 +1,23 @@
+name: pr-title
+
+# Squash merges use the PR title as the commit subject on `main`, and git-cliff builds the
+# changelog from those subjects, so the title must be a Conventional Commit (ADR-0013).
+# A separate workflow so that editing the title re-runs only this check, not the Rust build.
+on:
+  pull_request:
+    # `synchronize` too: a required check must report on every new head commit.
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint PR title as a Conventional Commit
+        run: python -I scripts/pr_title.py
+        env:
+          # Via env, never interpolated into the script: the title is untrusted input.
+          PR_TITLE: ${{ github.event.pull_request.title }}

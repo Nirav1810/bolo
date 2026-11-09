@@ -28,6 +28,8 @@ jobs:
         run: python -I scripts/fetch-sherpa-libs.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Test repo scripts (PR-title lint, workspace manifests)
+        run: python -I -m unittest discover -s scripts -v
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
