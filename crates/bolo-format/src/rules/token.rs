@@ -157,6 +157,21 @@ impl Html {
         self.pending_br = false;
     }
 
+    /// Start list item `n`: a new `<li>` in the open list, or a new `<ol>`.
+    fn item(&mut self, n: u32) {
+        if self.block == Block::List {
+            self.out.push_str("</li><li>");
+        } else {
+            self.close();
+            if n == 1 {
+                self.out.push_str("<ol><li>");
+            } else {
+                self.out.push_str(&format!("<ol start=\"{n}\"><li>"));
+            }
+            self.block = Block::List;
+        }
+    }
+
     fn close(&mut self) {
         match self.block {
             Block::Paragraph => self.out.push_str("</p>"),
@@ -197,17 +212,7 @@ fn render_html(tokens: &[Token]) -> String {
                 }
             }
             Token::Item(n) => {
-                if h.block == Block::List {
-                    h.out.push_str("</li><li>");
-                } else {
-                    h.close();
-                    if *n == 1 {
-                        h.out.push_str("<ol><li>");
-                    } else {
-                        h.out.push_str(&format!("<ol start=\"{n}\"><li>"));
-                    }
-                    h.block = Block::List;
-                }
+                h.item(*n);
                 after_break = true;
             }
         }

@@ -8,7 +8,7 @@
 | `bolo-audio` | 16 kHz mono pipeline; WAV encode/decode; FFT resampling (rubato); live capture (cpal, feature `capture`) | ✅ |
 | `bolo-stt` | `SttEngine` trait; local (sherpa-onnx), Groq, Deepgram (batch and live WebSocket), Sarvam; fallback chain with per-engine timeout | ✅ |
 | `bolo-models` | `models/manifest.json` registry; resumable SHA-256-verified downloader (GitHub API fallback); RAM-tier recommendation | ✅ |
-| `bolo-format` | Devanagari and Urdu → Roman transliteration, loanword lexicon, language detector, Layer 1 rules pipeline (`rules`), LLM cleanup request and guard | ✅ (HTML output M3) |
+| `bolo-format` | Devanagari and Urdu → Roman transliteration, loanword lexicon, language detector, Layer 1 rules pipeline (`rules`), LLM cleanup request and guard | ✅ |
 | `bolo-store` | Settings TOML, SQLite history, secrets | M3 |
 | `bolo-ffi` | UniFFI → Kotlin | M5 (not a default workspace member) |
 | `bolo` | CLI: `dictate` and `replay` on the engine, plus the benchmark subcommands (`run`, `transcribe`, `download`, …) | ✅ |
@@ -29,7 +29,7 @@ hotkey up ──► finalize last segment ──► romanize ──► rules (<1
 
 ### Layer 1 rules (ADR-0015)
 
-`bolo_format::rules::format(text, language, code_mode)` runs once per final, after romanization and the loanword lexicon, and returns the text rendered both as `plain` and as `markdown`. Its time is `Timings::rules_ms`. The passes run in a fixed order on one token list:
+`bolo_format::rules::format(text, language, code_mode)` runs once per final, after romanization and the loanword lexicon, and returns the text rendered as `plain`, `markdown` and `html`. Its time is `Timings::rules_ms`. The passes run in a fixed order on one token list:
 
 ```
 fillers → self-corrections → commands and lists → numbers → punctuation fix-ups → render
@@ -39,7 +39,7 @@ fillers → self-corrections → commands and lists → numbers → punctuation 
 - **Self-corrections**: after "actually no", "I mean", "scratch that", "nahi nahi" and similar markers, the repair replaces the nearest date, time, number or noun phrase, or the restated clause.
 - **Commands and lists**: "new line", "new paragraph", "nayi line". An explicit enumeration of three or more items becomes a numbered list.
 - **Numbers**: the ADR-0015 number style (digits except one to nine in prose; money, time, dates and % always digits; Indian grouping with lakh, crore or rupees).
-- **Punctuation fix-ups and render**: sentence capitals, final period, capital "I", spacing. `code_mode` drops capitals and the final period. Markdown leaves blank lines around a list.
+- **Punctuation fix-ups and render**: sentence capitals, final period, capital "I", spacing. `code_mode` drops capitals and the final period. Markdown leaves blank lines around a list. HTML writes `<p>` paragraphs, `<br>` line breaks and `<ol><li>` lists, with every text node escaped.
 
 Every pass leaves the text verbatim when unsure. The pipeline is idempotent and never empty for non-empty input (property tests), and `tests/latency.rs` holds it under 1 ms p95. `bolo-format` doesn't depend on `bolo-core`: the core maps `TargetContext` onto `rules::Language` and the `code_mode` flag.
 
@@ -47,7 +47,7 @@ Every pass leaves the text verbatim when unsure. The pipeline is idempotent and 
 
 `EngineConfig::polish` is `Polish::Off` (default) or `Polish::On { tone, app, dictionary }`, which needs the `anthropic` key in `ApiKeys`.
 
-- `on_final` always carries the Layer 1 text first. Polish then runs on the engine's tokio runtime and sends `on_polished` with the polished text in `plain` and `markdown`, and `timings.llm_ms` set.
+- `on_final` always carries the Layer 1 text first. Polish then runs on the engine's tokio runtime and sends `on_polished` with the polished text in `plain` and `markdown`, and `timings.llm_ms` set. For an HTML target, `html` is the polished text read back through the same renderer (`rules::to_html`); model output is never trusted as markup.
 - The deadline is 1.5 s (`POLISH_DEADLINE`). A timeout, an error, a meta-reply or a failed length-ratio guard sends nothing more, and the Layer 1 text stands. The next `start_dictation` or a `cancel_dictation` supersedes a running polish.
 - **Per segment** (`segment.rs`): once a dictation reaches 20 s, each pause of 700 ms or more closes a segment, found by Silero VAD or by an energy gate when the model isn't installed. A `Polisher` task polishes the segments in order, each with the previous polished segment as `<context>`. At release only the rest is polished, then the parts are joined. A failed segment keeps its Layer 1 text. If the final text no longer lines up with the segments, the whole text is polished instead.
 - The LLM sits behind the `LlmClient` trait (`Engine::with_llm_client`), so engine tests use a fake with no network.

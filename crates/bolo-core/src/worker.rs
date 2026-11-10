@@ -160,20 +160,14 @@ fn decode_pass(
 pub(crate) struct Layer1 {
     pub script: HinglishScript,
     pub code_mode: bool,
-    /// The target takes Markdown: polish works on that rendering.
-    pub markdown: bool,
-    /// The target takes HTML: finals and polished text carry an `html` rendering.
-    pub html: bool,
+    /// The target's format. Polish works on the Markdown rendering for a Markdown
+    /// target and on plain text otherwise; an HTML target also gets `html`.
+    pub format: OutputFormat,
 }
 
 impl Layer1 {
     fn new(script: HinglishScript, target: &TargetContext) -> Self {
-        Self {
-            script,
-            code_mode: target.code_mode,
-            markdown: target.format == OutputFormat::Markdown,
-            html: target.format == OutputFormat::Html,
-        }
+        Self { script, code_mode: target.code_mode, format: target.format }
     }
 
     pub(crate) fn romanize(&self, text: &str) -> String {
@@ -198,14 +192,14 @@ impl Layer1 {
     /// The rendering the target gets, which is the one polish works on.
     pub(crate) fn render(&self, raw: &str, language: LanguageMode) -> String {
         let f = self.format(raw, language);
-        if self.markdown { f.markdown } else { f.plain }
+        if self.format == OutputFormat::Markdown { f.markdown } else { f.plain }
     }
 
     /// The `html` field for already formatted text (polish output): the text read back
     /// through the HTML renderer, never trusted as markup. `None` unless the target
     /// takes HTML.
     pub(crate) fn html_of(&self, formatted: &str) -> Option<String> {
-        self.html.then(|| rules::to_html(formatted))
+        (self.format == OutputFormat::Html).then(|| rules::to_html(formatted))
     }
 }
 
@@ -622,7 +616,7 @@ impl Worker {
                 let out = FormattedOutput {
                     plain: text.plain,
                     markdown: text.markdown,
-                    html: layer1.html.then_some(text.html),
+                    html: (layer1.format == OutputFormat::Html).then_some(text.html),
                     timings: Timings { stt_ms, rules_ms, llm_ms: 0.0, format_ms: 0.0, total_ms },
                     engine_id,
                     language,
