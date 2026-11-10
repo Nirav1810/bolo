@@ -47,6 +47,11 @@ input = "It was a long day, you know?"
 expected = "It was a long day, you know?"
 
 [[case]]
+note = "you know before a semicolon is a filler (found by the idempotence property)"
+input = "I was tired, you know; then I slept."
+expected = "I was tired, then I slept."
+
+[[case]]
 note = "like between commas is a filler"
 input = "We need, like, three more people."
 expected = "We need, three more people."

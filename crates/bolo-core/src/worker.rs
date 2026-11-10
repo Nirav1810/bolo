@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use bolo_audio::resample::StreamResampler;
 use bolo_format::language::{Detected, detect};
-use bolo_format::rules::{self, FormatContext, Markup};
+use bolo_format::rules;
 use bolo_models::Manifest;
 use bolo_stt::vad::{Vad, VadConfig};
 use bolo_stt::{Language, SttEngine, SttError, SttOptions, SttStream, Transcript};
@@ -29,7 +29,7 @@ use tokio::task::JoinHandle;
 use crate::audio::{AudioFactory, AudioSource};
 use crate::build::{BuiltStt, build_stt};
 use crate::{
-    BoloError, DictationState, EngineConfig, EngineEvents, FormattedOutput, HinglishScript, LanguageMode, OutputFormat,
+    BoloError, DictationState, EngineConfig, EngineEvents, FormattedOutput, HinglishScript, LanguageMode,
     TargetContext, Timings,
 };
 
@@ -175,16 +175,6 @@ pub(crate) struct Worker {
     /// The language of the previous dictation (`En` or `Hi`), for ambiguous Auto ones.
     /// Lives as long as the engine.
     previous_language: Option<Language>,
-}
-
-/// `TargetContext` → the rules pipeline's own format context (`bolo-format` does not
-/// depend on `bolo-core`). HTML targets get plain text until the HTML renderer (M3).
-fn format_context(target: &TargetContext) -> FormatContext {
-    let markup = match target.format {
-        OutputFormat::Markdown => Markup::Markdown,
-        OutputFormat::Plain | OutputFormat::Html => Markup::Plain,
-    };
-    FormatContext { markup, code_mode: target.code_mode }
 }
 
 fn pad(seg: &[f32]) -> Vec<f32> {
@@ -394,13 +384,14 @@ impl Worker {
 
     /// Layer 1 on a final: romanize (with the loanword lexicon), then the rules pipeline
     /// (ADR-0015).
-    fn format(&self, raw: &str, language: LanguageMode, target: &TargetContext) -> String {
+    fn format(&self, raw: &str, language: LanguageMode, target: &TargetContext) -> rules::Formatted {
         let language = match language {
             LanguageMode::English => rules::Language::English,
             LanguageMode::Hinglish => rules::Language::Hinglish,
             LanguageMode::Auto => rules::Language::of_engine_output(raw),
         };
-        rules::apply(&self.romanize(raw), language, format_context(target))
+        // One pipeline run gives both renderings; HTML waits for M3 (ADR-0015).
+        rules::format(&self.romanize(raw), language, target.code_mode)
     }
 
     /// Hotkey released: finish recognition and emit `on_final`. Timings run from
@@ -478,8 +469,8 @@ impl Worker {
                     "stop breakdown"
                 );
                 self.events.on_final(FormattedOutput {
-                    plain: text.clone(),
-                    markdown: text,
+                    plain: text.plain,
+                    markdown: text.markdown,
                     html: None,
                     timings: Timings { stt_ms, rules_ms, llm_ms: 0.0, format_ms: 0.0, total_ms },
                     engine_id,

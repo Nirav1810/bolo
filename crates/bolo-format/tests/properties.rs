@@ -307,9 +307,11 @@ fn only_fillers_dropped(input: &[String], out: &[String]) -> Result<(), String> 
     let mut o = 0;
     let mut last_word: Option<&String> = None;
     for (i, w) in input.iter().enumerate() {
+        // "haan to" is the start filler "haan toh" in another spelling.
+        let haan_to = w == "to" && i > 0 && input[i - 1] == "haan";
         if out.get(o) == Some(w) {
             o += 1;
-        } else if !FILLER_WORDS.contains(&w.as_str()) && last_word != Some(w) {
+        } else if !FILLER_WORDS.contains(&w.as_str()) && last_word != Some(w) && !haan_to {
             return Err(format!("dropped {w:?} at word {i}"));
         }
         if !FILLER_WORDS.contains(&w.as_str()) {
@@ -476,4 +478,112 @@ proptest! {
 #[test]
 fn whitespace_only_input_is_not_emptied() {
     assert_eq!(rules::apply("\n", Language::English, FormatContext::plain()), "\n");
+}
+
+/// Transcripts dense with list markers, joiners and determiners, for the properties that
+/// hold whatever the lists pass does.
+fn list_transcript() -> impl Strategy<Value = String> {
+    let word = prop_oneof![
+        prop::sample::select(vec![
+            "first", "second", "third", "fourth", "firstly", "one", "two", "three", "four", "ten", "number", "the",
+            "my", "of", "and", "then", "milk", "eggs", "bread", "send", "it", "1", "2", "3", "new", "line", "i",
+            "need", "things",
+        ])
+        .prop_map(str::to_owned),
+        "[a-z]{1,6}",
+    ];
+    prop::collection::vec((word, separator()), 1..40).prop_map(|parts| {
+        let mut s = String::new();
+        for (w, sep) in parts {
+            s.push_str(&w);
+            s.push_str(sep);
+        }
+        s
+    })
+}
+
+/// The words of a list's output, without the item numbers at the start of each line.
+fn words_without_item_numbers(text: &str) -> Vec<String> {
+    let body: Vec<&str> = text
+        .lines()
+        .map(|line| {
+            let digits = line.find(|c: char| !c.is_ascii_digit()).unwrap_or(line.len());
+            if digits > 0 && line[digits..].starts_with(". ") { &line[digits + 2..] } else { line }
+        })
+        .collect();
+    words(&body.join("\n"))
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 2000, failure_persistence: None, ..ProptestConfig::default() })]
+
+    #[test]
+    fn lists_are_idempotent(text in list_transcript(), lang in language(), ctx in context()) {
+        let once = rules::apply(&text, lang, ctx);
+        let twice = rules::apply(&once, lang, ctx);
+        prop_assert_eq!(&once, &twice);
+        prop_assert!(!once.is_empty());
+    }
+
+    #[test]
+    fn both_renderings_have_the_same_words(text in list_transcript(), lang in language(), code in any::<bool>()) {
+        let out = rules::format(&text, lang, code);
+        prop_assert_eq!(words(&out.plain), words(&out.markdown));
+        let ctx = |markup| FormatContext { markup, code_mode: code };
+        prop_assert_eq!(&out.plain, &rules::apply(&text, lang, ctx(rules::Markup::Plain)));
+        prop_assert_eq!(&out.markdown, &rules::apply(&text, lang, ctx(rules::Markup::Markdown)));
+    }
+
+    #[test]
+    fn lists_drop_only_markers_and_joiners(
+        lead in prop::option::of(clause()),
+        items in prop::collection::vec(clause(), 3..6),
+        style in prop::sample::select(vec!["ordinal", "number"]),
+        joiner in prop::sample::select(vec!["", "and ", "then "]),
+        lang in language(),
+        ctx in context(),
+    ) {
+        // "<lead>, first A, second B, <joiner>third C." keeps every word of the lead and
+        // the items, in order, one item per line.
+        const ORD: &[&str] = &["first", "second", "third", "fourth", "fifth"];
+        const CARD: &[&str] = &["one", "two", "three", "four", "five"];
+        // "first of" is not a marker.
+        prop_assume!(items.iter().all(|it| !it[0].eq_ignore_ascii_case("of")));
+        // A joining word at the end of an item is dropped with the joiner it looks like.
+        prop_assume!(items.iter().all(|it| !matches!(it[it.len() - 1].to_lowercase().as_str(), "and" | "then" | "aur")));
+        // "number three four five" is a spoken number, so such an item starts with a word.
+        let items: Vec<Vec<String>> = items
+            .into_iter()
+            .map(|mut it| {
+                let starts_with_number = number_word_digits(&it[0].to_lowercase()).is_some()
+                    || it[0].starts_with(|c: char| c.is_ascii_digit());
+                if style == "number" && starts_with_number {
+                    it.insert(0, "send".to_owned());
+                }
+                it
+            })
+            .collect();
+        let last = items.len() - 1;
+        let spoken: Vec<String> = items
+            .iter()
+            .enumerate()
+            .map(|(k, it)| {
+                let marker = if style == "ordinal" { ORD[k].to_owned() } else { format!("number {}", CARD[k]) };
+                let join = if k == last { joiner } else { "" };
+                format!("{join}{marker} {}", it.join(" "))
+            })
+            .collect();
+        // A comma ends the lead-in, so that a determiner at its end ("at first") can't
+        // guard the first marker.
+        let lead_text = lead.as_ref().map(|l| format!("{}, ", l.join(" "))).unwrap_or_default();
+        let text = format!("{lead_text}{}.", spoken.join(", "));
+        let out = rules::apply(&text, lang, ctx);
+        let mut expected = lead.as_ref().map(|l| words(&l.join(" "))).unwrap_or_default();
+        for it in &items {
+            expected.extend(words(&it.join(" ")));
+        }
+        prop_assert_eq!(words_without_item_numbers(&out), expected, "output: {:?}", out);
+        let item_lines = out.lines().filter(|l| l.split_once(". ").is_some_and(|(n, _)| n.parse::<u32>().is_ok())).count();
+        prop_assert_eq!(item_lines, items.len(), "output: {:?}", out);
+    }
 }

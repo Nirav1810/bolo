@@ -1,0 +1,122 @@
+# Spoken lists (ADR-0015): only an explicit enumeration of at least three items
+# ("first … second … third", "one … two … three", "number one …") becomes a list.
+# Every list is numbered speech, so it renders "1. …", one item per line.
+
+[[case]]
+note = "the spec example: a lead-in becomes the intro line, short items get no period"
+input = "I need three things: first milk, second eggs, third bread."
+expected = "I need three things:\n1. Milk\n2. Eggs\n3. Bread"
+
+[[case]]
+note = "bench clip en/11: sentence items keep their periods"
+input = "First, update the dependencies. Second, run the tests. Third, deploy to staging."
+expected = "1. Update the dependencies.\n2. Run the tests.\n3. Deploy to staging."
+
+[[case]]
+note = "an unpunctuated engine output with ordinals"
+input = "first update the dependencies second run the tests third deploy to staging"
+expected = "1. Update the dependencies\n2. Run the tests\n3. Deploy to staging"
+
+[[case]]
+note = "a lead-in without punctuation gets a colon"
+input = "so here is the plan first book the venue second send the invites third order the cake"
+expected = "So here is the plan:\n1. Book the venue\n2. Send the invites\n3. Order the cake"
+
+[[case]]
+note = "cardinals at clause starts"
+input = "One, call the bank. Two, pay the rent. Three, email Priya."
+expected = "1. Call the bank.\n2. Pay the rent.\n3. Email Priya."
+
+[[case]]
+note = "number one, number two, number three"
+input = "my goals are number one ship the app number two fix the bugs number three take a break"
+expected = "My goals are:\n1. Ship the app\n2. Fix the bugs\n3. Take a break"
+
+[[case]]
+note = "and or then joining the last item goes"
+input = "We need first milk, second eggs, and third bread."
+expected = "We need:\n1. Milk\n2. Eggs\n3. Bread"
+
+[[case]]
+note = "a list of four, with the -ly ordinals"
+input = "Firstly, rest. Secondly, eat. Thirdly, train. Fourthly, sleep."
+expected = "1. Rest.\n2. Eat.\n3. Train.\n4. Sleep."
+
+[[case]]
+note = "text before and after the list: the list takes its own lines"
+input = "Hi team. For tomorrow, first review the deck, second fix the numbers, third send it to Rahul. Thanks."
+expected = "Hi team. For tomorrow:\n1. Review the deck\n2. Fix the numbers\n3. Send it to Rahul\nThanks."
+
+[[case]]
+note = "items dictated on their own lines with new line"
+input = "first milk new line second eggs new line third bread"
+expected = "1. Milk\n2. Eggs\n3. Bread"
+
+[[case]]
+note = "a list of more than nine items"
+input = "one a. two b. three c. four d. five e. six f. seven g. eight h. nine i. ten j. eleven k."
+expected = "1. A.\n2. B.\n3. C.\n4. D.\n5. E.\n6. F.\n7. G.\n8. H.\n9. I.\n10. J.\n11. K."
+
+[[case]]
+note = "two items stay prose"
+input = "first we eat, second we sleep."
+expected = "First we eat, second we sleep."
+
+[[case]]
+note = "prose joined with and never becomes a list"
+input = "we need milk, eggs and bread and then we go home"
+expected = "We need milk, eggs and bread and then we go home."
+
+[[case]]
+note = "quantities in prose are not cardinal markers"
+input = "I need one apple, two pears, three plums."
+expected = "I need one apple, two pears, three plums."
+
+[[case]]
+note = "ordinals after a determiner are not markers"
+input = "the first round was easy, the second was hard, the third was brutal"
+expected = "The first round was easy, the second was hard, the third was brutal."
+
+[[case]]
+note = "first of all is not a marker, so the sequence never starts"
+input = "first of all thanks, second the budget, third the plan"
+expected = "First of all thanks, second the budget, third the plan."
+
+[[case]]
+note = "a sequence that skips a number stays prose"
+input = "first milk, third eggs, fourth bread"
+expected = "First milk, third eggs, fourth bread."
+
+[[case]]
+note = "an empty item cancels the list"
+input = "first, second, third"
+expected = "First, second, third."
+
+[[case]]
+note = "my number one is not a marker"
+input = "my number one fan, number two fan, number three fan"
+expected = "My number one fan, number two fan, number three fan."
+
+[[case]]
+note = "markdown: a blank line before and after the list"
+format = "markdown"
+input = "Hi team. For tomorrow, first review the deck, second fix the numbers, third send it to Rahul. Thanks."
+expected = "Hi team. For tomorrow:\n\n1. Review the deck\n2. Fix the numbers\n3. Send it to Rahul\n\nThanks."
+
+[[case]]
+note = "markdown: a list alone is just the list"
+format = "markdown"
+input = "First, update the dependencies. Second, run the tests. Third, deploy to staging."
+expected = "1. Update the dependencies.\n2. Run the tests.\n3. Deploy to staging."
+
+[[case]]
+note = "code mode: no capitals, and the last item keeps its period like the others"
+format = "code"
+input = "First, update the dependencies. Second, run the tests. Third, deploy to staging."
+expected = "1. update the dependencies.\n2. run the tests.\n3. deploy to staging."
+
+[[case]]
+note = "a Hinglish dictation with an English enumeration"
+language = "hinglish"
+input = "kal ke liye first slides banao second data check karo third Rahul ko bhejo"
+expected = "Kal ke liye:\n1. Slides banao\n2. Data check karo\n3. Rahul ko bhejo"

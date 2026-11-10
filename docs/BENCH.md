@@ -336,3 +336,19 @@ The rules pipeline now writes English number words in the ADR-0015 number style.
 - Deepgram already writes digits ("$1,250", "4PM", "06:30"), and the pass leaves numerals the engine wrote as they are, so nothing changed.
 - Hinglish is unchanged. Its only number in the set is hinglish/15's "pandrah" (Hindi), which is left for polish.
 - **Latency gate:** p95 0.12 ms in a debug build (was 0.065 ms), still 8× under the 1 ms budget.
+
+## 15. Lists and Markdown output (M2 ticket 06)
+
+The rules pipeline now turns an explicit spoken enumeration of three or more items into a numbered list (ADR-0015). The enumeration can be "first … second … third", "one … two … three" (each at a clause start), or "number one … number two …". Words before the first marker in the same sentence become the intro line, ending in a colon. Prose joined with "and", two-item enumerations, "the first …", "first of all" and quantities ("one apple, two pears") stay prose. The engine fills `FormattedOutput.plain` and `.markdown` from one pipeline run. Markdown adds a blank line before and after a list. The lists pass now runs before the numbers pass, so removing a marker can't change how the numbers around it are read (ADR-0015 amended).
+
+**Formatted WER after this ticket (2026-11-10, 40 clips):**
+
+| run | engine | WER en | fmt WER en | WER hinglish | fmt WER hinglish |
+|---|---|---|---|---|---|
+| `bolo run` | `local:nemotron-stream` | 10.3% | 9.0% | 31.2% | 34.6% |
+| `bolo run` | `deepgram:nova-3` (cached) | 7.6% | **4.3%** | 23.2% | 21.2% |
+| `bolo replay --speed 50`, Auto | `local:nemotron-stream` | 10.3% | 9.0% | 27.7% | 30.9% |
+
+- en/11 is the set's only list. Deepgram writes "First, update the dependencies. Second, run the test. Third, deploy to staging.", and that now comes out as the formatted reference's numbered list. The only remaining error is "test" for "tests" (fmt WER 33% → 8%). Formatted English WER drops 5.5% → 4.3%. Verbatim WER rises 6.5% → 7.6% by design, because the markers are gone.
+- Nemotron doesn't hear the opening "First" ("Update the dependencies second run the test third deploy to staging"). With only two markers the text correctly stays prose, so Nemotron's numbers don't change.
+- **Latency gate:** p95 0.14 ms in a debug build (was 0.12 ms) and 0.03 ms in release, still 7× under the 1 ms budget.
