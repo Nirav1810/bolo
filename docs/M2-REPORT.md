@@ -100,4 +100,4 @@ M3 is the Windows desktop app (Tauri v2 + Svelte, `apps/desktop`) on top of the 
 - **Installer and first run**: model download with the RAM-tier recommendation, and the 30 s idle model release.
 - **Candidate follow-ups:** a script fallback for non-Devanagari output (gap 4), and checking `bolo run`'s Nemotron latency (gap 3).
 
-Work stops here until M2 is signed off.
+M2 was signed off on 2026-11-10. The M3 plan is in `.scratch/m3-desktop/` (ADR-0017, ADR-0018).
