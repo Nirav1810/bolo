@@ -147,3 +147,33 @@ pub async fn run(csv_path: &Path, engines: &[String], out: &Path, aliases: &Hash
     println!("{md}");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rows(csv_text: &str) -> Vec<Row> {
+        csv::Reader::from_reader(csv_text.as_bytes()).deserialize().collect::<Result<_, _>>().unwrap()
+    }
+
+    #[test]
+    fn loads_old_and_new_clips_csv() {
+        // Before M2 ticket 02, and after (formatted and polish columns added).
+        let old = "engine,clip,category,audio_s,latency_ms,rtf,wer,cer,devanagari,cached,\
+                   hypothesis,hypothesis_scored,reference\n\
+                   local:x,en/01.wav,en,2.9,194.8,0.07,0.0,0.0,false,false,Sounds good,,\"Sounds good.\"\n";
+        let new = "engine,clip,category,audio_s,latency_ms,rtf,wer,wer_formatted,wer_polished,\
+                   wer_formatted_polished,cer,devanagari,cached,hypothesis,hypothesis_scored,polished,\
+                   reference,reference_formatted\n\
+                   local:x,en/01.wav,en,2.9,194.8,0.07,0.0,0.0,,,0.0,false,false,Sounds good,,,\
+                   \"Sounds good.\",\"Sounds good.\"\n";
+        for text in [old, new] {
+            let r = rows(text);
+            assert_eq!(r.len(), 1);
+            assert_eq!(
+                (r[0].engine.as_str(), r[0].hypothesis.as_str(), r[0].reference.as_str()),
+                ("local:x", "Sounds good", "Sounds good.")
+            );
+        }
+    }
+}

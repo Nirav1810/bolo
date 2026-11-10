@@ -18,6 +18,7 @@ testdata/clips/
 - **Length mix**: about 40% short (2–5 s: "send it", "ok kal milte hain"), 40% medium (5–15 s), 20% long (15–30 s).
 - **Content**: real dictation. Emails, chat replies, lists ("first… second…"), corrections ("actually no, make it Friday"), names and product terms, numbers, and code identifiers.
 - **Reference `.txt`**: exactly what you said, with fillers removed. Write Hinglish in **Roman script, the way you would type it** (`kal meeting hai na, agenda bhej dena`). Punctuation and case don't matter, because both sides are normalized.
+- **Formatted reference `<name>.formatted.txt`** (optional): the text you would actually send, in the M2 style (ADR-0015). Numbers as digits (except one to nine in prose; money, times and dates always digits), fillers removed, self-corrections applied, spoken enumerations as a numbered list. A clip without one is scored against its verbatim `.txt` for formatted WER too, and `bolo` says how many clips lacked one.
 - **`aliases.tsv`**: `variant<TAB>canonical`, one per line (`nahin	nahi`, `hain	hai`). Hinglish has no standard spelling. Without aliases, WER penalizes valid spellings.
 - Audio is gitignored. Only the `.txt` references and `aliases.tsv` are committed, if you choose to commit them.
 
@@ -52,22 +53,26 @@ Output goes to `bench-results/`:
 
 | file | contents |
 |---|---|
-| `summary.md` | one row per engine: WER/CER per category, p50/p95 latency, load time, peak RSS, download size, $/hr, and the count of Devanagari outputs |
+| `summary.md` | one row per engine: WER, formatted WER and CER per category, p50/p95 latency, load time, peak RSS, download size, $/hr, and the count of Devanagari outputs |
 | `summary.json` | the same data, machine-readable |
-| `clips.csv` | per clip: latency, RTF, WER, CER, hypothesis vs reference |
+| `clips.csv` | per clip: latency, RTF, WER, formatted WER, CER, hypothesis vs both references |
 
 Useful flags:
 
 - `--lang by-folder|auto|en|hi`: the default `by-folder` sends `en` for `en/` and `auto` for everything else.
 - `--threads N`
 - `--no-cache`: costs money.
+- `--polish`: also polish each output with Claude (needs `ANTHROPIC_API_KEY`) and add a Layer 1 + polish column for both WERs. It costs about $0.0013 per 40 clips. Without it no LLM calls are made.
 - `--clips DIR`, `--out DIR`
+
+`bolo replay` takes `--polish` too, and writes `replay.csv` and `summary.md` to `--out` (default `bench-results/replay`).
 
 ## 4. What each number means
 
 | metric | definition |
 |---|---|
 | **WER** | Word edit distance divided by the number of reference words, summed over the corpus (not averaged per clip). Both sides are lowercased, punctuation is stripped, and aliases are applied. |
+| **formatted WER** | WER against the formatted reference, the text you'd send. It measures how close the output is to finished text: fillers, self-corrections, list markers and spoken commands count, while digits vs number words don't (numbers are canonicalized on both sides, so "twelve fifty" = "$1,250"). Neither do capitals, punctuation or line breaks. Correct formatting edits lower it and raise verbatim WER. |
 | **CER** | The same at character level with spaces ignored. It is more forgiving of Hinglish spelling variants. |
 | **latency (local)** | *Release → text.* Streaming engines (Nemotron) are fed in 100 ms chunks first, which mirrors decoding while you speak. Only `finish()` is timed: 0.6 s tail padding plus a flush. Batch engines time the full decode. The median over `--runs` is taken per clip, then p50/p95 across clips. |
 | **latency (cloud)** | Request round-trip on a **pre-warmed** connection (a HEAD request first, as the app does on hotkey-down). It includes WAV upload. It is measured once, then cached. |
@@ -236,3 +241,31 @@ Shorter margins cut final syllables ("shopping li", "cache la"): the transducer 
 - Inference threads were also tried. 4 threads was fastest: 8 and 2 were both slower per chunk.
 - `bolo run`'s finish-only latency also drops, since it uses the same tail rule. That table (§9) hasn't been re-run.
 - p95 is still above 180 ms. It comes from releases mid-speech, which need 2 tail decodes.
+
+## 11. Formatted references and the formatted-WER baseline (M2 ticket 02)
+
+Each clip now has a formatted reference (`<name>.formatted.txt`, §1). The drafts differ from the verbatim reference on 7 of 40 clips:
+
+| clip | formatted reference | what changed |
+|---|---|---|
+| en/04 | I'll be 10 minutes late, start without me. | number style |
+| en/06 | The invoice number is 4572 and the total comes to $1,250. | money, digits |
+| en/11 | 1. Update the dependencies. ⏎ 2. Run the tests. ⏎ 3. Deploy to staging. | spoken list |
+| en/12 | Let's meet on Wednesday after lunch. | self-correction |
+| en/17 | My flight lands at 6:30 in the evening, so I can join the call from the airport. | time |
+| hinglish/11 | Parson chalte hain. | self-correction ("nahi wait") |
+| hinglish/15 | Aaj traffic bahut zyada hai, main 15 minute late ho jaunga. | Hindi number word (left to polish by ADR-0015) |
+
+Number style barely moves WER, since numbers are canonicalized on both sides: en/04 and en/17 score the same either way, and en/06 differs by one word ("$1,250" has no "dollars"). The recordings have no fillers, so filler removal isn't measured by this set.
+
+**Baseline before Layer 1 rules (2026-11-10, 40 clips):**
+
+| run | engine | WER en | fmt WER en | WER hinglish | fmt WER hinglish |
+|---|---|---|---|---|---|
+| `bolo run` | `local:nemotron-stream` | 8.0% | 11.3% | 31.2% | 34.6% |
+| `bolo run` | `deepgram:nova-3` (cached) | 4.6% | 7.4% | 20.1% | 24.4% |
+| `bolo replay --speed 50`, Auto | `local:nemotron-stream` | 8.0% | 11.3% | 27.7% | 30.9% |
+| same, `--polish` | `local:nemotron-stream` + polish | 9.5% | **8.2%** | 15.6% | 18.4% |
+
+- Polish lowers formatted WER on English (11.3% → 8.2%) while it raises verbatim WER (8.0% → 9.5%): it makes the edits a person would make. That's the gap Layer 1 aims to close on the instant path.
+- The formatted references are drafts until the user signs them off (ticket 02). Numbers here will be re-run if they change.

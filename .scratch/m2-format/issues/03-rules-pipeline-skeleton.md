@@ -14,4 +14,4 @@
 - [ ] Commands: "new line" and "new paragraph", with Hinglish forms ("nayi line", "naya paragraph"). "comma" and "full stop" are left as words.
 - [ ] `code_mode`: no sentence capitals and no final period.
 - [ ] Latency gate: the full pipeline is under 1 ms p95 over the 40 clips' transcripts, enforced by a test or a CI-light bench.
-- [ ] Formatted WER is re-measured, and BENCH.md is updated.
+- [ ] Formatted WER is re-measured, and BENCH.md is updated. `bolo run` scores the raw transcript (romanized), so it must run the pipeline on it before scoring and before `--polish`; `bolo replay` gets the rules through the engine.
