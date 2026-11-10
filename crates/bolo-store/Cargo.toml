@@ -1,6 +1,6 @@
 [package]
 name = "bolo-store"
-description = "Settings (TOML), history (SQLite) and secrets abstraction for Bolo (M3)"
+description = "Settings (TOML), history (SQLite) and secrets (Credential Manager) for the Bolo desktop app"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,21 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+bolo-core = { workspace = true }
+bolo-models = { workspace = true }
+directories = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
+tracing = { workspace = true }
+# SQLite compiled in: no system library on Windows or in CI.
+rusqlite = { version = "0.41", features = ["bundled"] }
+# keyring v4 is split: the API (with an in-memory mock store) and one crate per OS store.
+keyring-core = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-native-keyring-store = { version = "1.1", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"
