@@ -4,12 +4,10 @@
 //! The passes run in a fixed order:
 //!
 //! ```text
-//! fillers → self-corrections → numbers → lists and commands → punctuation fix-ups → render
+//! fillers → self-corrections → commands and lists → numbers → punctuation fix-ups → render
 //! ```
 //!
-//! The lists pass is still to come; it joins the commands step in [`apply`] (M2
-//! ticket 06). Every pass follows the same rule:
-//! when unsure, leave the text verbatim. Polish can catch a miss, but nothing restores a
+//! Every pass follows the same rule: when unsure, leave the text verbatim. Polish can catch a miss, but nothing restores a
 //! lost word.
 //!
 //! The pipeline is idempotent, never returns an empty string for non-empty input, and
@@ -19,6 +17,7 @@ mod commands;
 mod corrections;
 mod fillers;
 mod kinds;
+mod lists;
 mod numbers;
 mod punctuation;
 mod token;
@@ -75,17 +74,43 @@ impl FormatContext {
     }
 }
 
-/// Run the Layer 1 pipeline on a dictation's text.
+/// A dictation's text in both renderings, from one pipeline run.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Formatted {
+    pub plain: String,
+    pub markdown: String,
+}
+
+/// Run the Layer 1 pipeline on a dictation's text and render it for the target's markup.
 pub fn apply(text: &str, language: Language, ctx: FormatContext) -> String {
+    finish(token::render(&run(text, language, ctx.code_mode), ctx.markup), text)
+}
+
+/// Run the Layer 1 pipeline once and render the result as plain text and as Markdown.
+/// They differ only around lists: Markdown leaves a blank line before and after one.
+pub fn format(text: &str, language: Language, code_mode: bool) -> Formatted {
+    let tokens = run(text, language, code_mode);
+    Formatted {
+        plain: finish(token::render(&tokens, Markup::Plain), text),
+        markdown: finish(token::render(&tokens, Markup::Markdown), text),
+    }
+}
+
+fn run(text: &str, language: Language, code_mode: bool) -> Vec<token::Token> {
     let mut tokens = token::tokenize(text);
     fillers::apply(&mut tokens, language);
     corrections::apply(&mut tokens, language);
+    commands::apply(&mut tokens);
+    lists::apply(&mut tokens);
     numbers::apply(&mut tokens);
-    commands::apply(&mut tokens); // lists join this step in ticket 06
-    punctuation::apply(&mut tokens, ctx);
-    let out = token::render(&tokens, ctx);
+    punctuation::apply(&mut tokens, code_mode);
+    tokens
+}
+
+/// Never hand back an empty string: when nothing is left (only punctuation or spaces),
+/// return the input, trimmed unless it is all whitespace.
+fn finish(out: String, text: &str) -> String {
     if out.is_empty() {
-        // Nothing left (only punctuation or spaces): never hand back an empty string.
         let trimmed = text.trim();
         return if trimmed.is_empty() { text } else { trimmed }.to_owned();
     }

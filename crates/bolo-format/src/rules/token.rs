@@ -4,27 +4,35 @@
 //! own token, so spacing is rebuilt from scratch at render time. Punctuation inside a
 //! chunk stays put ("5:30", "3.5", "example.com", "1,000"). Newlines in the input become
 //! line or paragraph breaks, so rendered output tokenizes back to the same tokens.
+//!
+//! The lists pass adds list items and the breaks around a list. Plain text puts a list on
+//! its own lines; Markdown also leaves a blank line before and after it, so that the list
+//! is not read as part of the paragraph around it.
 
-use super::FormatContext;
+use super::Markup;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Token {
     Word(String),
     Punct(char),
     Break(Break),
+    /// The start of list item `n`: rendered "n. " on a new line.
+    Item(u32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Break {
     Line,
+    /// Before or after a list: a line break in plain text, a blank line in Markdown.
+    List,
     Paragraph,
 }
 
 impl Break {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Line => "\n",
-            Self::Paragraph => "\n\n",
+    fn as_str(self, markup: Markup) -> &'static str {
+        match (self, markup) {
+            (Self::Line, _) | (Self::List, Markup::Plain) => "\n",
+            (Self::Paragraph, _) | (Self::List, Markup::Markdown) => "\n\n",
         }
     }
 }
@@ -86,8 +94,7 @@ fn push_chunk(tokens: &mut Vec<Token>, chunk: &str) {
 
 /// Join tokens back into text: one space between words, punctuation attached to the word
 /// before it, breaks as newlines.
-pub(super) fn render(tokens: &[Token], ctx: FormatContext) -> String {
-    let _ = ctx; // Markdown renders lists differently (ticket 06)
+pub(super) fn render(tokens: &[Token], markup: Markup) -> String {
     let mut out = String::new();
     let mut after_break = true;
     for t in tokens {
@@ -101,8 +108,15 @@ pub(super) fn render(tokens: &[Token], ctx: FormatContext) -> String {
             }
             Token::Punct(c) => out.push(*c),
             Token::Break(b) => {
-                out.push_str(b.as_str());
+                out.push_str(b.as_str(markup));
                 after_break = true;
+            }
+            Token::Item(n) => {
+                if !out.is_empty() && !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push_str(&format!("{n}."));
+                after_break = false;
             }
         }
     }
@@ -148,6 +162,6 @@ mod tests {
                 Token::Break(Break::Line)
             ]
         );
-        assert_eq!(render(&t, FormatContext::plain()), "a\nb\n\nc\n");
+        assert_eq!(render(&t, Markup::Plain), "a\nb\n\nc\n");
     }
 }

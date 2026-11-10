@@ -43,3 +43,8 @@ note = "fifteen minutes late in a Hinglish dictation with a filler start"
 language = "hinglish"
 input = "matlab main fifteen minute late ho jaunga"
 expected = "Main 15 minute late ho jaunga."
+
+[[case]]
+note = "a filler, a spoken list and an amount in one dictation"
+input = "um for today first call the bank second pay fifteen hundred rupees third email priya"
+expected = "For today:\n1. Call the bank\n2. Pay ₹1,500\n3. Email priya"

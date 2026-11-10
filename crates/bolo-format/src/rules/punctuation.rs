@@ -5,8 +5,7 @@
 //! `code_mode` targets get no automatic capitals and no final period: a period the
 //! engine put at the end is removed, and a capitalized first word is lowercased.
 
-use super::FormatContext;
-use super::token::Token;
+use super::token::{Token, push_break};
 
 const ELLIPSIS: &[char] = &['.', '.', '.'];
 
@@ -41,7 +40,11 @@ fn collapse_runs(tokens: &mut Vec<Token>) {
             continue;
         }
         flush_run(tokens, &mut run);
-        tokens.push(t);
+        match t {
+            // Breaks that met over dropped marks merge into one.
+            Token::Break(b) => push_break(tokens, b),
+            t => tokens.push(t),
+        }
     }
     flush_run(tokens, &mut run);
 }
@@ -93,7 +96,7 @@ fn sentence_capitals(tokens: &mut [Token]) {
                 run.clear();
             }
             Token::Punct(c) => run.push(*c),
-            Token::Break(_) => {
+            Token::Break(_) | Token::Item(_) => {
                 at_start = true;
                 run.clear();
             }
@@ -115,7 +118,15 @@ fn trailing_run(tokens: &[Token]) -> Vec<char> {
     run
 }
 
+/// Whether the text ends inside a list item, whose closing mark the lists pass decided.
+fn ends_in_list(tokens: &[Token]) -> bool {
+    matches!(tokens.iter().rev().find(|t| matches!(t, Token::Break(_) | Token::Item(_))), Some(Token::Item(_)))
+}
+
 fn final_period(tokens: &mut Vec<Token>) {
+    if ends_in_list(tokens) {
+        return;
+    }
     let run = trailing_run(tokens);
     let Some(Token::Word(last_word)) = tokens.iter().rev().nth(run.len()) else {
         return; // ends on a break: the user is laying out, not ending a sentence
@@ -132,7 +143,7 @@ fn final_period(tokens: &mut Vec<Token>) {
 }
 
 fn code_mode(tokens: &mut Vec<Token>) {
-    if matches!(trailing_run(tokens).as_slice(), ['.' | '।']) {
+    if matches!(trailing_run(tokens).as_slice(), ['.' | '।']) && !ends_in_list(tokens) {
         tokens.pop();
     }
     if let Some(Token::Word(w)) = tokens.first_mut() {
@@ -149,9 +160,9 @@ fn code_mode(tokens: &mut Vec<Token>) {
     }
 }
 
-pub(super) fn apply(tokens: &mut Vec<Token>, ctx: FormatContext) {
+pub(super) fn apply(tokens: &mut Vec<Token>, code_mode_target: bool) {
     collapse_runs(tokens);
-    if ctx.code_mode {
+    if code_mode_target {
         code_mode(tokens);
         return;
     }

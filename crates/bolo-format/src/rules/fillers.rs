@@ -113,11 +113,16 @@ fn remove_once(tokens: &mut Vec<Token>, language: Language) {
             continue;
         };
         // "you know" between pauses: ", you know," and "You know, …" go; "do you know"
-        // and ", you know?" stay.
+        // and ", you know?" stay. Any mark but "?" or "!" after it is a pause, so that a
+        // run like "; ..." (collapsed to "." later) gives the same answer on a second run.
         if word == "you"
             && lower(src.get(i + 1)).as_deref() == Some("know")
             && pause_before(out)
-            && matches!(src.get(i + 2), None | Some(Token::Break(_)) | Some(Token::Punct(',' | '.' | '…')))
+            && match src.get(i + 2) {
+                None | Some(Token::Break(_)) => true,
+                Some(Token::Punct(c)) => !matches!(c, '?' | '!'),
+                _ => false,
+            }
         {
             i += 2;
             continue;
