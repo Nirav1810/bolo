@@ -129,6 +129,8 @@ Run-to-run noise on this machine is about ±40 ms p50; the same Auto build measu
 - No mode meets 180 ms on replay's end-to-end clock. That gap is the engine thread blocking on chunk decodes, not Auto, and is worth its own fix.
 - Finishing both passes in parallel instead measured ~260 ms p50, which is why the early decision exists.
 
+**Update (M2):** the chunk-decode wait is gone. Nemotron English is now 107 ms p50 and Auto 129 ms p50 on the same clock (§10).
+
 **Tuned detector constants** (`bolo_format::language`), from the Hindi-pass output of all 40 clips:
 
 | | English clips | Hinglish clips |
@@ -190,3 +192,47 @@ The numbers M1 ships on, gathered from §7, §8 and the `bolo run` results (2026
 Here Nemotron's Hinglish uses its built-in language detection; Auto mode (above) brings it to 27.7%. Groq, Sarvam and `parakeet-v3` were not re-run after transliteration landed.
 
 **Defaults chosen:** `local:nemotron-stream` in Auto on desktop (the only local engine with good Hinglish under 500 ms and 1.5 GB), `deepgram-stream` as the cloud option for the instant path, and LLM cleanup (`--polish`, +1043 ms p50, Hinglish WER 31.2% → 14.7%) only off the instant path (ADR-012).
+
+## 10. Release → text without the chunk-decode wait (M2 ticket 01)
+
+M1 missed the 180 ms bar on `bolo replay`'s end-to-end clock (§7). The stop breakdown, logged at `RUST_LOG=bolo_core=debug`, shows where the time went. The baseline below is `main`, 15 English clips, real time:
+
+| stage | before | after (40 clips) |
+|---|---|---|
+| Stop waiting for the engine thread (an in-flight chunk decode) | 0–88 ms (0 on 2/3 of clips) | ~0.02 ms |
+| last audio handed over | ~0.1 ms | ~0.01 ms |
+| tail decode (in-flight chunk + padding chunks) | 150–186 ms: almost always 2 chunk decodes | p50 107, p95 237 ms: 0 decodes on 11 clips, 1 on 24, 2 on 5 |
+| rules (romanize) | < 0.01 ms | < 0.1 ms |
+
+Two changes:
+1. **Each streaming pass decodes on its own thread.** The engine thread only hands audio over, so it takes Stop as soon as it's called. Auto drops the pass it didn't choose even mid-decode.
+2. **The tail pad stops at the end of speech.** The fixed 0.6 s of silence before `input_finished` cost two chunk decodes after release, about 100 ms each. Now the stream pads only up to the chunk that holds the end of speech plus a 480 ms margin. It decodes nothing when that chunk was already decoded live, which is the common case when the user pauses before releasing.
+   - The end of speech is the last 10 ms frame within −46 dB of the dictation's loudest frame. In a noisy room every frame counts, which costs latency, not words.
+   - The chunk geometry is probed once at model load by feeding silence. On Nemotron 320 ms, the first chunk is ready at 6848 samples, then one every 5120.
+
+**Tuning (40 clips, `--speed 50`).** WER with 0 ms and 300 ms of silence before release, against the old fixed pad:
+
+| tail rule | en, 0 ms | en clips forced to hi, 0 ms | en clips forced to hi, 300 ms |
+|---|---|---|---|
+| fixed 0.6 s (old) | 8.0% | 67.6% | 67.6% |
+| speech end at −26 dB + 160 ms | 9.2% | 68.3% | 67.9% |
+| speech end at −46 dB + 160 ms | 8.4% | 68.3% | 67.9% |
+| speech end at −46 dB + 320 ms | 8.0% | – | 67.9% |
+| **speech end at −46 dB + 480 ms** | **8.0%** | **67.6%** | **67.6%** |
+
+Shorter margins cut final syllables ("shopping li", "cache la"): the transducer emits a word's last tokens a while after hearing them. Hinglish clips stayed at 27.7% in every row. With 480 ms, every cell in both categories and both modes equals the old fixed pad.
+
+**Results (2026-11-10, `local:nemotron-stream`, Windows desktop, real time, 40 clips; `main` and this change run back to back):**
+
+| mode | build | WER en | WER hinglish | release→text p50 / p95 |
+|---|---|---|---|---|
+| English | `main` | 8.0% | 83.0% | 215 / 313 ms |
+| English | this change | 8.0% | 83.0% | **107 / 220 ms** ✅ |
+| Auto | `main` | 8.0% | 27.7% | 229 / 350 ms |
+| Auto | this change | 8.0% | 27.7% | **129 / 267 ms** ✅ |
+
+- Auto still chooses the right language on 40/40 clips.
+- `Timings` now run from the `stop_dictation` call, so the engine-side and caller-side numbers agree.
+- Inference threads were also tried. 4 threads was fastest: 8 and 2 were both slower per chunk.
+- `bolo run`'s finish-only latency also drops, since it uses the same tail rule. That table (§9) hasn't been re-run.
+- p95 is still above 180 ms. It comes from releases mid-speech, which need 2 tail decodes.

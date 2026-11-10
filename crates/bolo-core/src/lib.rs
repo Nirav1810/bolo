@@ -12,7 +12,9 @@
 //! result is chosen at release (ADR-0014).
 //!
 //! All work happens on one engine thread, so every method here returns immediately.
-//! Results arrive through [`EngineEvents`].
+//! Streaming decodes run on a thread per pass, so the engine thread never waits on one
+//! and takes `stop_dictation` as soon as it's called. Results arrive through
+//! [`EngineEvents`].
 
 use std::collections::HashMap;
 use std::fmt;
@@ -100,7 +102,7 @@ pub enum DictationState {
     Done,
 }
 
-/// Per-stage latency in milliseconds, measured from `stop_dictation`.
+/// Per-stage latency in milliseconds, measured from the `stop_dictation` call.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct Timings {
     /// Stop → STT final text.
@@ -297,7 +299,7 @@ impl Engine {
 
     /// Finish; the result arrives via `on_final` (or `on_error`).
     pub fn stop_dictation(&self) -> Result<(), BoloError> {
-        self.send(Cmd::Stop)
+        self.send(Cmd::Stop(std::time::Instant::now()))
     }
 
     pub fn cancel_dictation(&self) {
