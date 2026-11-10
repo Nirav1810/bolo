@@ -9,6 +9,9 @@ members = [
     "crates/bolo-store",
     "crates/bolo-ffi",
     "crates/bolo",
+    # The Windows app. Not a default member: plain `cargo build`/`test` skip it, and the
+    # `desktop (windows-latest)` CI job builds it after the frontend.
+    "apps/desktop/src-tauri",
 ]
 default-members = [
     "crates/bolo-core",

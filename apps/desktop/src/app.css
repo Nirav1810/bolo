@@ -1,0 +1,7 @@
+@import "tailwindcss";
+
+/* Placeholder look for the debug window. The designed tokens land with ticket 04. */
+:root {
+  color-scheme: light dark;
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+}

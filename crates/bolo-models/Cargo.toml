@@ -19,6 +19,7 @@ tar = { workspace = true }
 bzip2 = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "rt"] }
+directories = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs", "io-util"] }

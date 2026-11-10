@@ -348,9 +348,7 @@ async fn main() -> Result<()> {
 }
 
 fn default_models_dir() -> Result<PathBuf> {
-    // Local (not roaming) app data: models are hundreds of MB.
-    let dirs = directories::ProjectDirs::from("", "", "Bolo").ok_or_else(|| anyhow!("no home directory"))?;
-    Ok(dirs.data_local_dir().join("models"))
+    bolo_models::default_models_root().ok_or_else(|| anyhow!("no home directory"))
 }
 
 enum Built {

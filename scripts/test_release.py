@@ -6,6 +6,7 @@ missing git-cliff fails the test instead of skipping it.
 
 import io
 import os
+import tempfile
 import tomllib
 import unittest
 import zipfile
@@ -94,6 +95,16 @@ class Manifests(unittest.TestCase):
     def test_lockfile_must_hold_every_workspace_crate(self):
         with self.assertRaises(ReleaseError):
             release.bump_lock(LOCK, ["bolo", "bolo-ghost"], "0.2.0")
+
+    def test_desktop_app_manifests_must_not_carry_their_own_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "apps/desktop/src-tauri").mkdir(parents=True)
+            (root / "apps/desktop/package.json").write_text('{"name": "bolo-desktop", "private": true}', "utf-8")
+            (root / "apps/desktop/src-tauri/tauri.conf.json").write_text('{"version": "0.1.0"}', "utf-8")
+            errors = release.desktop_manifest_errors(root)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("tauri.conf.json", errors[0])
 
     def test_repo_manifests_agree_on_one_version(self):
         version, errors = release.manifest_errors()

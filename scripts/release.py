@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -46,9 +47,13 @@ MAIN = "main"
 # Explicit, so origin/main is updated even in a tag-only CI checkout.
 MAIN_REFSPEC = f"+refs/heads/{MAIN}:refs/remotes/origin/{MAIN}"
 VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-beta\.([1-9]\d*))?$")
-# Files a release PR changes. M3 adds tauri.conf.json and M5 the Android Gradle file:
-# bump them in plan() and check them in manifest_errors().
+# Files a release PR changes. M5 adds the Android Gradle file: bump it in plan() and check
+# it in manifest_errors(). The desktop app has no version of its own to bump: Tauri takes
+# the bolo-desktop crate's, which is the workspace's (see DESKTOP_MANIFESTS).
 RELEASE_FILES = ("Cargo.toml", "Cargo.lock", "CHANGELOG.md")
+# JSON manifests of the desktop app that must not carry a `version`: without one, Tauri
+# uses the crate version, so the workspace stays the single source (ADR-0013).
+DESKTOP_MANIFESTS = ("apps/desktop/src-tauri/tauri.conf.json", "apps/desktop/package.json")
 
 
 class ReleaseError(Exception):
@@ -175,7 +180,17 @@ def manifest_errors(root: Path = ROOT) -> tuple[str, list[str]]:
     for name in names:
         if locked.get(name) != version:
             errors.append(f"Cargo.lock: {name} is {locked.get(name)!r}, workspace is {version!r}")
+    errors += desktop_manifest_errors(root)
     return version, errors
+
+
+def desktop_manifest_errors(root: Path = ROOT) -> list[str]:
+    errors = []
+    for rel in DESKTOP_MANIFESTS:
+        path = root / rel
+        if path.exists() and "version" in json.loads(path.read_text("utf-8")):
+            errors.append(f"{rel}: remove `version`; the app takes the workspace version from its crate")
+    return errors
 
 
 # --- git, tools ------------------------------------------------------------------------
