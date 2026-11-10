@@ -256,7 +256,7 @@ Each clip now has a formatted reference (`<name>.formatted.txt`, §1). The draft
 | hinglish/11 | Parson chalte hain. | self-correction ("nahi wait") |
 | hinglish/15 | Aaj traffic bahut zyada hai, main 15 minute late ho jaunga. | Hindi number word (left to polish by ADR-0015) |
 
-Number-style edits (en/04, en/06, en/17) don't move WER, since numbers are canonicalized. The recordings have no fillers, so filler removal isn't measured by this set.
+Number style barely moves WER, since numbers are canonicalized on both sides: en/04 and en/17 score the same either way, and en/06 differs by one word ("$1,250" has no "dollars"). The recordings have no fillers, so filler removal isn't measured by this set.
 
 **Baseline before Layer 1 rules (2026-11-10, 40 clips):**
 

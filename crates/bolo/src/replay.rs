@@ -81,10 +81,10 @@ pub fn run(
     aliases: &HashMap<String, String>,
     mut polisher: Option<&mut Polisher>,
 ) -> Result<()> {
-    let Options { language, speed, limit, out } = *opts;
+    let Options { language, speed, limit, out: out_dir } = *opts;
     let clips = crate::load_clips(clips_dir)?;
     let clips: Vec<_> = clips.into_iter().take(limit).collect();
-    std::fs::create_dir_all(out)?;
+    std::fs::create_dir_all(out_dir)?;
     let config = EngineConfig {
         engines: vec![engine_spec.to_owned()],
         language,
@@ -194,12 +194,12 @@ pub fn run(
     }
     println!("\n{md}");
 
-    let mut w = csv::Writer::from_path(out.join("replay.csv"))?;
+    let mut w = csv::Writer::from_path(out_dir.join("replay.csv"))?;
     for r in &rows {
         w.serialize(r)?;
     }
     w.flush()?;
-    std::fs::write(out.join("summary.md"), md)?;
+    std::fs::write(out_dir.join("summary.md"), md)?;
     Ok(())
 }
 
