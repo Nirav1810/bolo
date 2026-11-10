@@ -16,6 +16,14 @@ _Avoid_: Fast path, raw output
 An optional LLM rewrite of a dictation's text (punctuation, fillers, tone) that never blocks the instant path.
 _Avoid_: Cleanup, LLM pass, formatting (formatting covers all layers)
 
+**Segment**:
+A stretch of one dictation between pauses of at least 700 ms, found by VAD. Long dictations are polished one segment at a time while the user keeps speaking (ADR-0016).
+_Avoid_: Chunk (the STT engine's fixed-size decode unit), utterance
+
+**Formatted reference**:
+The text the user would actually send for a benchmark clip, with fillers removed, corrections applied and numbers as digits. Scored alongside the verbatim reference, which is what was literally said.
+_Avoid_: Golden output (golden cases are the rules' unit tests)
+
 **Warm mic**:
 The window after a dictation during which the microphone stays open so the next dictation loses no opening syllables.
 _Avoid_: Hot mic, pre-open
