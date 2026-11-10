@@ -4,7 +4,7 @@
 
 **Blocked by:** 01, 02, 03, 04, 05, 06, 07, 08, 09
 
-**Status:** ready-for-human
+**Status:** done
 
 - [x] `docs/M2-REPORT.md`:
   - what shipped;
@@ -16,4 +16,5 @@
 - [x] ARCHITECTURE.md and README are updated for the rules pipeline and `on_polished`.
 - [x] The `chore(release): v0.2.0` PR is merged, then the tag is pushed and the release published as a prerelease. The zip is verified.
   - Report PR #24 (a1ade34), release PR #25 (8623c73). `v0.2.0` was published 2026-11-10 as a prerelease. The zip's SHA-256 matches, and the unzipped `bolo --version` prints `bolo 0.2.0` with only System32 on `PATH`.
-- [ ] **Human:** M2 sign-off. Don't start M3 until then.
+- [x] **Human:** M2 sign-off. Don't start M3 until then.
+  - Signed off 2026-11-10 ("continue to m3"). M3 plan: `.scratch/m3-desktop/`.

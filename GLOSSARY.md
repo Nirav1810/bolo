@@ -28,6 +28,24 @@ _Avoid_: Golden output (golden cases are the rules' unit tests)
 The window after a dictation during which the microphone stays open so the next dictation loses no opening syllables.
 _Avoid_: Hot mic, pre-open
 
+## Desktop
+
+**Push-to-talk key**:
+The key the user holds to dictate on the desktop: Caps Lock by default (ADR-0017). A short tap of it is passed on as a normal key press.
+_Avoid_: Hotkey (fine in code, but ambiguous in docs), trigger
+
+**Target app**:
+The foreground app the text will be inserted into. Its exe (and window title for browsers) decides the dictation's `TargetContext`: format, `code_mode` and whether polish runs.
+_Avoid_: Destination, focus app
+
+**Overlay pill**:
+The small, non-activating, click-through window that shows listening state, the waveform and partial text during a dictation.
+_Avoid_: HUD, toast, popup
+
+**Polish swap**:
+Replacing already-inserted instant text with its polished version, by selecting it back and pasting. It happens only when the user hasn't touched the keyboard or mouse in the same window since the insert (ADR-0018).
+_Avoid_: Replace, auto-correct
+
 ## Language
 
 **Hinglish**:
