@@ -392,3 +392,27 @@ With polish on, a dictation that reaches 20 s is polished one segment at a time 
 - **Caveat:** each chained dictation ends with its 1 s clip pause plus 300 ms before release. That closes the last segment before release, so in runs 2, 4 and 5 the remaining text was empty and `on_polished` came straight after `on_final`. Someone who releases mid-sentence waits for one short polish call on the last phrase instead: runs 1 and 3 show +50 to +250 ms. That stays far under a whole-text call.
 - One segment call failed with a network error (run 5, first segment). It kept its Layer 1 text, and the rest of that dictation was still polished and joined. This is the fallback the engine tests cover.
 - Release → `on_final` of 1 ms (runs 2 and 5): after a long trailing pause the decoder has nothing left to decode at release.
+
+## 18. M2 final numbers
+
+These are the numbers M2 ships on: `main` at `e087099`, measured 2026-11-10 on 40 clips. The M2 report ([M2-REPORT.md](M2-REPORT.md)) has the discussion.
+
+**Through the live engine (`bolo replay`, `local:nemotron-stream`, Auto):**
+
+| layer | WER en | fmt WER en | WER hinglish | fmt WER hinglish |
+|---|---|---|---|---|
+| Layer 1 | 10.3% | 9.0% | 27.7% | 30.9% |
+| Layer 1 + polish | 9.9% | 8.6% | 12.9% | 15.7% |
+
+These are from `--speed 50 --polish` (40 polish calls, 0 failed, $0.0012). Real-time release → text: Auto 182 / 375 ms p50 / p95 (two runs, 183 and 182 ms p50), English 151 / 297 ms (20 clips). The ticket 01 build, run the same day, reads Auto 190 / 377 ms, so the machine was slower than in §10, and tickets 03–09 added no latency.
+
+**`bolo run --polish`:**
+
+| engine | WER en | fmt WER en | +polish fmt WER en | WER hinglish | fmt WER hinglish | +polish fmt WER hinglish | p50 / p95 ms |
+|---|---|---|---|---|---|---|---|
+| `local:nemotron-stream` | 10.3% | 9.0% | 8.6% | 31.2% | 34.6% | 20.3% | 285 / 455 |
+| `deepgram:nova-3` (cached) | 7.6% | 4.3% | 3.5% | 23.2% | 21.2% | 13.8% | 660 / 915 |
+
+80 polish calls, 1 failed (its Layer 1 text was kept), $0.0026. Nemotron's finish-only p50 is 285–295 ms over three runs. The ticket 01 build reads 286 ms. M1's 158 ms (§9) hasn't been reproduced, and the cause hasn't been investigated (M2 report, gap 3).
+
+**Rules latency** (`cargo test -p bolo-format --release --test latency`): p95 0.025 ms, max 0.23 ms over 4800 runs.

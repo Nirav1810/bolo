@@ -7,7 +7,7 @@ Open-source, local-first voice dictation for **Windows** and **Android**. Hold a
 - **Private**: no telemetry, no accounts. Audio leaves the device only if you configure a cloud provider.
 - **Lean**: models load only while you dictate and unload when idle.
 
-> **Status: Milestone 1 done: core engine + `bolo` CLI preview.** There is no desktop app or Android keyboard yet. See the [M1 report](docs/M1-REPORT.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+> **Status: Milestone 2 done: core engine, formatting layer and `bolo` CLI preview.** There is no desktop app or Android keyboard yet. See the [M2 report](docs/M2-REPORT.md), the [M1 report](docs/M1-REPORT.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Try it (Windows x64)
 
@@ -20,14 +20,15 @@ Open-source, local-first voice dictation for **Windows** and **Android**. Hold a
    .olo.exe dictate                      # Enter starts and stops; the text goes to the clipboard
    ```
 
-`dictate` uses Auto language mode: speak English or Hinglish and Bolo picks one per dictation. Pin it with `--lang en` or `--lang hi`. For a cloud engine, put `DEEPGRAM_API_KEY=…` in a `.env` file in that folder and run `.olo.exe dictate -e deepgram-stream`. Releases are unsigned previews, so SmartScreen may warn on first run.
+`dictate` uses Auto language mode: speak English or Hinglish and Bolo picks one per dictation. Pin it with `--lang en` or `--lang hi`. The text is formatted on the way out: fillers removed, spoken corrections applied ("Tuesday, actually no, Wednesday" → "Wednesday"), numbers as digits ("₹1,25,000", "5:30 pm"), spoken lists as numbered lists, and "new line" or "new paragraph" as breaks. With `--polish` and `ANTHROPIC_API_KEY` in `.env`, Claude polishes the text after the instant result. If the polished text arrives within 1.5 s, it replaces the instant text on the clipboard. For a cloud engine, put `DEEPGRAM_API_KEY=…` in a `.env` file in that folder and run `.olo.exe dictate -e deepgram-stream`. Releases are unsigned previews, so SmartScreen may warn on first run.
 
-**M1 numbers** (40 clips, one speaker; details in [docs/BENCH.md](docs/BENCH.md) §9):
+**M2 numbers** (40 clips, one speaker; formatted WER compares with the text you'd send; details in the [M2 report](docs/M2-REPORT.md)):
 
-| engine | WER English | WER Hinglish | release → text p50 |
+| engine | fmt WER English | fmt WER Hinglish | release → text p50 |
 |---|---|---|---|
-| `local:nemotron-stream`, Auto (default, offline) | 8.0% | 27.7% | 234 ms |
-| `deepgram-stream` (cloud, BYOK) | 9.2% | 21.0% | 299 ms |
+| `local:nemotron-stream`, Auto (default, offline) | 9.0% | 30.9% | 129–182 ms |
+| same + polish (Claude Haiku, BYOK) | 8.6% | 15.7% | +1 s; 128 ms per segment on 60 s dictations |
+| `deepgram` (Nova-3 batch, cloud, BYOK) | 4.3% | 21.2% | 1306 ms (`deepgram-stream`: 290 ms) |
 
 ## Build (developers)
 
@@ -58,7 +59,7 @@ For the developer tools, copy `.env.example` to `.env` (git-ignored) and paste y
 | Groq | `GROQ_API_KEY` | Whisper large-v3-turbo STT |
 | Deepgram | `DEEPGRAM_API_KEY` | Nova-3 STT: `deepgram` (batch) or `deepgram-stream` (live WebSocket) |
 | Sarvam AI | `SARVAM_API_KEY` | Saaras v4 STT, Roman Hinglish (`translit`) |
-| Anthropic | `ANTHROPIC_API_KEY` | Claude Haiku cleanup (`bolo dictate --polish`) |
+| Anthropic | `ANTHROPIC_API_KEY` | Claude Haiku polish (`bolo dictate --polish`) |
 
 In the apps, keys go to Windows Credential Manager or the Android Keystore. They are never written to plain files or logs.
 
