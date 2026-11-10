@@ -1,0 +1,9 @@
+# A version-0 settings file: the flat layout of the desktop shell's BOLO_* variables
+# (M3 ticket 01). It has no `version` key.
+engines = ["local:parakeet-v2-en", "deepgram"]
+language = "hi"
+script = "roman"
+dictionary = ["Nirav", "Bolo"]
+polish = "Casual"
+history = false
+history_days = 14
