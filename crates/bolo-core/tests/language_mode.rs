@@ -129,7 +129,12 @@ fn partials_follow_the_favoured_pass() {
     let h = harness(LanguageMode::Auto, script_hinglish);
     let events = h.dictate();
     // Ambiguous at first (no history: English is favoured), then the Hindi pass's
-    // function words win.
-    assert_eq!(partials(&events), ["Call", "Call meeting", roman(HI_FINAL).as_str()]);
+    // function words win. The passes decode on their own threads, so the English
+    // pass's third partial may show before the Hindi pass's third one takes over.
+    let got = partials(&events);
+    let hi = roman(HI_FINAL);
+    let hindi_first = ["Call", "Call meeting", hi.as_str()];
+    let english_first = ["Call", "Call meeting", HI_AS_EN, hi.as_str()];
+    assert!(got == hindi_first || got == english_first, "partials follow English, then the Hindi pass: {got:?}");
     assert_eq!(finals(&events)[0].language, LanguageMode::Hinglish);
 }
