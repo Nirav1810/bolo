@@ -1,0 +1,187 @@
+# Fillers (ADR-0015): hesitation sounds, "you know" between pauses, stutters, and Hindi
+# fillers only where they can't be real words. When unsure, the text stays verbatim.
+
+[[case]]
+note = "um and uh go, with the commas around them"
+input = "So, um, I think we should, uh, ship it on Friday."
+expected = "So, I think we should, ship it on Friday."
+
+[[case]]
+note = "a hesitation at the start goes and the next word gets the capital"
+input = "um can you send me the deck"
+expected = "Can you send me the deck."
+
+[[case]]
+note = "er and erm go too"
+input = "The total is er about the same as erm last month."
+expected = "The total is about the same as last month."
+
+[[case]]
+note = "uh-huh is an answer, not a filler"
+input = "Uh-huh, that works."
+expected = "Uh-huh, that works."
+
+[[case]]
+note = "you know between commas is a filler"
+input = "I was, you know, pretty tired after the trip."
+expected = "I was, pretty tired after the trip."
+
+[[case]]
+note = "you know at the start before a comma is a filler"
+input = "You know, it's fine either way."
+expected = "It's fine either way."
+
+[[case]]
+note = "do you know is a real question"
+input = "Do you know when the build finishes?"
+expected = "Do you know when the build finishes?"
+
+[[case]]
+note = "you know what is kept"
+input = "You know what, let's just ship it."
+expected = "You know what, let's just ship it."
+
+[[case]]
+note = "you know as a tag question is kept"
+input = "It was a long day, you know?"
+expected = "It was a long day, you know?"
+
+[[case]]
+note = "like between commas is a filler"
+input = "We need, like, three more people."
+expected = "We need, three more people."
+
+[[case]]
+note = "like as a verb or preposition is kept"
+input = "I like it, it looks like the old one."
+expected = "I like it, it looks like the old one."
+
+[[case]]
+note = "a stuttered word collapses to one"
+input = "Can you send the the report to to Priya?"
+expected = "Can you send the report to Priya?"
+
+[[case]]
+note = "a stutter with a comma between collapses"
+input = "I, I think we're ready."
+expected = "I think we're ready."
+
+[[case]]
+note = "the hesitation goes, but a repeated phrase is not a stutter: only single words collapse"
+input = "We should um we should wait."
+expected = "We should we should wait."
+
+[[case]]
+note = "words repeated on purpose are kept"
+input = "Bye bye, it was very very good. I know that that is true."
+expected = "Bye bye, it was very very good. I know that that is true."
+
+[[case]]
+note = "repeated digits are kept"
+input = "The code is 4 4 7 2 and the room is one one two."
+expected = "The code is 4 4 7 2 and the room is one one two."
+
+[[case]]
+note = "a word and its repeat across a comma are kept unless it's a stutter word"
+input = "I do, do you? Do it, it works."
+expected = "I do, do you? Do it, it works."
+
+[[case]]
+note = "Hinglish: matlab at the start is a filler"
+language = "hinglish"
+input = "Matlab kal meeting cancel ho gayi hai."
+expected = "Kal meeting cancel ho gayi hai."
+
+[[case]]
+note = "Hinglish: matlab in the middle is a real word"
+language = "hinglish"
+input = "Iska matlab hai ki release kal hoga."
+expected = "Iska matlab hai ki release kal hoga."
+
+[[case]]
+note = "Hinglish: matlab matlab is hesitation and both go"
+language = "hinglish"
+input = "Main soch raha tha matlab matlab hum kal chalein."
+expected = "Main soch raha tha hum kal chalein."
+
+[[case]]
+note = "Hinglish: haan toh at the start is a filler"
+language = "hinglish"
+input = "Haan toh, kal ka plan kya hai?"
+expected = "Kal ka plan kya hai?"
+
+[[case]]
+note = "Hinglish: haan on its own is a real yes"
+language = "hinglish"
+input = "Haan theek hai, kal milte hain."
+expected = "Haan theek hai, kal milte hain."
+
+[[case]]
+note = "Hinglish: woh before a pause at the start is a filler"
+language = "hinglish"
+input = "Woh, kal ka standup cancel hai."
+expected = "Kal ka standup cancel hai."
+
+[[case]]
+note = "Hinglish: woh na before a pause at the start goes"
+language = "hinglish"
+input = "Woh na, mujhe kal chhutti chahiye."
+expected = "Mujhe kal chhutti chahiye."
+
+[[case]]
+note = "Hinglish: woh pointing at something is kept"
+language = "hinglish"
+input = "Woh movie dekhi kya?"
+expected = "Woh movie dekhi kya?"
+
+[[case]]
+note = "Hinglish: matlab goes but the woh after it is a real word"
+language = "hinglish"
+input = "Matlab woh movie dekhi kya?"
+expected = "Woh movie dekhi kya?"
+
+[[case]]
+note = "Hinglish: na at the start is usually no, and stays"
+language = "hinglish"
+input = "Na, main nahi aaunga."
+expected = "Na, main nahi aaunga."
+
+[[case]]
+note = "Hinglish: na as a tag is kept"
+language = "hinglish"
+input = "Kal meeting hai na, agenda bhej dena."
+expected = "Kal meeting hai na, agenda bhej dena."
+
+[[case]]
+note = "Hinglish: na na means no no and stays"
+language = "hinglish"
+input = "Na na, aisa mat karo."
+expected = "Na na, aisa mat karo."
+
+[[case]]
+note = "Hinglish: woh woh is a stutter and collapses"
+language = "hinglish"
+input = "Mujhe woh woh file chahiye."
+expected = "Mujhe woh file chahiye."
+
+[[case]]
+note = "Hinglish: Hindi repeats words for meaning, so they stay"
+language = "hinglish"
+input = "Jaldi jaldi karo, alag alag files mein daalo."
+expected = "Jaldi jaldi karo, alag alag files mein daalo."
+
+[[case]]
+note = "Hinglish: um goes in Hinglish too"
+language = "hinglish"
+input = "Main um thodi der mein call karta hoon."
+expected = "Main thodi der mein call karta hoon."
+
+[[case]]
+note = "English: matlab is not removed outside Hinglish"
+input = "Matlab is a numerical computing tool."
+expected = "Matlab is a numerical computing tool."
+
+[[case]]
+note = "a dictation that is only fillers is left as it is"
+input = "Um."
+expected = "Um."

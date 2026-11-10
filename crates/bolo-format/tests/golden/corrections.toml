@@ -1,0 +1,180 @@
+# Self-corrections (ADR-0015): explicit markers only, and the repair replaces the
+# nearest preceding phrase of the same kind (date, time, number, noun phrase). When
+# unsure, the text stays verbatim.
+
+[[case]]
+note = "a day corrected with actually no"
+input = "Let's meet on Tuesday, actually no, Friday."
+expected = "Let's meet on Friday."
+
+[[case]]
+note = "bench en/12 as written: make it is part of the repair"
+input = "Let's meet on Tuesday, actually no, make it Wednesday after lunch."
+expected = "Let's meet on Wednesday after lunch."
+
+[[case]]
+note = "bench en/12 from Nemotron: no commas around the marker"
+input = "Let's meet on Tuesday actually no make it Wednesday after lunch."
+expected = "Let's meet on Wednesday after lunch."
+
+[[case]]
+note = "bench en/12 from Deepgram: the marker is a sentence of its own"
+input = "Let's meet on Tuesday. Actually, no. Make it Wednesday after lunch."
+expected = "Let's meet on Wednesday after lunch."
+
+[[case]]
+note = "the words after the old phrase stay when the repair is just the phrase"
+input = "Book it for Tuesday at the office, actually no, Thursday."
+expected = "Book it for Thursday at the office."
+
+[[case]]
+note = "a time corrected with I mean"
+input = "The call is at 5 pm, I mean 6 pm."
+expected = "The call is at 6 pm."
+
+[[case]]
+note = "a bare number after at is a time"
+input = "Let's start at 4, sorry, 4:30."
+expected = "Let's start at 4:30."
+
+[[case]]
+note = "a number corrected with sorry keeps its noun"
+input = "We need three people, sorry, four."
+expected = "We need four people."
+
+[[case]]
+note = "the repair restates the noun"
+input = "Order 12 chairs, I mean 15 chairs."
+expected = "Order 15 chairs."
+
+[[case]]
+note = "the nearest phrase of the same kind is the one replaced"
+input = "On Monday we moved it to Thursday, actually no, Friday."
+expected = "On Monday we moved it to Friday."
+
+[[case]]
+note = "a noun phrase corrected with I mean"
+input = "Send it to the marketing team, I mean the sales team."
+expected = "Send it to the sales team."
+
+[[case]]
+note = "a one-word noun phrase"
+input = "Let's order pizza, actually no, pasta."
+expected = "Let's order pasta."
+
+[[case]]
+note = "a parallel noun phrase"
+input = "Let's go with option one, I mean option two."
+expected = "Let's go with option two."
+
+[[case]]
+note = "sorry never corrects a noun phrase: an apology to a person"
+input = "I was wrong, sorry Rahul."
+expected = "I was wrong, sorry Rahul."
+
+[[case]]
+note = "I mean it is literal"
+input = "Thanks for the help, I mean it."
+expected = "Thanks for the help, I mean it."
+
+[[case]]
+note = "what I mean is literal"
+input = "That is not what I mean, the report is fine."
+expected = "That is not what I mean, the report is fine."
+
+[[case]]
+note = "I mean as a clarification of a sentence is kept"
+input = "The build is slow, I mean it takes ten minutes."
+expected = "The build is slow, I mean it takes ten minutes."
+
+[[case]]
+note = "sorry for the delay is an apology"
+input = "Sorry for the delay, the report is attached."
+expected = "Sorry for the delay, the report is attached."
+
+[[case]]
+note = "sorry after I'm is an apology, even before a number"
+input = "I'm sorry 3 people couldn't make it."
+expected = "I'm sorry 3 people couldn't make it."
+
+[[case]]
+note = "a number repair with no number before it stays"
+input = "Let's meet on Tuesday, sorry, 5 pm works better."
+expected = "Let's meet on Tuesday, sorry, 5 pm works better."
+
+[[case]]
+note = "actually no as ordinary words stays"
+input = "There's actually no reason to wait."
+expected = "There's actually no reason to wait."
+
+[[case]]
+note = "a marker at the start has nothing to correct"
+input = "Actually no, I think Friday is better."
+expected = "Actually no, I think Friday is better."
+
+[[case]]
+note = "a noun phrase after a determiner is not cut in half"
+input = "I was talking to the boss, I mean Rahul."
+expected = "I was talking to the boss, I mean Rahul."
+
+[[case]]
+note = "scratch that drops the sentence before it"
+input = "Send it to John. Scratch that. Send it to Priya instead."
+expected = "Send it to Priya instead."
+
+[[case]]
+note = "scratch that as a verb stays"
+input = "You can scratch that off the list."
+expected = "You can scratch that off the list."
+
+[[case]]
+note = "scratch that with a matching phrase corrects only the phrase"
+input = "The deadline is Friday, scratch that, Monday."
+expected = "The deadline is Monday."
+
+[[case]]
+note = "two corrections in one dictation"
+input = "Meet at 5 pm, I mean 6 pm, on Tuesday, actually no, Wednesday."
+expected = "Meet at 6 pm, on Wednesday."
+
+[[case]]
+note = "Hinglish bench 11 from Deepgram: nahin wait restates the clause"
+language = "hinglish"
+input = "Kal shaam ko chalte hain. Nahin wait parson chalte hain."
+expected = "Parson chalte hain."
+
+[[case]]
+note = "Hinglish bench 11 as written"
+language = "hinglish"
+input = "Kal shaam ko chalte hain, nahi wait, parson chalte hain."
+expected = "Parson chalte hain."
+
+[[case]]
+note = "Hinglish bench 11 from Nemotron: nothing of the repair's kind to replace, so it stays"
+language = "hinglish"
+input = "Par shaam ko chalta hai nahin wait parson chalte hain."
+expected = "Par shaam ko chalta hai nahin wait parson chalte hain."
+
+[[case]]
+note = "Hinglish: nahi nahi corrects a day"
+language = "hinglish"
+input = "Main Monday ko aaunga, nahi nahi, Tuesday ko."
+expected = "Main Tuesday ko aaunga."
+
+[[case]]
+note = "Hinglish: nahi nahi at the start means no no"
+language = "hinglish"
+input = "Nahi nahi, main theek hoon."
+expected = "Nahi nahi, main theek hoon."
+
+[[case]]
+note = "Hinglish: nahi before wait as a verb is not a marker"
+language = "hinglish"
+input = "Main aur nahi wait kar sakta."
+expected = "Main aur nahi wait kar sakta."
+
+[[case]]
+note = "Hinglish: noun phrases are left to polish"
+language = "hinglish"
+input = "Rahul ko bhejo, nahi nahi, Priya ko."
+expected = "Rahul ko bhejo, nahi nahi, Priya ko."
