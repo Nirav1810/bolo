@@ -608,9 +608,9 @@ async fn run(args: RunArgs, manifest: &Manifest, models_dir: &Path) -> Result<()
                 }
             };
             let audio_s = bolo_audio::duration_secs(&clip.audio);
-            // Devanagari output vs a Roman reference: score the transliteration (this is
-            // what a Roman-Hinglish user would get from the app's translit pass).
-            let dev = contains_devanagari(&text);
+            // Devanagari (or Urdu-script) output vs a Roman reference: score the
+            // transliteration (what a Roman-Hinglish user gets from the app's translit pass).
+            let dev = bolo_format::translit::needs_romanizing(&text);
             let romanized = if dev && !contains_devanagari(&clip.reference) {
                 bolo_format::loanwords::to_roman_hinglish(&text)
             } else {

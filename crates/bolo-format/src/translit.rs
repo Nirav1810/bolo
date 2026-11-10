@@ -12,6 +12,9 @@
 //! - the word-final long vowels आ/ई/ऊ are written short (देना → dena, जल्दी → jaldi);
 //! - anusvara and chandrabindu → "n", nukta forms → q/z/f.
 //!
+//! Urdu-script words (Deepgram `multi` writes some) are mapped to Devanagari first
+//! ([`crate::urdu`]).
+//!
 //! English loanwords come out phonetically (मीटिंग → meeting, but ऑफिस → ofis). A
 //! loanword lexicon is a later improvement.
 
@@ -139,14 +142,29 @@ pub fn has_devanagari(text: &str) -> bool {
     text.chars().any(|c| ('\u{0900}'..='\u{097F}').contains(&c))
 }
 
-/// Transliterate all Devanagari words in `text`; everything else passes through.
+/// True if `text` has a script the Roman Hinglish pass rewrites: Devanagari, or Urdu
+/// script ([`crate::urdu`]).
+pub fn needs_romanizing(text: &str) -> bool {
+    has_devanagari(text) || crate::urdu::has_urdu(text)
+}
+
+/// Transliterate all Devanagari words in `text` (and Urdu-script words, via
+/// [`crate::urdu::urdu_to_devanagari`]); everything else passes through.
 pub fn devanagari_to_roman(text: &str) -> String {
     devanagari_to_roman_with(text, |_| None)
 }
 
 /// Like [`devanagari_to_roman`], but `replace` may supply a whole-word replacement for a
-/// Devanagari word (used to restore English loanword spellings).
+/// Devanagari word (used to restore English loanword spellings). Urdu-script words are
+/// mapped to Devanagari first, so they get the same treatment.
 pub fn devanagari_to_roman_with(text: &str, replace: impl Fn(&str) -> Option<String>) -> String {
+    let mapped;
+    let text = if crate::urdu::has_urdu(text) {
+        mapped = crate::urdu::urdu_to_devanagari(text);
+        mapped.as_str()
+    } else {
+        text
+    };
     let word_to_roman = |w: &str| replace(w).unwrap_or_else(|| word_to_roman(w));
     let mut out = String::with_capacity(text.len());
     let mut word = String::new();
