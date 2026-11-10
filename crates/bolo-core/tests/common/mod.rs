@@ -11,9 +11,10 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use bolo_core::{
-    BoloError, DictationState, Engine, EngineConfig, EngineEvents, FormattedOutput, Language, LanguageMode,
-    TargetContext, WavSource,
+    BoloError, DictationState, Engine, EngineConfig, EngineEvents, FormattedOutput, Language, LanguageMode, LlmClient,
+    Polish, TargetContext, WavSource,
 };
+use bolo_format::llm::{CleanupRequest, LlmError};
 use bolo_stt::{SttEngine, SttOptions, SttStream, Transcript};
 
 pub const ENGINE_ID: &str = "fake";
@@ -173,12 +174,55 @@ fn transcript(language: Language, text: String) -> Transcript {
     Transcript { text, engine_id: ENGINE_ID.into(), language: Some(code.into()) }
 }
 
+/// What the fake LLM answers, after `delay`.
+#[derive(Debug, Clone)]
+pub struct Reply {
+    pub delay: Duration,
+    pub answer: Result<String, String>,
+}
+
+/// An LLM client that answers every polish request with a preset reply and records the
+/// transcripts it was sent.
+pub struct FakeLlm {
+    reply: Reply,
+    calls: Mutex<Vec<String>>,
+}
+
+impl FakeLlm {
+    /// Answers `text` after `delay`.
+    pub fn answering(text: &str, delay: Duration) -> Self {
+        Self { reply: Reply { delay, answer: Ok(text.into()) }, calls: Mutex::default() }
+    }
+
+    /// Fails after `delay`.
+    pub fn failing(delay: Duration) -> Self {
+        Self { reply: Reply { delay, answer: Err("fake LLM error".into()) }, calls: Mutex::default() }
+    }
+
+    /// Transcripts of every polish request so far.
+    pub fn calls(&self) -> Vec<String> {
+        self.calls.lock().map(|g| g.clone()).unwrap_or_default()
+    }
+}
+
+#[async_trait]
+impl LlmClient for FakeLlm {
+    async fn polish(&self, req: &CleanupRequest<'_>, _timeout: Duration) -> Result<String, LlmError> {
+        if let Ok(mut g) = self.calls.lock() {
+            g.push(req.transcript.to_owned());
+        }
+        tokio::time::sleep(self.reply.delay).await;
+        self.reply.answer.clone().map_err(LlmError::Network)
+    }
+}
+
 /// Everything the engine reported, in order.
 #[derive(Debug, Clone)]
 pub enum Ev {
     Level,
     Partial(String),
     Final(FormattedOutput),
+    Polished(FormattedOutput),
     Error(String),
     State(DictationState),
 }
@@ -203,6 +247,9 @@ impl EngineEvents for Recorder {
     fn on_final(&self, out: FormattedOutput) {
         self.send(Ev::Final(out));
     }
+    fn on_polished(&self, out: FormattedOutput) {
+        self.send(Ev::Polished(out));
+    }
     fn on_error(&self, err: BoloError) {
         self.send(Ev::Error(err.to_string()));
     }
@@ -217,6 +264,12 @@ pub fn tone(secs: f32) -> Vec<f32> {
     (0..(secs * rate) as usize).map(|i| 0.1 * (std::f32::consts::TAU * 220.0 * i as f32 / rate).sin()).collect()
 }
 
+/// The engine config the harness uses: no engine specs (the STT engine is injected) and
+/// a cold mic, so every dictation replays the waveform from the start.
+pub fn config(language: LanguageMode, polish: Polish) -> EngineConfig {
+    EngineConfig { engines: Vec::new(), language, mic_warm_secs: 0, polish, ..Default::default() }
+}
+
 /// An engine on a fake STT and a replayed waveform, plus its event stream.
 pub struct Harness {
     pub engine: Engine,
@@ -226,21 +279,30 @@ pub struct Harness {
 
 impl Harness {
     pub fn new(stt: FakeStt, language: LanguageMode) -> Self {
-        let config = EngineConfig {
-            engines: Vec::new(), // unused: the STT engine is injected
-            language,
-            mic_warm_secs: 0, // replay the waveform from the start every dictation
-            ..Default::default()
-        };
-        let stt = Arc::new(stt);
         let (tx, rx) = mpsc::channel();
+        let stt = Arc::new(stt);
         let engine = Engine::with_stt_engine(
-            config,
+            config(language, Polish::Off),
             Box::new(Recorder(Mutex::new(tx))),
             WavSource::factory(Arc::new(tone(AUDIO_SECS))),
             stt.clone(),
         )
         .expect("engine starts with an injected STT engine");
+        Self { engine, stt, rx }
+    }
+
+    /// An engine with `polish` configured and polish requests going to `llm`.
+    pub fn with_polish(stt: FakeStt, language: LanguageMode, polish: Polish, llm: Arc<FakeLlm>) -> Self {
+        let (tx, rx) = mpsc::channel();
+        let stt = Arc::new(stt);
+        let engine = Engine::with_llm_client(
+            config(language, polish),
+            Box::new(Recorder(Mutex::new(tx))),
+            WavSource::factory(Arc::new(tone(AUDIO_SECS))),
+            stt.clone(),
+            llm,
+        )
+        .expect("engine starts with an injected STT engine and LLM client");
         Self { engine, stt, rx }
     }
 
@@ -308,6 +370,10 @@ pub fn states(events: &[Ev]) -> Vec<DictationState> {
 
 pub fn finals(events: &[Ev]) -> Vec<FormattedOutput> {
     events.iter().filter_map(|e| if let Ev::Final(f) = e { Some(f.clone()) } else { None }).collect()
+}
+
+pub fn polished(events: &[Ev]) -> Vec<FormattedOutput> {
+    events.iter().filter_map(|e| if let Ev::Polished(f) = e { Some(f.clone()) } else { None }).collect()
 }
 
 pub fn partials(events: &[Ev]) -> Vec<String> {

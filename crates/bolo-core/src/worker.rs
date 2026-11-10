@@ -11,6 +11,10 @@
 //! dictation has two passes, forced to English and to Hindi, fed the same audio.
 //! Partials come from whichever pass the language decision currently favours; at
 //! release the chosen pass is finished, or both when the decision has to wait for them.
+//!
+//! With polish on, the instant text goes out first and the polish call runs on the
+//! runtime afterwards (ADR-0016), so the engine thread is free for the next dictation.
+//! A generation counter makes sure a cancelled or superseded polish never reports.
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -28,8 +32,9 @@ use tokio::task::JoinHandle;
 
 use crate::audio::{AudioFactory, AudioSource};
 use crate::build::{BuiltStt, build_stt};
+use crate::polish::{self, LlmClient, POLISH_DEADLINE, Polish};
 use crate::{
-    BoloError, DictationState, EngineConfig, EngineEvents, FormattedOutput, HinglishScript, LanguageMode,
+    BoloError, DictationState, EngineConfig, EngineEvents, FormattedOutput, HinglishScript, LanguageMode, OutputFormat,
     TargetContext, Timings,
 };
 
@@ -164,6 +169,8 @@ pub(crate) struct Worker {
     factory: AudioFactory,
     /// Set by `Engine::with_stt_engine`: used instead of building from `config.engines`.
     injected_stt: Option<Arc<dyn SttEngine>>,
+    /// Set by `Engine::with_llm_client`: used for polish instead of Claude.
+    injected_llm: Option<Arc<dyn LlmClient>>,
     manifest: Manifest,
     http: reqwest::Client,
     rt: Runtime,
@@ -175,6 +182,11 @@ pub(crate) struct Worker {
     /// The language of the previous dictation (`En` or `Hi`), for ambiguous Auto ones.
     /// Lives as long as the engine.
     previous_language: Option<Language>,
+    /// The polish still running for the last dictation, if any.
+    polishing: Option<JoinHandle<()>>,
+    /// Bumped to cancel polish: a polish task reports only while the generation it
+    /// started in is current. Held while reporting, so after a bump nothing reports.
+    polish_generation: Arc<Mutex<u64>>,
 }
 
 fn pad(seg: &[f32]) -> Vec<f32> {
@@ -193,6 +205,7 @@ impl Worker {
         state: Arc<Mutex<DictationState>>,
         factory: AudioFactory,
         injected_stt: Option<Arc<dyn SttEngine>>,
+        injected_llm: Option<Arc<dyn LlmClient>>,
     ) -> Result<Self, BoloError> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -202,12 +215,15 @@ impl Worker {
             .map_err(|e| BoloError::Config(e.to_string()))?;
         let manifest = Manifest::bundled().map_err(|e| BoloError::Config(e.to_string()))?;
         let http = bolo_stt::cloud::http_client().map_err(|e| BoloError::Config(e.to_string()))?;
+        // Polish on without a key: fail now rather than at the first dictation.
+        polish::client(&config.polish, &config.api_keys, injected_llm.as_ref(), &http)?;
         Ok(Self {
             config,
             events,
             state,
             factory,
             injected_stt,
+            injected_llm,
             manifest,
             http,
             rt,
@@ -217,6 +233,8 @@ impl Worker {
             mic: None,
             dictation: None,
             previous_language: None,
+            polishing: None,
+            polish_generation: Arc::new(Mutex::new(0)),
         })
     }
 
@@ -299,6 +317,10 @@ impl Worker {
         if self.dictation.is_some() {
             return Err(BoloError::Busy);
         }
+        // A new dictation supersedes the last one's polish.
+        self.cancel_polish();
+        // Checked again here: `update_config` may have turned polish on without a key.
+        self.polish_client()?;
         let engine = self.ensure_stt()?;
         self.open_mic()?;
         self.model_loaded = true;
@@ -468,14 +490,16 @@ impl Worker {
                     total_ms,
                     "stop breakdown"
                 );
-                self.events.on_final(FormattedOutput {
+                let out = FormattedOutput {
                     plain: text.plain,
                     markdown: text.markdown,
                     html: None,
                     timings: Timings { stt_ms, rules_ms, llm_ms: 0.0, format_ms: 0.0, total_ms },
                     engine_id,
                     language,
-                });
+                };
+                self.events.on_final(out.clone());
+                self.spawn_polish(out, &s.target, called);
                 self.set_state(DictationState::Done);
             }
             Err(e) => self.events.on_error(e),
@@ -536,7 +560,85 @@ impl Worker {
         Err(BoloError::Stt(last_err.map_or_else(|| "no stt pass".to_owned(), |e| e.to_string())))
     }
 
+    fn polish_client(&self) -> Result<Option<Arc<dyn LlmClient>>, BoloError> {
+        polish::client(&self.config.polish, &self.config.api_keys, self.injected_llm.as_ref(), &self.http)
+    }
+
+    /// With polish on, polish `out` (the instant text just sent) in the background and
+    /// send `on_polished` if the answer arrives within the deadline and passes the
+    /// guard. Otherwise nothing more is sent, and the Layer 1 text stands.
+    fn spawn_polish(&mut self, out: FormattedOutput, target: &TargetContext, called: Instant) {
+        let Polish::On { tone, app, dictionary } = self.config.polish.clone() else { return };
+        // The rendering the target gets is the one to polish.
+        let input = if target.format == OutputFormat::Markdown { out.markdown.clone() } else { out.plain.clone() };
+        if input.trim().is_empty() {
+            return;
+        }
+        let client = match self.polish_client() {
+            Ok(Some(c)) => c,
+            Ok(None) => return,
+            Err(e) => {
+                tracing::warn!(error = %e, "polish skipped");
+                return;
+            }
+        };
+        let script = match self.config.script {
+            HinglishScript::Roman => bolo_format::llm::Script::Roman,
+            HinglishScript::Devanagari => bolo_format::llm::Script::Devanagari,
+        };
+        let gate = self.polish_generation.clone();
+        let generation = gate.lock().map(|g| *g).unwrap_or_default();
+        let events = self.events.clone();
+        self.polishing = Some(self.rt.spawn(async move {
+            let req = bolo_format::llm::CleanupRequest {
+                transcript: &input,
+                script,
+                tone: &tone,
+                app: &app,
+                dictionary: &dictionary,
+            };
+            let t0 = Instant::now();
+            let answer = match tokio::time::timeout(POLISH_DEADLINE, client.polish(&req, POLISH_DEADLINE)).await {
+                Ok(Ok(a)) => a,
+                Ok(Err(e)) => {
+                    tracing::warn!(error = %e, "polish failed, Layer 1 text kept");
+                    return;
+                }
+                Err(_) => {
+                    tracing::warn!(deadline = ?POLISH_DEADLINE, "polish timed out, Layer 1 text kept");
+                    return;
+                }
+            };
+            let llm_ms = t0.elapsed().as_secs_f64() * 1e3;
+            let Some(text) = polish::guard(&input, &answer) else {
+                tracing::warn!("polish answer failed the guard, Layer 1 text kept");
+                return;
+            };
+            let Ok(current) = gate.lock() else { return };
+            if *current != generation {
+                return; // cancelled or superseded meanwhile
+            }
+            let mut polished = out;
+            polished.plain = text.clone();
+            polished.markdown = text;
+            polished.timings.llm_ms = llm_ms;
+            polished.timings.total_ms = called.elapsed().as_secs_f64() * 1e3;
+            events.on_polished(polished);
+        }));
+    }
+
+    /// Stop the last dictation's polish: after this, it never reports.
+    fn cancel_polish(&mut self) {
+        if let Ok(mut g) = self.polish_generation.lock() {
+            *g += 1;
+        }
+        if let Some(h) = self.polishing.take() {
+            h.abort();
+        }
+    }
+
     fn cancel(&mut self) {
+        self.cancel_polish();
         if let Some(s) = self.dictation.take() {
             for h in s.segments {
                 h.abort();

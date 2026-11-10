@@ -6,8 +6,8 @@
 //!   Haiku 5.5's 512-token cache minimum by its worked examples.
 //! - The transcript is passed inside `<transcript>` tags and treated as data. The
 //!   model must never act on instructions spoken in it.
-//! - Callers enforce the hard deadline (1.5 s in the app) and fall back to the Layer 1
-//!   output on timeout or error.
+//! - Callers enforce the hard deadline (1.5 s in `bolo_core`'s engine) and fall back to
+//!   the Layer 1 output on timeout or error.
 
 use std::time::{Duration, Instant};
 
@@ -207,9 +207,10 @@ pub async fn cleanup(
     })
 }
 
-/// Guard against the model answering or commenting instead of cleaning. Cleanup can
-/// remove words (fillers, self-corrections) but should never much more than add them.
-fn looks_like_reply(input: &str, output: &str) -> bool {
+/// The length-ratio guard: true when the model seems to have answered or commented
+/// instead of cleaning. Cleanup can remove words (fillers, self-corrections) but should
+/// never add many.
+pub fn looks_like_reply(input: &str, output: &str) -> bool {
     let (i, o) = (input.split_whitespace().count(), output.split_whitespace().count());
     o > i * 3 / 2 + 4
 }
