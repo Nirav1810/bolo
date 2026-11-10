@@ -130,6 +130,8 @@ pub struct Timings {
 pub struct FormattedOutput {
     pub plain: String,
     pub markdown: String,
+    /// `<p>`, `<br>` and `<ol><li>` with every text node escaped; `Some` only for a
+    /// target whose format is [`OutputFormat::Html`].
     pub html: Option<String>,
     pub timings: Timings,
     pub engine_id: String,
@@ -163,10 +165,12 @@ pub trait EngineEvents: Send + Sync {
     /// The instant text (Layer 1), as soon as recognition finishes.
     fn on_final(&self, out: FormattedOutput);
     /// With [`Polish::On`]: the polished text for the last `on_final`, which it replaces.
-    /// Both `plain` and `markdown` hold the polished text, and `timings.llm_ms` is the
-    /// wait for polish after `on_final`. In a long dictation polished per segment, a
-    /// segment whose polish failed keeps its Layer 1 text in the joined result. Never sent when polish timed out, failed or failed its guard, nor
-    /// after `cancel_dictation` or the next `start_dictation`.
+    /// Both `plain` and `markdown` hold the polished text, `html` (for an HTML target) is
+    /// that text through the HTML renderer, and `timings.llm_ms` is the wait for polish
+    /// after `on_final`. In a long dictation polished per segment, a segment whose polish
+    /// failed keeps its Layer 1 text in the joined result. Never sent when polish timed
+    /// out, failed or failed its guard, nor after `cancel_dictation` or the next
+    /// `start_dictation`.
     fn on_polished(&self, out: FormattedOutput);
     fn on_error(&self, err: BoloError);
     fn on_state(&self, state: DictationState);

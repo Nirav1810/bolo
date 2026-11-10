@@ -587,3 +587,131 @@ proptest! {
         prop_assert_eq!(item_lines, items.len(), "output: {:?}", out);
     }
 }
+
+/// Transcripts with list markers, layout commands and characters HTML treats specially.
+fn html_transcript() -> impl Strategy<Value = String> {
+    let word = prop_oneof![
+        prop::sample::select(vec![
+            "first",
+            "second",
+            "third",
+            "one",
+            "two",
+            "three",
+            "number",
+            "new",
+            "line",
+            "paragraph",
+            "milk",
+            "eggs",
+            "<b>",
+            "</p>",
+            "&",
+            "&amp;",
+            "a<b",
+            "x>y",
+            "\"quoted\"",
+            "it's",
+            "<script>alert(1)</script>",
+            "1",
+            "2",
+            "um",
+            "the",
+            "send",
+        ])
+        .prop_map(str::to_owned),
+        "[a-z<>&\"']{1,6}",
+    ];
+    prop::collection::vec((word, separator()), 1..40).prop_map(|parts| {
+        let mut s = String::new();
+        for (w, sep) in parts {
+            s.push_str(&w);
+            s.push_str(sep);
+        }
+        s
+    })
+}
+
+/// The text of Bolo's HTML, with each list item written "n." on a new line as plain
+/// text writes it. Fails on any tag Bolo does not write and on any unescaped `<`, `>`
+/// or `&`.
+fn html_text(html: &str) -> Result<String, String> {
+    const ENTITIES: &[(&str, char)] = &[("&amp;", '&'), ("&lt;", '<'), ("&gt;", '>'), ("&quot;", '"'), ("&#39;", '\'')];
+    let mut out = String::new();
+    let mut next_item: Option<u32> = None;
+    let mut rest = html;
+    while let Some(c) = rest.chars().next() {
+        match c {
+            '<' => {
+                let end = rest.find('>').ok_or("unclosed tag")?;
+                let tag = &rest[..=end];
+                match tag {
+                    "<p>" | "</p>" | "<br>" => out.push('\n'),
+                    "</li>" | "</ol>" => {}
+                    "<ol>" => next_item = Some(1),
+                    "<li>" => {
+                        let n = next_item.ok_or("<li> outside <ol>")?;
+                        out.push_str(&format!("\n{n}."));
+                        next_item = Some(n + 1);
+                    }
+                    t if t.starts_with("<ol start=\"") && t.ends_with("\">") => {
+                        next_item = Some(t[11..t.len() - 2].parse().map_err(|_| format!("bad start in {t}"))?);
+                    }
+                    t => return Err(format!("unexpected tag {t}")),
+                }
+                rest = &rest[end + 1..];
+            }
+            '&' => {
+                let (entity, ch) =
+                    ENTITIES.iter().find(|(e, _)| rest.starts_with(e)).ok_or_else(|| format!("bare & at {rest:?}"))?;
+                out.push(*ch);
+                rest = &rest[entity.len()..];
+            }
+            '>' => return Err(format!("bare > at {rest:?}")),
+            c => {
+                out.push(c);
+                rest = &rest[c.len_utf8()..];
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn without_whitespace(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 2000, failure_persistence: None, ..ProptestConfig::default() })]
+
+    #[test]
+    fn html_holds_the_plain_text_escaped(text in html_transcript(), lang in language(), code in any::<bool>()) {
+        let out = rules::format(&text, lang, code);
+        let content = html_text(&out.html);
+        prop_assert!(content.is_ok(), "{}: {:?}", content.unwrap_err(), out.html);
+        prop_assert_eq!(without_whitespace(&content.unwrap_or_default()), without_whitespace(&out.plain), "html: {:?}", out.html);
+        let ctx = FormatContext { markup: rules::Markup::Html, code_mode: code };
+        prop_assert_eq!(&out.html, &rules::apply(&text, lang, ctx));
+    }
+
+    #[test]
+    fn polish_output_is_never_trusted_as_html(text in "[a-z0-9<>&\"'/=. ,\n]{0,80}") {
+        // Lines starting "n. " become list items, so the text compares with the numbers out.
+        let html = rules::to_html(&text);
+        let content = html_text(&html);
+        prop_assert!(content.is_ok(), "{}: {:?}", content.unwrap_err(), html);
+        let digitless = |s: &str| without_whitespace(s).chars().filter(|c| !c.is_ascii_digit() && *c != '.').collect::<String>();
+        prop_assert_eq!(digitless(&content.unwrap_or_default()), digitless(&text), "html: {:?}", html);
+    }
+
+    #[test]
+    fn to_html_reads_back_the_pipeline_html(text in list_transcript(), lang in language()) {
+        // Polish output is parsed back by the same renderer: the plain rendering of a
+        // dictation reads back as its HTML, unless a line of it starts like a list item
+        // without being one.
+        let out = rules::format(&text, lang, false);
+        let looks_like_item = |l: &str| l.split_once(". ").is_some_and(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+        prop_assume!(out.plain.lines().filter(|l| looks_like_item(l)).count() == out.html.matches("<li>").count());
+        prop_assert_eq!(rules::to_html(&out.plain), out.html.clone(), "plain: {:?}", out.plain);
+    }
+}

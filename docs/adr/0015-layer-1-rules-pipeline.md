@@ -14,7 +14,7 @@ The guiding rule is **when unsure, leave it verbatim**. A wrong deletion on the 
   - Digits, except one through nine in prose.
   - Money, times, dates and percentages always use digits.
   - Grouping is Indian (`₹1,25,000`) when the speaker says lakh, crore or rupees, and Western (`125,000`) otherwise.
-- **Output:** Plain and Markdown rendering, both from one pipeline run. They differ only around a list: Markdown leaves a blank line before and after it, so the list isn't read as part of the paragraph around it. `code_mode` drops sentence capitals and the final period. HTML waits for M3.
+- **Output:** Plain and Markdown rendering, both from one pipeline run. They differ only around a list: Markdown leaves a blank line before and after it, so the list isn't read as part of the paragraph around it. `code_mode` drops sentence capitals and the final period. HTML (M3) is a third rendering of the same run: `<p>` paragraphs, `<br>` line breaks, `<ol><li>` lists, every text node escaped. Polished text is read back through the same renderer (`rules::to_html`), never trusted as markup.
 
 Each pass is tested with TOML golden cases (`input` / `expected` / `note`) run by a single test, plus property tests: a pass never drops a word that isn't a filler, and running it twice gives the same result. A user-reported regression becomes one new golden case.
 
