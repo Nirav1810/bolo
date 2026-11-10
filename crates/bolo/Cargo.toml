@@ -31,7 +31,6 @@ reqwest = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 sysinfo = { workspace = true }
-directories = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "fs"] }

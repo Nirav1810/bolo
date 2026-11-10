@@ -55,8 +55,9 @@ jobs:
             echo "LD_LIBRARY_PATH=$lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
           fi
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      # The desktop app needs its frontend built first; the desktop job checks it.
+      - run: cargo clippy --workspace --exclude bolo-desktop --all-targets -- -D warnings
+      - run: cargo test --workspace --exclude bolo-desktop
 
   deny:
     runs-on: ubuntu-latest
@@ -64,4 +65,39 @@ jobs:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
 
-  # Android (cargo-ndk + Gradle) and desktop frontend (pnpm) jobs are added in M5 / M3.
+  # The Windows desktop app (apps/desktop): frontend, then the Tauri crate. Required check.
+  desktop:
+    strategy:
+      matrix:
+        os: [windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Frontend install, type check and build
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npm run check
+          npm run build
+      - name: "Fetch verified sherpa-onnx prebuilt libs (ADR-008)"
+        run: python -I scripts/fetch-sherpa-libs.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Put sherpa-onnx shared libs on the runtime library path
+        shell: bash
+        run: cygpath -w "$GITHUB_WORKSPACE/.cache/sherpa-lib" >> "$GITHUB_PATH"
+      - run: cargo clippy -p bolo-desktop --all-targets -- -D warnings
+      - run: cargo test -p bolo-desktop
+
+  # The Android (cargo-ndk + Gradle) job is added in M5.

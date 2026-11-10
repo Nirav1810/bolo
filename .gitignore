@@ -14,3 +14,5 @@ apps/android/local.properties
 .env
 __pycache__/
 /dist
+apps/desktop/dist
+apps/desktop/src-tauri/gen

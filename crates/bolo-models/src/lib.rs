@@ -30,4 +30,12 @@ pub enum ModelError {
     Missing(String),
 }
 
+/// Where models live on desktop (ADR-007): the local, non-roaming app-data dir,
+/// `%LOCALAPPDATA%\Bolo\data\models` on Windows. Models are hundreds of MB and must not
+/// sync with roaming profiles. `None` when the OS reports no home directory. Android
+/// passes its own `filesDir/models` instead.
+pub fn default_models_root() -> Option<std::path::PathBuf> {
+    directories::ProjectDirs::from("", "", "Bolo").map(|d| d.data_local_dir().join("models"))
+}
+
 pub type Result<T, E = ModelError> = std::result::Result<T, E>;

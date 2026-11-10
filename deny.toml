@@ -3,6 +3,24 @@ all-features = false
 
 [advisories]
 yanked = "deny"
+# Unmaintained (not vulnerable) crates that Tauri 2 pulls in for the desktop app (M3
+# ticket 01). No Tauri 2 release avoids them; revisit when Tauri updates these deps.
+ignore = [
+  # Linux only, never shipped (the desktop app is Windows-only): the GTK stack under
+  # tray-icon/muda/wry (glib-macros -> proc-macro-error) and D-Bus under
+  # tauri-plugin-single-instance (zbus -> zvariant, zbus_names).
+  { id = "RUSTSEC-2024-0370", reason = "proc-macro-error: build-time macro in the Linux GTK stack; not in the Windows app" },
+  { id = "RUSTSEC-2026-0370", reason = "zvariant: Linux D-Bus (single-instance); not in the Windows app" },
+  { id = "RUSTSEC-2026-0371", reason = "zbus_names: Linux D-Bus (single-instance); not in the Windows app" },
+  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: Linux D-Bus (single-instance); not in the Windows app" },
+  # tauri-utils -> urlpattern -> unic-*: Unicode identifier tables used by tauri-build and
+  # Tauri's URL patterns. Static data, no unsafe input handling of note.
+  { id = "RUSTSEC-2025-0075", reason = "unic-char-range via tauri-utils/urlpattern; no maintained Tauri 2 alternative" },
+  { id = "RUSTSEC-2025-0080", reason = "unic-common via tauri-utils/urlpattern; no maintained Tauri 2 alternative" },
+  { id = "RUSTSEC-2025-0081", reason = "unic-char-property via tauri-utils/urlpattern; no maintained Tauri 2 alternative" },
+  { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version via tauri-utils/urlpattern; no maintained Tauri 2 alternative" },
+  { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident via tauri-utils/urlpattern; no maintained Tauri 2 alternative" },
+]
 
 [licenses]
 confidence-threshold = 0.9
