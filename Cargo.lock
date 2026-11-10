@@ -264,6 +264,7 @@ dependencies = [
  "bolo-format",
  "bolo-models",
  "bolo-stt",
+ "futures",
  "reqwest",
  "serde",
  "serde_json",

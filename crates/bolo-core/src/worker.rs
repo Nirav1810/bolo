@@ -14,7 +14,9 @@
 //!
 //! With polish on, the instant text goes out first and the polish call runs on the
 //! runtime afterwards (ADR-0016), so the engine thread is free for the next dictation.
-//! A generation counter makes sure a cancelled or superseded polish never reports.
+//! A long dictation is polished segment by segment while the user speaks
+//! ([`crate::segment`]). A generation counter makes sure a cancelled or superseded
+//! polish never reports.
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -27,12 +29,15 @@ use bolo_format::rules;
 use bolo_models::Manifest;
 use bolo_stt::vad::{Vad, VadConfig};
 use bolo_stt::{Language, SttEngine, SttError, SttOptions, SttStream, Transcript};
+use futures::FutureExt;
+use futures::future::{BoxFuture, Shared};
 use tokio::runtime::Runtime;
-use tokio::task::JoinHandle;
+use tokio::task::{AbortHandle, JoinHandle};
 
 use crate::audio::{AudioFactory, AudioSource};
 use crate::build::{BuiltStt, build_stt};
-use crate::polish::{self, LlmClient, POLISH_DEADLINE, Polish};
+use crate::polish::{self, LlmClient, Polish};
+use crate::segment::{PauseDetector, PolishSetup, Polisher, RawText, SEGMENT_AFTER};
 use crate::{
     BoloError, DictationState, EngineConfig, EngineEvents, FormattedOutput, HinglishScript, LanguageMode, OutputFormat,
     TargetContext, Timings,
@@ -149,13 +154,75 @@ fn decode_pass(
     }
 }
 
+/// Layer 1 for one target: romanize (with the loanword lexicon), then the rules
+/// pipeline (ADR-0015).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Layer1 {
+    pub script: HinglishScript,
+    pub code_mode: bool,
+    /// The target takes Markdown: polish works on that rendering.
+    pub markdown: bool,
+}
+
+impl Layer1 {
+    fn new(script: HinglishScript, target: &TargetContext) -> Self {
+        Self { script, code_mode: target.code_mode, markdown: target.format == OutputFormat::Markdown }
+    }
+
+    pub(crate) fn romanize(&self, text: &str) -> String {
+        if self.script == HinglishScript::Roman && bolo_format::translit::needs_romanizing(text) {
+            bolo_format::loanwords::to_roman_hinglish(text)
+        } else {
+            text.to_owned()
+        }
+    }
+
+    /// Both renderings of a final (`raw` is the engine's text).
+    pub(crate) fn format(&self, raw: &str, language: LanguageMode) -> rules::Formatted {
+        let language = match language {
+            LanguageMode::English => rules::Language::English,
+            LanguageMode::Hinglish => rules::Language::Hinglish,
+            LanguageMode::Auto => rules::Language::of_engine_output(raw),
+        };
+        // One pipeline run gives both renderings; HTML waits for M3 (ADR-0015).
+        rules::format(&self.romanize(raw), language, self.code_mode)
+    }
+
+    /// The rendering the target gets, which is the one polish works on.
+    pub(crate) fn render(&self, raw: &str, language: LanguageMode) -> String {
+        let f = self.format(raw, language);
+        if self.markdown { f.markdown } else { f.plain }
+    }
+}
+
+/// One VAD segment on a batch engine, being transcribed on the runtime. The result is
+/// shared: the final text and a polish segment may both wait on it.
+struct BatchSegment {
+    abort: AbortHandle,
+    text: Shared<BoxFuture<'static, Result<Transcript, String>>>,
+}
+
+/// Per-segment polish state for a dictation with polish on (ADR-0016).
+struct SegmentPolish {
+    pauses: PauseDetector,
+    /// What was already sent as segments: words of the streaming text, or batch
+    /// segments.
+    cut: usize,
+    /// The pass the segments were cut from (streaming engines).
+    pass: Option<Language>,
+    /// Started at the first segment.
+    polisher: Option<Polisher>,
+}
+
 struct Dictation {
     /// Where the text is going: picks the Layer 1 format context.
     target: TargetContext,
     /// Streaming decodes: none (batch engine), one, or English + Hindi in Auto mode.
     passes: Vec<Pass>,
     vad: Option<Vad>,
-    segments: Vec<JoinHandle<Result<Transcript, SttError>>>,
+    segments: Vec<BatchSegment>,
+    /// With polish on: the pauses that close polish segments, and their polisher.
+    polish: Option<SegmentPolish>,
     audio: Vec<f32>,
     /// The partial last sent to the host: which pass, and its raw text.
     shown: (Language, String),
@@ -187,6 +254,11 @@ pub(crate) struct Worker {
     /// Bumped to cancel polish: a polish task reports only while the generation it
     /// started in is current. Held while reporting, so after a bump nothing reports.
     polish_generation: Arc<Mutex<u64>>,
+}
+
+/// The non-empty texts, space-separated.
+fn join_nonempty(parts: &[String]) -> String {
+    parts.iter().filter(|p| !p.is_empty()).map(String::as_str).collect::<Vec<_>>().join(" ")
 }
 
 fn pad(seg: &[f32]) -> Vec<f32> {
@@ -343,11 +415,19 @@ impl Worker {
             let e = engine.clone();
             self.rt.spawn(async move { e.prewarm().await });
         }
+        // With polish on, find pauses alongside every engine (ADR-0016).
+        let polish = (self.config.polish != Polish::Off).then(|| SegmentPolish {
+            pauses: PauseDetector::new(self.stt.as_ref().and_then(|b| b.vad_model.as_deref())),
+            cut: 0,
+            pass: None,
+            polisher: None,
+        });
         let mut dictation = Dictation {
             target: ctx,
             passes,
             vad,
             segments: Vec::new(),
+            polish,
             audio: Vec::new(),
             shown: (Language::Auto, String::new()),
             last_level: Instant::now(),
@@ -375,7 +455,7 @@ impl Worker {
                 && pass.partial != s.shown.1
             {
                 s.shown = (pass.language, pass.partial.clone());
-                self.events.on_partial(self.romanize(&pass.partial));
+                self.events.on_partial(Layer1::new(self.config.script, &s.target).romanize(&pass.partial));
             }
         } else if let Some(vad) = s.vad.as_mut() {
             vad.accept(pcm);
@@ -383,37 +463,71 @@ impl Worker {
                 s.segments.push(self.spawn_transcribe(pad(&seg)));
             }
         }
+        let long = s.audio.len() as f32 >= SEGMENT_AFTER.as_secs_f32() * bolo_audio::SAMPLE_RATE as f32;
+        if s.polish.as_mut().is_some_and(|p| p.pauses.accept(pcm)) && long {
+            self.cut_segment(s);
+        }
     }
 
-    fn spawn_transcribe(&self, audio: Vec<f32>) -> JoinHandle<Result<Transcript, SttError>> {
+    /// A pause in a long dictation: send the text since the last segment to polish.
+    /// On a streaming engine that is the shown pass's text so far; on a batch engine,
+    /// the VAD segments cut since (they may still be transcribing).
+    fn cut_segment(&self, s: &mut Dictation) {
+        let Some(sp) = s.polish.as_mut() else { return };
+        let (raw, language): (RawText, LanguageMode) = if !s.passes.is_empty() {
+            let Some(pass) = self.favoured(&s.passes) else { return };
+            // Segments come from one pass: their word counts must line up.
+            if sp.pass.is_some_and(|l| l != pass.language) {
+                return;
+            }
+            let words: Vec<&str> = pass.partial.split_whitespace().collect();
+            if words.len() <= sp.cut {
+                return;
+            }
+            let raw = words[sp.cut..].join(" ");
+            sp.cut = words.len();
+            sp.pass = Some(pass.language);
+            (Box::pin(std::future::ready(raw)), LanguageMode::from_stt_language(pass.language))
+        } else {
+            if s.segments.len() <= sp.cut {
+                return;
+            }
+            let texts: Vec<_> = s.segments[sp.cut..].iter().map(|b| b.text.clone()).collect();
+            sp.cut = s.segments.len();
+            let raw = async move {
+                let parts = futures::future::join_all(texts).await;
+                let parts: Vec<String> =
+                    parts.into_iter().filter_map(Result::ok).map(|t| t.text.trim().to_owned()).collect();
+                parts.join(" ")
+            };
+            (Box::pin(raw), self.config.language)
+        };
+        if sp.polisher.is_none() {
+            sp.polisher = self.polisher(&s.target);
+        }
+        if let Some(p) = &sp.polisher {
+            tracing::debug!(segment_end = sp.cut, "polish segment closed");
+            p.segment(raw, language);
+        }
+    }
+
+    fn spawn_transcribe(&self, audio: Vec<f32>) -> BatchSegment {
         let opts = self.opts(self.config.language.stt_language());
         let engine = self.stt.as_ref().map(|b| b.engine.clone());
-        self.rt.spawn(async move {
+        let handle = self.rt.spawn(async move {
             match engine {
                 Some(e) => e.transcribe(&audio, &opts).await,
                 None => Err(SttError::Model("no engine".into())),
             }
-        })
-    }
-
-    fn romanize(&self, text: &str) -> String {
-        if self.config.script == HinglishScript::Roman && bolo_format::translit::needs_romanizing(text) {
-            bolo_format::loanwords::to_roman_hinglish(text)
-        } else {
-            text.to_owned()
-        }
-    }
-
-    /// Layer 1 on a final: romanize (with the loanword lexicon), then the rules pipeline
-    /// (ADR-0015).
-    fn format(&self, raw: &str, language: LanguageMode, target: &TargetContext) -> rules::Formatted {
-        let language = match language {
-            LanguageMode::English => rules::Language::English,
-            LanguageMode::Hinglish => rules::Language::Hinglish,
-            LanguageMode::Auto => rules::Language::of_engine_output(raw),
+        });
+        let abort = handle.abort_handle();
+        let text = async move {
+            match handle.await {
+                Ok(r) => r.map_err(|e| e.to_string()),
+                Err(e) => Err(e.to_string()),
+            }
         };
-        // One pipeline run gives both renderings; HTML waits for M3 (ADR-0015).
-        rules::format(&self.romanize(raw), language, target.code_mode)
+        BatchSegment { abort, text: text.boxed().shared() }
     }
 
     /// Hotkey released: finish recognition and emit `on_final`. Timings run from
@@ -435,9 +549,14 @@ impl Worker {
         }
         let handed_over = Instant::now();
 
-        let result: Result<(String, String, LanguageMode), BoloError> = if !s.passes.is_empty() {
-            self.finish_passes(std::mem::take(&mut s.passes))
-                .map(|(t, language)| (t.text, t.engine_id, LanguageMode::from_stt_language(language)))
+        // The raw text, its engine and language, and its units for per-segment polish:
+        // words on a streaming engine (with the pass), one text per segment on batch.
+        type Recognized = (String, String, LanguageMode, Vec<String>, Option<Language>);
+        let result: Result<Recognized, BoloError> = if !s.passes.is_empty() {
+            self.finish_passes(std::mem::take(&mut s.passes)).map(|(t, language)| {
+                let words = t.text.split_whitespace().map(str::to_owned).collect();
+                (t.text, t.engine_id, LanguageMode::from_stt_language(language), words, Some(language))
+            })
         } else {
             if let Some(vad) = s.vad.as_mut() {
                 for seg in vad.flush() {
@@ -454,29 +573,25 @@ impl Worker {
                     let mut parts = Vec::new();
                     let mut engine_id = String::new();
                     for h in handles {
-                        let t = h
-                            .await
-                            .map_err(|e| BoloError::Stt(e.to_string()))?
-                            .map_err(|e| BoloError::Stt(e.to_string()))?;
+                        let t = h.text.await.map_err(BoloError::Stt)?;
                         engine_id = t.engine_id;
-                        if !t.text.trim().is_empty() {
-                            parts.push(t.text.trim().to_owned());
-                        }
+                        parts.push(t.text.trim().to_owned());
                     }
-                    Ok((parts.join(" "), engine_id))
+                    Ok((parts, engine_id))
                 })
-                .map(|(text, engine_id)| (text, engine_id, self.config.language))
+                .map(|(parts, engine_id)| (join_nonempty(&parts), engine_id, self.config.language, parts, None))
         };
         let stt_ms = called.elapsed().as_secs_f64() * 1e3;
 
         match result {
-            Ok((raw, engine_id, language)) => {
+            Ok((raw, engine_id, language, units, pass)) => {
                 self.previous_language = match language {
                     LanguageMode::Auto => self.previous_language,
                     known => Some(known.stt_language()),
                 };
                 let t_rules = Instant::now();
-                let text = self.format(raw.trim(), language, &s.target);
+                let layer1 = Layer1::new(self.config.script, &s.target);
+                let text = layer1.format(raw.trim(), language);
                 let rules_ms = t_rules.elapsed().as_secs_f64() * 1e3;
                 let total_ms = called.elapsed().as_secs_f64() * 1e3;
                 let ms = |a: Instant, b: Instant| b.duration_since(a).as_secs_f64() * 1e3;
@@ -499,10 +614,29 @@ impl Worker {
                     language,
                 };
                 self.events.on_final(out.clone());
-                self.spawn_polish(out, &s.target, called);
+                // With segments sent, polish only the rest. When they no longer line
+                // up with the final (another pass won, or the text shrank), drop them
+                // and polish the whole text.
+                let segmented = s.polish.take().and_then(|sp| {
+                    let polisher = sp.polisher?;
+                    if sp.cut <= units.len() && (sp.pass.is_none() || sp.pass == pass) {
+                        Some((polisher, layer1.render(&join_nonempty(&units[sp.cut..]), language)))
+                    } else {
+                        tracing::debug!("polish segments dropped, polishing the whole text");
+                        polisher.abort();
+                        None
+                    }
+                });
+                self.spawn_polish(out, &s.target, called, segmented);
                 self.set_state(DictationState::Done);
             }
-            Err(e) => self.events.on_error(e),
+            Err(e) => {
+                // No text: stop polishing the segments already sent.
+                if let Some(p) = s.polish.take().and_then(|sp| sp.polisher) {
+                    p.abort();
+                }
+                self.events.on_error(e);
+            }
         }
         self.set_state(DictationState::Idle);
         self.unload_at = Some(Instant::now() + Duration::from_secs(u64::from(self.config.idle_unload_secs)));
@@ -564,22 +698,15 @@ impl Worker {
         polish::client(&self.config.polish, &self.config.api_keys, self.injected_llm.as_ref(), &self.http)
     }
 
-    /// With polish on, polish `out` (the instant text just sent) in the background and
-    /// send `on_polished` if the answer arrives within the deadline and passes the
-    /// guard. Otherwise nothing more is sent, and the Layer 1 text stands.
-    fn spawn_polish(&mut self, out: FormattedOutput, target: &TargetContext, called: Instant) {
-        let Polish::On { tone, app, dictionary } = self.config.polish.clone() else { return };
-        // The rendering the target gets is the one to polish.
-        let input = if target.format == OutputFormat::Markdown { out.markdown.clone() } else { out.plain.clone() };
-        if input.trim().is_empty() {
-            return;
-        }
+    /// A polisher for a dictation into `target`, or none when polish is off or can't
+    /// run (no key: logged, the instant text stands).
+    fn polisher(&self, target: &TargetContext) -> Option<Polisher> {
+        let Polish::On { tone, app, dictionary } = self.config.polish.clone() else { return None };
         let client = match self.polish_client() {
-            Ok(Some(c)) => c,
-            Ok(None) => return,
+            Ok(c) => c?,
             Err(e) => {
                 tracing::warn!(error = %e, "polish skipped");
-                return;
+                return None;
             }
         };
         let script = match self.config.script {
@@ -588,43 +715,45 @@ impl Worker {
         };
         let gate = self.polish_generation.clone();
         let generation = gate.lock().map(|g| *g).unwrap_or_default();
-        let events = self.events.clone();
-        self.polishing = Some(self.rt.spawn(async move {
-            let req = bolo_format::llm::CleanupRequest {
-                transcript: &input,
-                script,
-                tone: &tone,
-                app: &app,
-                dictionary: &dictionary,
-            };
-            let t0 = Instant::now();
-            let answer = match tokio::time::timeout(POLISH_DEADLINE, client.polish(&req, POLISH_DEADLINE)).await {
-                Ok(Ok(a)) => a,
-                Ok(Err(e)) => {
-                    tracing::warn!(error = %e, "polish failed, Layer 1 text kept");
+        let setup = PolishSetup {
+            client,
+            tone,
+            app,
+            dictionary,
+            script,
+            layer1: Layer1::new(self.config.script, target),
+            events: self.events.clone(),
+            gate,
+            generation,
+        };
+        Some(Polisher::spawn(&self.rt, setup))
+    }
+
+    /// With polish on, polish in the background and send `on_polished` once the parts
+    /// are in. `segmented` is the polisher already holding this dictation's segments,
+    /// with the rest of the text; without it `out` (the instant text just sent) is
+    /// polished whole. When no part is polished in time and through the guard, nothing
+    /// more is sent, and the Layer 1 text stands.
+    fn spawn_polish(
+        &mut self,
+        out: FormattedOutput,
+        target: &TargetContext,
+        called: Instant,
+        segmented: Option<(Polisher, String)>,
+    ) {
+        let (polisher, rest) = match segmented {
+            Some(s) => s,
+            None => {
+                let whole =
+                    if target.format == OutputFormat::Markdown { out.markdown.clone() } else { out.plain.clone() };
+                if whole.trim().is_empty() {
                     return;
                 }
-                Err(_) => {
-                    tracing::warn!(deadline = ?POLISH_DEADLINE, "polish timed out, Layer 1 text kept");
-                    return;
-                }
-            };
-            let llm_ms = t0.elapsed().as_secs_f64() * 1e3;
-            let Some(text) = polish::guard(&input, &answer) else {
-                tracing::warn!("polish answer failed the guard, Layer 1 text kept");
-                return;
-            };
-            let Ok(current) = gate.lock() else { return };
-            if *current != generation {
-                return; // cancelled or superseded meanwhile
+                let Some(p) = self.polisher(target) else { return };
+                (p, whole)
             }
-            let mut polished = out;
-            polished.plain = text.clone();
-            polished.markdown = text;
-            polished.timings.llm_ms = llm_ms;
-            polished.timings.total_ms = called.elapsed().as_secs_f64() * 1e3;
-            events.on_polished(polished);
-        }));
+        };
+        self.polishing = Some(polisher.finish(rest, out, called));
     }
 
     /// Stop the last dictation's polish: after this, it never reports.
@@ -640,8 +769,11 @@ impl Worker {
     fn cancel(&mut self) {
         self.cancel_polish();
         if let Some(s) = self.dictation.take() {
-            for h in s.segments {
-                h.abort();
+            for seg in s.segments {
+                seg.abort.abort();
+            }
+            if let Some(p) = s.polish.and_then(|sp| sp.polisher) {
+                p.abort();
             }
             self.set_state(DictationState::Idle);
         }

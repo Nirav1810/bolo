@@ -8,6 +8,7 @@ mod cleanup;
 mod dictate;
 mod metrics;
 mod polish;
+mod polish_latency;
 mod record;
 mod replay;
 mod rss;
@@ -124,6 +125,22 @@ enum Cmd {
         /// Output folder for replay.csv and summary.md.
         #[arg(long, default_value = "bench-results/replay")]
         out: PathBuf,
+    },
+    /// Release → on_polished on a long dictation: clips chained with pauses into one
+    /// dictation, polished per segment by the engine, against one whole-text call
+    /// (needs ANTHROPIC_API_KEY; costs money).
+    PolishLatency {
+        #[arg(long, short, default_value = "local:nemotron-stream")]
+        engine: String,
+        #[arg(long, value_enum, default_value = "en")]
+        lang: ModeArg,
+        #[arg(long, default_value = "testdata/clips/en")]
+        clips: PathBuf,
+        /// Minimum dictation length in seconds.
+        #[arg(long, default_value_t = 60.0)]
+        secs: f64,
+        #[arg(long, default_value_t = 5)]
+        runs: usize,
     },
     /// Measure microphone start-up delay (leading digital silence).
     MicTest,
@@ -319,6 +336,10 @@ async fn main() -> Result<()> {
             tokio::task::block_in_place(|| {
                 replay::run(&engine, &opts, &clips, &models_dir, &aliases, polisher.as_mut())
             })?;
+        }
+        Cmd::PolishLatency { engine, lang, clips, secs, runs } => {
+            let opts = polish_latency::Options { engine: &engine, language: lang.into(), secs, runs };
+            polish_latency::run(&opts, &clips, &models_dir).await?;
         }
         Cmd::MicTest => record::mic_test()?,
         Cmd::Run(args) => run(args, &manifest, &models_dir).await?,

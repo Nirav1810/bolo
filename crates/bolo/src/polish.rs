@@ -31,8 +31,14 @@ impl Polisher {
         if text.trim().is_empty() {
             return String::new();
         }
-        let req =
-            CleanupRequest { transcript: text, script: Script::Roman, tone: "neutral", app: "Notes", dictionary: &[] };
+        let req = CleanupRequest {
+            transcript: text,
+            script: Script::Roman,
+            tone: "neutral",
+            app: "Notes",
+            dictionary: &[],
+            context: None,
+        };
         self.calls += 1;
         match llm::cleanup(&self.client, &self.key, &req, TIMEOUT).await {
             Ok(r) => {

@@ -19,6 +19,7 @@ tracing = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync"] }
 async-trait = { workspace = true }
+futures = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

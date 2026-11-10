@@ -70,6 +70,7 @@ pub async fn run(csv_path: &Path, engines: &[String], out: &Path, aliases: &Hash
             tone: "neutral",
             app: "Notes",
             dictionary: &[],
+            context: None,
         };
         // Generous timeout for measurement; the app enforces 1.5 s and falls back.
         let res = match llm::cleanup(&client, &key, &req, Duration::from_secs(10)).await {
