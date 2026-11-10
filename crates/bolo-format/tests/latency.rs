@@ -2,13 +2,15 @@
 //! dictation on the 40 bench clips' transcripts.
 //!
 //! The transcripts are the clips' verbatim references, in `testdata/clips`. Each is run
-//! as written and as a bare engine would give it (lowercase, no punctuation), in every
-//! format context. This is a debug build in CI, so the release-build margin is far larger.
+//! as written and as a bare engine would give it (lowercase, no punctuation), through
+//! `rules::format` with and without code mode: the engine's path, which renders plain,
+//! Markdown and HTML from one run. This is a debug build in CI, so the release-build
+//! margin is far larger.
 
 use std::path::Path;
 use std::time::Instant;
 
-use bolo_format::rules::{self, FormatContext, Language};
+use bolo_format::rules::{self, Language};
 
 const BUDGET_MS: f64 = 1.0;
 const ROUNDS: usize = 20;
@@ -39,15 +41,14 @@ fn transcripts() -> Vec<(Language, String)> {
 fn pipeline_is_under_1ms_p95_on_the_bench_transcripts() {
     let texts = transcripts();
     assert_eq!(texts.len(), 80, "expected the 40 bench clips' transcripts");
-    let contexts = [FormatContext::plain(), FormatContext::markdown(), FormatContext::code()];
-    let mut times = Vec::with_capacity(ROUNDS * texts.len() * contexts.len());
+    let mut times = Vec::with_capacity(ROUNDS * texts.len() * 2);
     for _ in 0..ROUNDS {
         for (language, text) in &texts {
-            for ctx in contexts {
+            for code_mode in [false, true] {
                 let t = Instant::now();
-                let out = rules::apply(text, *language, ctx);
+                let out = rules::format(text, *language, code_mode);
                 times.push(t.elapsed().as_secs_f64() * 1e3);
-                assert!(!out.is_empty());
+                assert!(!out.plain.is_empty() && !out.markdown.is_empty() && !out.html.is_empty());
             }
         }
     }

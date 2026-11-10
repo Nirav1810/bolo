@@ -8,16 +8,19 @@
 //! input = "raw transcript"
 //! expected = "formatted text"
 //! language = "hinglish"          # optional: english (default) or hinglish
-//! format = "code"                # optional: plain (default), markdown or code
+//! format = "code"                # optional: plain (default), markdown, code, html,
+//!                                 # html-code, or html-text (already formatted text
+//!                                 # rendered as HTML, as polish output is)
 //! ```
 //!
 //! One test runs them all and lists every failing case by its note. Each output is also
-//! run through the pipeline again, which must leave it unchanged. A user-reported
+//! run through the pipeline again, which must leave it unchanged (HTML cases excepted:
+//! the pipeline reads tags as text). A user-reported
 //! regression becomes one new case.
 
 use std::path::{Path, PathBuf};
 
-use bolo_format::rules::{self, FormatContext, Language};
+use bolo_format::rules::{self, FormatContext, Language, Markup};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -53,6 +56,11 @@ enum Format {
     Plain,
     Markdown,
     Code,
+    Html,
+    #[serde(rename = "html-code")]
+    HtmlCode,
+    #[serde(rename = "html-text")]
+    HtmlText,
 }
 
 impl Case {
@@ -65,8 +73,15 @@ impl Case {
             Format::Plain => FormatContext::plain(),
             Format::Markdown => FormatContext::markdown(),
             Format::Code => FormatContext::code(),
+            Format::Html => FormatContext::html(),
+            Format::HtmlCode => FormatContext { markup: Markup::Html, code_mode: true },
+            Format::HtmlText => return rules::to_html(text),
         };
         rules::apply(text, language, ctx)
+    }
+
+    fn is_html(&self) -> bool {
+        matches!(self.format, Format::Html | Format::HtmlCode | Format::HtmlText)
     }
 }
 
@@ -97,6 +112,9 @@ fn golden_cases() {
                     "{name}: {}\n    input:    {:?}\n    expected: {:?}\n    got:      {got:?}",
                     case.note, case.input, case.expected
                 ));
+                continue;
+            }
+            if case.is_html() {
                 continue;
             }
             let again = case.run(&got);

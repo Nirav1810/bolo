@@ -1,6 +1,6 @@
 //! Layer 1 on the engine's finals: every final goes through the rules pipeline for the
 //! dictation's target app (ADR-0015), and its time is reported as `rules_ms`. One
-//! pipeline run fills both `plain` and `markdown`.
+//! pipeline run fills `plain` and `markdown`, and `html` when the target takes HTML.
 
 mod common;
 
@@ -76,6 +76,30 @@ Thanks."
 Thanks."
         );
     }
+}
+
+#[test]
+fn only_an_html_target_gets_html() {
+    let h = engine();
+    let html = |format| {
+        let events = h.dictate_into(TargetContext { format, ..Default::default() });
+        finals(&events)[0].html.clone()
+    };
+    assert_eq!(html(OutputFormat::Html).as_deref(), Some("<p>Hi rahul<br>I will send it today.</p>"));
+    assert_eq!(html(OutputFormat::Plain), None);
+    assert_eq!(html(OutputFormat::Markdown), None);
+}
+
+#[test]
+fn a_spoken_list_into_an_html_target_is_an_ordered_list() {
+    let h = Harness::new(FakeStt::new().script(Language::En, &["hi team"], LIST), LanguageMode::English);
+    let events = h.dictate_into(TargetContext { format: OutputFormat::Html, ..Default::default() });
+    assert_eq!(
+        finals(&events)[0].html.as_deref(),
+        Some(
+            "<p>Hi team for tomorrow:</p><ol><li>Review the deck</li><li>Fix the numbers</li><li>Send it to rahul</li></ol><p>Thanks.</p>"
+        )
+    );
 }
 
 #[test]

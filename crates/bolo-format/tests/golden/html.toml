@@ -1,0 +1,101 @@
+# HTML rendering (M3 ticket 03): the same token run as plain and Markdown, as <p>
+# paragraphs, <br> line breaks and <ol><li> lists. Every text node is escaped.
+#
+# format = "html" runs the whole pipeline; format = "html-text" renders text that is
+# already formatted (polish output) without running the passes.
+
+[[case]]
+note = "one sentence is one paragraph"
+input = "hello world"
+expected = "<p>Hello world.</p>"
+format = "html"
+
+[[case]]
+note = "new paragraph splits paragraphs (no period added before it, as in plain)"
+input = "hi team new paragraph see you tomorrow"
+expected = "<p>Hi team</p><p>See you tomorrow.</p>"
+format = "html"
+
+[[case]]
+note = "new line is a <br> inside the paragraph"
+input = "Dear Rahul new line thanks for the update"
+expected = "<p>Dear Rahul<br>Thanks for the update.</p>"
+format = "html"
+
+[[case]]
+note = "the spec list: the lead-in is a paragraph, the items an ordered list"
+input = "I need three things: first milk, second eggs, third bread."
+expected = "<p>I need three things:</p><ol><li>Milk</li><li>Eggs</li><li>Bread</li></ol>"
+format = "html"
+
+[[case]]
+note = "text before and after a list"
+input = "Hi team. For tomorrow, first review the deck, second fix the numbers, third send it to Rahul. Thanks."
+expected = "<p>Hi team. For tomorrow:</p><ol><li>Review the deck</li><li>Fix the numbers</li><li>Send it to Rahul</li></ol><p>Thanks.</p>"
+format = "html"
+
+[[case]]
+note = "items dictated on their own lines stay one list"
+input = "first milk new line second eggs new line third bread"
+expected = "<ol><li>Milk</li><li>Eggs</li><li>Bread</li></ol>"
+format = "html"
+
+[[case]]
+note = "angle brackets and ampersands are escaped"
+input = "use a<b && c>d in the <script> tag"
+expected = "<p>Use a&lt;b &amp;&amp; c&gt;d in the &lt;script&gt; tag.</p>"
+format = "html"
+
+[[case]]
+note = "quotes are escaped"
+input = "he said \"it's fine\""
+expected = "<p>He said &quot;it&#39;s fine&quot;.</p>"
+format = "html"
+
+[[case]]
+note = "an existing entity is text, so its ampersand is escaped too"
+input = "fish &amp; chips"
+expected = "<p>Fish &amp;amp; chips.</p>"
+format = "html"
+
+[[case]]
+note = "code mode: no capital, no period, still a paragraph"
+input = "git status"
+expected = "<p>git status</p>"
+format = "html-code"
+
+[[case]]
+note = "polish output: paragraphs and lines"
+input = "Hi Rahul,\nThanks for the update.\n\nSee you tomorrow."
+expected = "<p>Hi Rahul,<br>Thanks for the update.</p><p>See you tomorrow.</p>"
+format = "html-text"
+
+[[case]]
+note = "polish output: a numbered list is parsed back into <ol>"
+input = "I need three things:\n1. Milk\n2. Eggs\n3. Bread"
+expected = "<p>I need three things:</p><ol><li>Milk</li><li>Eggs</li><li>Bread</li></ol>"
+format = "html-text"
+
+[[case]]
+note = "polish output in Markdown layout: blank lines around the list"
+input = "For tomorrow:\n\n1. Review the deck\n2. Send it\n\nThanks."
+expected = "<p>For tomorrow:</p><ol><li>Review the deck</li><li>Send it</li></ol><p>Thanks.</p>"
+format = "html-text"
+
+[[case]]
+note = "polish output: a list that does not start at 1 keeps its number"
+input = "3. Bread\n4. Butter"
+expected = "<ol start=\"3\"><li>Bread</li><li>Butter</li></ol>"
+format = "html-text"
+
+[[case]]
+note = "polish output is never trusted as HTML"
+input = "<b>Bold</b> & <img src=x onerror=alert(1)>"
+expected = "<p>&lt;b&gt;Bold&lt;/b&gt; &amp; &lt;img src=x onerror=alert(1)&gt;</p>"
+format = "html-text"
+
+[[case]]
+note = "polish output: the passes do not run (no capital, filler or number change)"
+input = "um five apples"
+expected = "<p>um five apples</p>"
+format = "html-text"

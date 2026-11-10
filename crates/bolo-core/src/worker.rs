@@ -160,13 +160,14 @@ fn decode_pass(
 pub(crate) struct Layer1 {
     pub script: HinglishScript,
     pub code_mode: bool,
-    /// The target takes Markdown: polish works on that rendering.
-    pub markdown: bool,
+    /// The target's format. Polish works on the Markdown rendering for a Markdown
+    /// target and on plain text otherwise; an HTML target also gets `html`.
+    pub format: OutputFormat,
 }
 
 impl Layer1 {
     fn new(script: HinglishScript, target: &TargetContext) -> Self {
-        Self { script, code_mode: target.code_mode, markdown: target.format == OutputFormat::Markdown }
+        Self { script, code_mode: target.code_mode, format: target.format }
     }
 
     pub(crate) fn romanize(&self, text: &str) -> String {
@@ -177,21 +178,28 @@ impl Layer1 {
         }
     }
 
-    /// Both renderings of a final (`raw` is the engine's text).
+    /// Every rendering of a final (`raw` is the engine's text).
     pub(crate) fn format(&self, raw: &str, language: LanguageMode) -> rules::Formatted {
         let language = match language {
             LanguageMode::English => rules::Language::English,
             LanguageMode::Hinglish => rules::Language::Hinglish,
             LanguageMode::Auto => rules::Language::of_engine_output(raw),
         };
-        // One pipeline run gives both renderings; HTML waits for M3 (ADR-0015).
+        // One pipeline run gives every rendering (ADR-0015).
         rules::format(&self.romanize(raw), language, self.code_mode)
     }
 
     /// The rendering the target gets, which is the one polish works on.
     pub(crate) fn render(&self, raw: &str, language: LanguageMode) -> String {
         let f = self.format(raw, language);
-        if self.markdown { f.markdown } else { f.plain }
+        if self.format == OutputFormat::Markdown { f.markdown } else { f.plain }
+    }
+
+    /// The `html` field for already formatted text (polish output): the text read back
+    /// through the HTML renderer, never trusted as markup. `None` unless the target
+    /// takes HTML.
+    pub(crate) fn html_of(&self, formatted: &str) -> Option<String> {
+        (self.format == OutputFormat::Html).then(|| rules::to_html(formatted))
     }
 }
 
@@ -608,7 +616,7 @@ impl Worker {
                 let out = FormattedOutput {
                     plain: text.plain,
                     markdown: text.markdown,
-                    html: None,
+                    html: (layer1.format == OutputFormat::Html).then_some(text.html),
                     timings: Timings { stt_ms, rules_ms, llm_ms: 0.0, format_ms: 0.0, total_ms },
                     engine_id,
                     language,

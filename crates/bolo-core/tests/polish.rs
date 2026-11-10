@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bolo_core::{
-    BoloError, DictationState, Engine, EngineEvents, FormattedOutput, Language, LanguageMode, POLISH_DEADLINE, Polish,
-    WavSource,
+    BoloError, DictationState, Engine, EngineEvents, FormattedOutput, Language, LanguageMode, OutputFormat,
+    POLISH_DEADLINE, Polish, TargetContext, WavSource,
 };
 use common::{Ev, FakeLlm, FakeStt, Harness, config, errors, finals, polished, tone};
 
@@ -53,6 +53,18 @@ fn the_instant_text_comes_first_then_the_polished_text() {
     assert!(polished.timings.total_ms >= instant.timings.total_ms + polished.timings.llm_ms - 1.0);
     assert_eq!(polished.engine_id, instant.engine_id);
     assert_eq!(llm.calls(), vec![INSTANT.to_owned()], "the LLM is sent the instant text");
+}
+
+#[test]
+fn polished_text_into_an_html_target_is_rendered_as_html() {
+    let (h, _) = engine(on(), FakeLlm::answering(POLISHED, Duration::from_millis(20)));
+    let html = |format| {
+        let mut events = h.dictate_into(TargetContext { format, ..Default::default() });
+        events.extend(h.events_within(SETTLE));
+        polished(&events)[0].html.clone()
+    };
+    assert_eq!(html(OutputFormat::Html).as_deref(), Some("<p>Can you move the standup to 11:30?</p>"));
+    assert_eq!(html(OutputFormat::Plain), None);
 }
 
 #[test]

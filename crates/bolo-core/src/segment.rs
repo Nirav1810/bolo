@@ -233,6 +233,7 @@ fn report(setup: &PolishSetup, parts: &[Part], out: FormattedOutput, called: Ins
         return;
     }
     let mut polished = out;
+    polished.html = setup.layer1.html_of(&text);
     polished.plain = text.clone();
     polished.markdown = text;
     polished.timings.llm_ms = released.elapsed().as_secs_f64() * 1e3;
