@@ -308,3 +308,31 @@ The rules pipeline now removes fillers and applies spoken self-corrections (ADR-
 - Nemotron's hinglish/11 ("Par shaam ko chalta hai nahin wait parson chalte hain.") stays verbatim. The recognizer heard "Par", not "kal", so there's no date for "parson" to replace. Polish can still fix it.
 - The recordings have no fillers, so this set doesn't measure the filler pass. The golden cases and property tests cover it.
 - **Latency gate:** p95 0.065 ms in a debug build (was 0.027 ms), still 15× under the 1 ms budget.
+
+## 14. Numbers (M2 ticket 05)
+
+The rules pipeline now writes English number words in the ADR-0015 number style. The pass runs after self-corrections:
+- Cardinals become digits, except one through nine in prose.
+- Money, times, dates and percentages always use digits.
+- Grouping is Indian when lakh, crore or rupees is spoken.
+- Four or more digits spoken one by one join up ("four five seven two" → "4572").
+- Number words that don't read as one number, with nothing in the context to settle them ("twenty twenty six", "ten fifteen"), stay verbatim, as do Hindi number words.
+
+**Formatted WER after this ticket (2026-11-10, 40 clips):**
+
+| run | engine | WER en | fmt WER en | WER hinglish | fmt WER hinglish |
+|---|---|---|---|---|---|
+| `bolo run` | `local:nemotron-stream` | 10.3% | **9.0%** | 31.2% | 34.6% |
+| `bolo run` | `deepgram:nova-3` (cached) | 6.5% | 5.5% | 23.2% | 21.2% |
+| `bolo replay --speed 50`, Auto | `local:nemotron-stream` | 10.3% | **9.0%** | 27.7% | 30.9% |
+
+- Nemotron writes numbers as words, and all four of its number clips now come out in style:
+  - en/04: "10 minutes"
+  - en/05: "at 4 PM"
+  - en/06: "4572" and "$1,250"
+  - en/17: "at 6:30 in the evening"
+
+  Formatted English WER drops 9.4% → 9.0%. What's left on those clips is recognition error ("This book a meeting", "My flights land"). Verbatim WER rises, by design, because the verbatim references keep "ten minutes".
+- Deepgram already writes digits ("$1,250", "4PM", "06:30"), and the pass leaves numerals the engine wrote as they are, so nothing changed.
+- Hinglish is unchanged. Its only number in the set is hinglish/15's "pandrah" (Hindi), which is left for polish.
+- **Latency gate:** p95 0.12 ms in a debug build (was 0.065 ms), still 8× under the 1 ms budget.

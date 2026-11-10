@@ -114,7 +114,7 @@ expected = "And then we left."
 [[case]]
 note = "times, decimals and thousands keep their inner punctuation"
 input = "meet at 5:30, it costs 3.5 lakh or 1,000 dollars"
-expected = "Meet at 5:30, it costs 3.5 lakh or 1,000 dollars."
+expected = "Meet at 5:30, it costs 3.5 lakh or $1,000."
 
 [[case]]
 note = "a URL at the start of a sentence is not capitalized"

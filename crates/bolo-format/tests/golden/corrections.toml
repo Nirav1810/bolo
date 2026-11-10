@@ -85,7 +85,7 @@ expected = "That is not what I mean, the report is fine."
 [[case]]
 note = "I mean as a clarification of a sentence is kept"
 input = "The build is slow, I mean it takes ten minutes."
-expected = "The build is slow, I mean it takes ten minutes."
+expected = "The build is slow, I mean it takes 10 minutes."
 
 [[case]]
 note = "sorry for the delay is an apology"
