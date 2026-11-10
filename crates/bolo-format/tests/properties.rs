@@ -73,6 +73,66 @@ fn transcript() -> impl Strategy<Value = String> {
     })
 }
 
+/// Transcripts dense with number words, units and time and date words, for the
+/// properties that hold whatever the numbers pass does.
+fn number_transcript() -> impl Strategy<Value = String> {
+    let word = prop::sample::select(vec![
+        "one",
+        "two",
+        "five",
+        "nine",
+        "ten",
+        "twelve",
+        "fifteen",
+        "twenty",
+        "fifty",
+        "twenty-five",
+        "hundred",
+        "thousand",
+        "lakh",
+        "crore",
+        "million",
+        "and",
+        "point",
+        "oh",
+        "dollars",
+        "bucks",
+        "rupees",
+        "cents",
+        "percent",
+        "per",
+        "cent",
+        "at",
+        "pm",
+        "o'clock",
+        "in",
+        "the",
+        "evening",
+        "march",
+        "june",
+        "third",
+        "first",
+        "of",
+        "4",
+        "30",
+        "1,250",
+        "₹500",
+        "$5",
+        "5:30",
+        "people",
+        "send",
+        "kal",
+    ]);
+    prop::collection::vec((word, separator()), 1..30).prop_map(|parts| {
+        let mut s = String::new();
+        for (w, sep) in parts {
+            s.push_str(w);
+            s.push_str(sep);
+        }
+        s
+    })
+}
+
 fn context() -> impl Strategy<Value = FormatContext> {
     prop::sample::select(vec![FormatContext::plain(), FormatContext::markdown(), FormatContext::code()])
 }
@@ -89,7 +149,132 @@ fn words(text: &str) -> Vec<String> {
             || matches!(c, '\'' | '\u{2019}')
             || (('\u{0900}'..='\u{097F}').contains(&c) && !matches!(c, '।' | '॥'))
     };
-    text.split(|c: char| !is_word_char(c)).filter(|w| !w.is_empty()).map(str::to_lowercase).collect()
+    text.split(|c: char| !is_word_char(c))
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .map(|w| number_word_digits(&w).map_or(w, str::to_owned))
+        // Digits compare one by one, so "three pm" → "3 pm" and "4 5 7 2" → "4572"
+        // keep their words.
+        .flat_map(
+            |w| {
+                if w.chars().all(|c| c.is_ascii_digit()) { w.chars().map(String::from).collect() } else { vec![w] }
+            },
+        )
+        .collect()
+}
+
+/// The digits of a single English number word, which the numbers pass may write as digits.
+fn number_word_digits(w: &str) -> Option<&'static str> {
+    const WORDS: &[(&str, &str)] = &[
+        ("zero", "0"),
+        ("one", "1"),
+        ("two", "2"),
+        ("three", "3"),
+        ("four", "4"),
+        ("five", "5"),
+        ("six", "6"),
+        ("seven", "7"),
+        ("eight", "8"),
+        ("nine", "9"),
+        ("ten", "10"),
+        ("eleven", "11"),
+        ("twelve", "12"),
+        ("thirteen", "13"),
+        ("fourteen", "14"),
+        ("fifteen", "15"),
+        ("sixteen", "16"),
+        ("seventeen", "17"),
+        ("eighteen", "18"),
+        ("nineteen", "19"),
+    ];
+    WORDS.iter().find(|(word, _)| *word == w).map(|(_, d)| *d)
+}
+
+/// `n` in English words, Western ("one million two hundred thousand five") or Indian
+/// ("twelve lakh five").
+fn spoken(n: u64, indian: bool) -> String {
+    const SMALL: &[&str] = &[
+        "zero",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+    ];
+    const TENS: &[&str] = &["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+    fn below_1000(n: u64, out: &mut Vec<String>) {
+        if n >= 100 {
+            out.push(SMALL[(n / 100) as usize].to_owned());
+            out.push("hundred".to_owned());
+        }
+        let r = n % 100;
+        if r >= 20 {
+            out.push(TENS[(r / 10) as usize].to_owned());
+            if !r.is_multiple_of(10) {
+                out.push(SMALL[(r % 10) as usize].to_owned());
+            }
+        } else if r > 0 {
+            out.push(SMALL[r as usize].to_owned());
+        }
+    }
+    let scales: &[(u64, &str)] = if indian {
+        &[(10_000_000, "crore"), (100_000, "lakh"), (1_000, "thousand")]
+    } else {
+        &[(1_000_000_000, "billion"), (1_000_000, "million"), (1_000, "thousand")]
+    };
+    let mut out = Vec::new();
+    let mut rest = n;
+    for &(scale, word) in scales {
+        if rest >= scale {
+            below_1000(rest / scale, &mut out);
+            out.push(word.to_owned());
+            rest %= scale;
+        }
+    }
+    below_1000(rest, &mut out);
+    out.join(" ")
+}
+
+/// Digits with Western or Indian thousands separators.
+fn grouped(n: u64, indian: bool) -> String {
+    let s = n.to_string();
+    if s.len() <= 3 {
+        return s;
+    }
+    let (head, last3) = s.split_at(s.len() - 3);
+    let step = if indian { 2 } else { 3 };
+    let mut parts: Vec<String> = Vec::new();
+    let mut rest = head.to_owned();
+    while rest.len() > step {
+        let t = rest.split_off(rest.len() - step);
+        parts.insert(0, t);
+    }
+    parts.insert(0, rest);
+    format!("{},{last3}", parts.join(","))
+}
+
+/// Whether a value is spoken as a round lakh, crore, million or billion, which keeps its
+/// word ("2 crore").
+fn is_round(n: u64, indian: bool) -> bool {
+    if indian {
+        n.is_multiple_of(100_000) && (n < 10_000_000 || n.is_multiple_of(10_000_000))
+    } else {
+        n >= 1_000_000 && n.is_multiple_of(1_000_000) && (n < 1_000_000_000 || n.is_multiple_of(1_000_000_000))
+    }
 }
 
 /// Whether a transcript contains a layout command, which the pipeline may remove.
@@ -251,6 +436,40 @@ proptest! {
             "output: {:?}",
             out
         );
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 2000, failure_persistence: None, ..ProptestConfig::default() })]
+
+    #[test]
+    fn numbers_are_idempotent(text in number_transcript(), lang in language(), ctx in context()) {
+        let once = rules::apply(&text, lang, ctx);
+        let twice = rules::apply(&once, lang, ctx);
+        prop_assert_eq!(&once, &twice);
+        prop_assert!(!once.is_empty());
+    }
+
+    #[test]
+    fn spoken_cardinals_become_grouped_digits(n in 10u64..2_000_000_000) {
+        prop_assume!(!is_round(n, false));
+        let out = rules::apply(&format!("we counted {} items", spoken(n, false)), Language::English, FormatContext::plain());
+        let digits = if n >= 10_000 { grouped(n, false) } else { n.to_string() };
+        prop_assert_eq!(out, format!("We counted {digits} items."));
+    }
+
+    #[test]
+    fn spoken_rupees_use_indian_grouping(n in 1u64..1_000_000_000, lang in language()) {
+        prop_assume!(!is_round(n, true));
+        let out = rules::apply(&format!("pay {} rupees today", spoken(n, true)), lang, FormatContext::plain());
+        prop_assert_eq!(out, format!("Pay ₹{} today.", grouped(n, true)));
+    }
+
+    #[test]
+    fn spoken_dollars_use_western_grouping(n in 1u64..1_000_000_000) {
+        prop_assume!(!is_round(n, false));
+        let out = rules::apply(&format!("pay {} dollars today", spoken(n, false)), Language::English, FormatContext::plain());
+        prop_assert_eq!(out, format!("Pay ${} today.", grouped(n, false)));
     }
 }
 

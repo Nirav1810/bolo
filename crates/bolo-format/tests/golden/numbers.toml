@@ -1,0 +1,319 @@
+# Numbers (ADR-0015): English number words become digits, except one through nine in
+# prose. Money, times, dates and percentages always use digits. Grouping is Indian when
+# lakh, crore or rupees is spoken. Hindi number words and anything unsure stay verbatim.
+
+# Cardinals in prose
+
+[[case]]
+note = "ten and up become digits"
+input = "I'll be ten minutes late, start without me."
+expected = "I'll be 10 minutes late, start without me."
+
+[[case]]
+note = "one through nine stay words in prose"
+input = "Please book a meeting room for three people."
+expected = "Please book a meeting room for three people."
+
+[[case]]
+note = "fifteen people"
+input = "we need fifteen people for the offsite"
+expected = "We need 15 people for the offsite."
+
+[[case]]
+note = "a compound tens-unit number"
+input = "there are twenty five open tickets"
+expected = "There are 25 open tickets."
+
+[[case]]
+note = "a hyphenated tens-unit number"
+input = "there are twenty-five open tickets"
+expected = "There are 25 open tickets."
+
+[[case]]
+note = "hundreds with and"
+input = "we shipped one hundred and five orders"
+expected = "We shipped 105 orders."
+
+[[case]]
+note = "four-digit numbers stay ungrouped outside money"
+input = "about fifteen hundred people signed up"
+expected = "About 1500 people signed up."
+
+[[case]]
+note = "five digits and up are grouped"
+input = "the file has one hundred twenty five thousand rows"
+expected = "The file has 125,000 rows."
+
+[[case]]
+note = "a number at the start of a sentence"
+input = "Twenty people replied. Thanks."
+expected = "20 people replied. Thanks."
+
+[[case]]
+note = "a round million keeps its word"
+input = "the video got two million views"
+expected = "The video got 2 million views."
+
+[[case]]
+note = "decimals are digits"
+input = "the build takes three point five minutes"
+expected = "The build takes 3.5 minutes."
+
+[[case]]
+note = "numerals the engine wrote stay as written"
+input = "Ticket 4572 has 3 comments and 1,000 views."
+expected = "Ticket 4572 has 3 comments and 1,000 views."
+
+# Ambiguity: when unsure, leave it as spoken
+
+[[case]]
+note = "one of them stays"
+input = "one of them is broken"
+expected = "One of them is broken."
+
+[[case]]
+note = "a couple stays"
+input = "give me a couple of minutes"
+expected = "Give me a couple of minutes."
+
+[[case]]
+note = "two in me two stays as spoken"
+input = "can you send it to me two"
+expected = "Can you send it to me two."
+
+[[case]]
+note = "two numbers that don't read as one stay verbatim"
+input = "the release is in twenty twenty six"
+expected = "The release is in twenty twenty six."
+
+[[case]]
+note = "an H M pair with no time or money context stays verbatim"
+input = "we got ten fifteen replies"
+expected = "We got ten fifteen replies."
+
+[[case]]
+note = "point as a noun is not a decimal"
+input = "one point I want to make"
+expected = "One point I want to make."
+
+[[case]]
+note = "two point five thousand is unsure"
+input = "about two point five thousand users"
+expected = "About two point five thousand users."
+
+[[case]]
+note = "march as a verb takes no day"
+input = "we march five miles"
+expected = "We march five miles."
+
+[[case]]
+note = "may as a verb takes no day"
+input = "you may nine times out of ten"
+expected = "You may nine times out of 10."
+
+# Money
+
+[[case]]
+note = "twelve fifty dollars is spoken hundreds"
+input = "the total comes to twelve fifty dollars"
+expected = "The total comes to $1,250."
+
+[[case]]
+note = "numerals with dollars"
+input = "The invoice number is 4 5 7 2 and the total comes to 1,250 dollars."
+expected = "The invoice number is 4572 and the total comes to $1,250."
+
+[[case]]
+note = "small amounts of money are digits too"
+input = "it costs five dollars"
+expected = "It costs $5."
+
+[[case]]
+note = "dollars and cents"
+input = "that is five dollars and fifty cents"
+expected = "That is $5.50."
+
+[[case]]
+note = "bucks are dollars"
+input = "lend me twenty bucks"
+expected = "Lend me $20."
+
+[[case]]
+note = "a round million dollars"
+input = "they raised three million dollars"
+expected = "They raised $3 million."
+
+[[case]]
+note = "nineteen ninety nine dollars"
+input = "it was nineteen ninety nine dollars"
+expected = "It was $1,999."
+
+[[case]]
+note = "euros"
+input = "the ticket was forty euros"
+expected = "The ticket was €40."
+
+[[case]]
+note = "rupees use Indian grouping"
+input = "one lakh twenty five thousand rupees"
+expected = "₹1,25,000."
+
+[[case]]
+note = "numerals with rupees are regrouped"
+input = "transfer 125000 rupees today"
+expected = "Transfer ₹1,25,000 today."
+
+[[case]]
+note = "five hundred rupees"
+input = "five hundred rupees de dena"
+language = "hinglish"
+expected = "₹500 de dena."
+
+[[case]]
+note = "lakh without rupees still uses Indian grouping"
+input = "budget is one lakh twenty five thousand"
+expected = "Budget is 1,25,000."
+
+[[case]]
+note = "a round crore keeps its word"
+input = "the deal is worth two crore"
+expected = "The deal is worth 2 crore."
+
+[[case]]
+note = "a decimal crore in rupees"
+input = "two point five crore rupees"
+expected = "₹2.5 crore."
+
+[[case]]
+note = "Indian grouping applies to the whole dictation"
+input = "we spent two lakh fifty thousand and need another fifty thousand"
+expected = "We spent 2,50,000 and need another 50,000."
+
+# Percentages
+
+[[case]]
+note = "percent becomes %"
+input = "sales went up twenty percent"
+expected = "Sales went up 20%."
+
+[[case]]
+note = "a small percentage is digits too"
+input = "only five percent replied"
+expected = "Only 5% replied."
+
+[[case]]
+note = "per cent spelled as two words"
+input = "a twelve per cent discount"
+expected = "A 12% discount."
+
+[[case]]
+note = "a numeral percent"
+input = "battery at 15 percent"
+expected = "Battery at 15%."
+
+# Times
+
+[[case]]
+note = "H M after at becomes a clock time"
+input = "My flight lands at six thirty in the evening."
+expected = "My flight lands at 6:30 in the evening."
+
+[[case]]
+note = "numerals H M with a time phrase"
+input = "My flight lands at 6 30 in the evening, so I can join the call from the airport."
+expected = "My flight lands at 6:30 in the evening, so I can join the call from the airport."
+
+[[case]]
+note = "H M with pm"
+input = "call me at five thirty pm"
+expected = "Call me at 5:30 pm."
+
+[[case]]
+note = "twelve fifty after at is a time"
+input = "the train leaves at twelve fifty"
+expected = "The train leaves at 12:50."
+
+[[case]]
+note = "oh minutes"
+input = "the standup moved to nine oh five am"
+expected = "The standup moved to 9:05 am."
+
+[[case]]
+note = "a small hour with pm is digits"
+input = "Please book a meeting room for three people at four pm on Thursday."
+expected = "Please book a meeting room for three people at 4 pm on Thursday."
+
+[[case]]
+note = "o'clock"
+input = "see you at seven o'clock"
+expected = "See you at 7 o'clock."
+
+[[case]]
+note = "an hour alone after at stays a word"
+input = "let's meet at five"
+expected = "Let's meet at five."
+
+[[case]]
+note = "ten after at follows the cardinal rule"
+input = "let's meet at ten"
+expected = "Let's meet at 10."
+
+# Dates
+
+[[case]]
+note = "month and ordinal day"
+input = "the launch is on march third"
+expected = "The launch is on March 3."
+
+[[case]]
+note = "month and compound ordinal"
+input = "my birthday is june twenty first"
+expected = "My birthday is June 21."
+
+[[case]]
+note = "month and cardinal day"
+input = "pay rent by june five"
+expected = "Pay rent by June 5."
+
+[[case]]
+note = "ordinal of month"
+input = "we fly on the fifth of june"
+expected = "We fly on the 5th of June."
+
+# Spoken digits
+
+[[case]]
+note = "four digits spoken one by one join up"
+input = "my pin is four five seven two"
+expected = "My pin is 4572."
+
+[[case]]
+note = "three digits spoken one by one stay"
+input = "testing one two three"
+expected = "Testing one two three."
+
+# Hinglish
+
+[[case]]
+note = "Hindi number words stay"
+language = "hinglish"
+input = "main pandrah minute late ho jaunga"
+expected = "Main pandrah minute late ho jaunga."
+
+[[case]]
+note = "do sau pachaas stays for polish"
+language = "hinglish"
+input = "do sau pachaas rupaye bhej do"
+expected = "Do sau pachaas rupaye bhej do."
+
+[[case]]
+note = "English number words in a Hinglish dictation convert"
+language = "hinglish"
+input = "main fifteen minute late ho jaunga"
+expected = "Main 15 minute late ho jaunga."
+
+[[case]]
+note = "a Hindi number before lakh stays"
+language = "hinglish"
+input = "do lakh ka loan chahiye"
+expected = "Do lakh ka loan chahiye."

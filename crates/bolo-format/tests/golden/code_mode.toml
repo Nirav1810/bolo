@@ -34,7 +34,7 @@ expected = "why is this null?"
 note = "i is not capitalized"
 format = "code"
 input = "for i in range ten"
-expected = "for i in range ten"
+expected = "for i in range 10"
 
 [[case]]
 note = "spacing and doubled punctuation are still fixed"

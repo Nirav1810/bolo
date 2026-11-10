@@ -27,3 +27,19 @@ note = "a Hinglish dictation with a start filler and a correction"
 language = "hinglish"
 input = "matlab kal shaam ko chalte hain nahi wait parson chalte hain"
 expected = "Parson chalte hain."
+
+[[case]]
+note = "a correction between amounts, then numbers"
+input = "the total is twelve fifty dollars actually no thirteen hundred dollars"
+expected = "The total is $1,300."
+
+[[case]]
+note = "a time, an amount and a layout command in one dictation"
+input = "um meeting at six thirty pm new line budget is one lakh twenty five thousand rupees"
+expected = "Meeting at 6:30 pm\nBudget is ₹1,25,000."
+
+[[case]]
+note = "fifteen minutes late in a Hinglish dictation with a filler start"
+language = "hinglish"
+input = "matlab main fifteen minute late ho jaunga"
+expected = "Main 15 minute late ho jaunga."

@@ -77,9 +77,9 @@ input = "Bye bye, it was very very good. I know that that is true."
 expected = "Bye bye, it was very very good. I know that that is true."
 
 [[case]]
-note = "repeated digits are kept"
+note = "repeated digits are kept (four in a row join up as a code)"
 input = "The code is 4 4 7 2 and the room is one one two."
-expected = "The code is 4 4 7 2 and the room is one one two."
+expected = "The code is 4472 and the room is one one two."
 
 [[case]]
 note = "a word and its repeat across a comma are kept unless it's a stutter word"

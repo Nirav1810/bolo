@@ -7,8 +7,8 @@
 //! fillers → self-corrections → numbers → lists and commands → punctuation fix-ups → render
 //! ```
 //!
-//! The numbers and lists passes are still to come; they plug in at their place in
-//! [`apply`] (M2 tickets 05 and 06). Every pass follows the same rule:
+//! The lists pass is still to come; it joins the commands step in [`apply`] (M2
+//! ticket 06). Every pass follows the same rule:
 //! when unsure, leave the text verbatim. Polish can catch a miss, but nothing restores a
 //! lost word.
 //!
@@ -19,6 +19,7 @@ mod commands;
 mod corrections;
 mod fillers;
 mod kinds;
+mod numbers;
 mod punctuation;
 mod token;
 
@@ -79,7 +80,7 @@ pub fn apply(text: &str, language: Language, ctx: FormatContext) -> String {
     let mut tokens = token::tokenize(text);
     fillers::apply(&mut tokens, language);
     corrections::apply(&mut tokens, language);
-    // numbers: ticket 05.
+    numbers::apply(&mut tokens);
     commands::apply(&mut tokens); // lists join this step in ticket 06
     punctuation::apply(&mut tokens, ctx);
     let out = token::render(&tokens, ctx);
