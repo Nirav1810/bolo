@@ -5,13 +5,15 @@
 //! feeds the dictation or keeps a short pre-roll ring when idle-warm. Timers close the mic
 //! after `mic_warm_secs` and unload the model after `idle_unload_secs`.
 //!
-//! In the Auto language mode on an engine with a per-stream language option, a
-//! dictation has two streaming passes, forced to English and to Hindi, fed the same
-//! audio on two threads. Partials come from whichever pass the language decision
-//! currently favours; at release both are finished in parallel and one is chosen.
+//! Each streaming pass decodes on its own thread, so the engine thread never waits on a
+//! chunk decode: it hands audio over, picks up partials, and handles Stop as soon as it
+//! arrives. In the Auto language mode on an engine with a per-stream language option, a
+//! dictation has two passes, forced to English and to Hindi, fed the same audio.
+//! Partials come from whichever pass the language decision currently favours; at
+//! release the chosen pass is finished, or both when the decision has to wait for them.
 
 use std::collections::VecDeque;
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -39,7 +41,8 @@ const LEVEL_INTERVAL: Duration = Duration::from_millis(33);
 pub(crate) enum Cmd {
     Prewarm,
     Start(TargetContext, Sender<Result<(), BoloError>>),
-    Stop,
+    /// Release, with when `stop_dictation` was called.
+    Stop(Instant),
     Cancel,
     Release,
     UpdateConfig(Box<EngineConfig>),
@@ -54,12 +57,90 @@ struct Mic {
 }
 
 /// One streaming decode of a dictation, forced to `language` (or left to the engine's
-/// own detection when it is `Auto`).
+/// own detection when it is `Auto`). The stream lives on a decoder thread; dropping the
+/// pass abandons it (the thread ends after the decode it is in).
 struct Pass {
     language: Language,
-    stream: Box<dyn SttStream>,
+    audio: Sender<PassMsg>,
+    /// Partials from the decoder thread, newest last.
+    partials: Receiver<String>,
+    /// The finished transcript, after [`PassMsg::Finish`].
+    done: Receiver<Result<Transcript, SttError>>,
     /// Latest partial hypothesis, raw.
     partial: String,
+}
+
+enum PassMsg {
+    Audio(Vec<f32>),
+    Finish,
+}
+
+impl Pass {
+    fn spawn(language: Language, stream: Box<dyn SttStream>) -> Option<Self> {
+        let (audio, rx) = mpsc::channel();
+        let (partial_tx, partials) = mpsc::channel();
+        let (done_tx, done) = mpsc::channel();
+        std::thread::Builder::new()
+            .name(format!("bolo-pass-{language:?}").to_lowercase())
+            .spawn(move || decode_pass(stream, &rx, &partial_tx, &done_tx))
+            .map_err(|e| tracing::warn!(error = %e, "could not start a decoder thread"))
+            .ok()?;
+        Some(Self { language, audio, partials, done, partial: String::new() })
+    }
+
+    /// Queue audio for the decoder thread. Never waits for a decode.
+    fn send(&self, pcm: &[f32]) {
+        let _ = self.audio.send(PassMsg::Audio(pcm.to_vec()));
+    }
+
+    /// Pick up the newest partial, if one arrived.
+    fn poll_partial(&mut self) {
+        if let Some(p) = self.partials.try_iter().last() {
+            self.partial = p;
+        }
+    }
+
+    /// Ask the decoder thread to decode what's queued plus the tail.
+    fn request_finish(&self) {
+        let _ = self.audio.send(PassMsg::Finish);
+    }
+
+    /// Wait for the final transcript, after [`Self::request_finish`].
+    fn wait_finished(self) -> Result<Transcript, SttError> {
+        self.done.recv().unwrap_or_else(|_| Err(SttError::Model("decoder thread exited".into())))
+    }
+}
+
+/// The decoder thread: feed audio as it comes, taking everything that queued up behind
+/// a slow decode in one go, and report partials. Ends at `Finish` or when the pass is
+/// dropped.
+fn decode_pass(
+    mut stream: Box<dyn SttStream>,
+    rx: &Receiver<PassMsg>,
+    partials: &Sender<String>,
+    done: &Sender<Result<Transcript, SttError>>,
+) {
+    let mut pcm = Vec::new();
+    while let Ok(first) = rx.recv() {
+        let mut finish = false;
+        for msg in std::iter::once(first).chain(rx.try_iter()) {
+            match msg {
+                PassMsg::Audio(a) => pcm.extend_from_slice(&a),
+                PassMsg::Finish => finish = true,
+            }
+        }
+        if !pcm.is_empty() {
+            stream.accept(&pcm);
+            pcm.clear();
+        }
+        if finish {
+            let _ = done.send(stream.finish());
+            return;
+        }
+        if let Some(p) = stream.partial() {
+            let _ = partials.send(p);
+        }
+    }
 }
 
 struct Dictation {
@@ -100,18 +181,6 @@ fn pad(seg: &[f32]) -> Vec<f32> {
     v.extend_from_slice(seg);
     v.extend(std::iter::repeat_n(0.0, n));
     v
-}
-
-/// Feed every pass the same audio. Two passes decode on two threads, so Auto costs
-/// wall-clock time only for whichever pass is slower.
-fn accept_all(passes: &mut [Pass], pcm: &[f32]) {
-    match passes {
-        [a, b] => std::thread::scope(|scope| {
-            scope.spawn(|| b.stream.accept(pcm));
-            a.stream.accept(pcm);
-        }),
-        _ => passes.iter_mut().for_each(|p| p.stream.accept(pcm)),
-    }
 }
 
 impl Worker {
@@ -236,10 +305,7 @@ impl Worker {
         let passes: Vec<Pass> = if engine.supports_streaming() {
             self.pass_languages(engine.as_ref())
                 .into_iter()
-                .filter_map(|language| {
-                    let stream = engine.stream(&self.opts(language))?;
-                    Some(Pass { language, stream, partial: String::new() })
-                })
+                .filter_map(|language| Pass::spawn(language, engine.stream(&self.opts(language))?))
                 .collect()
         } else {
             Vec::new()
@@ -276,11 +342,9 @@ impl Worker {
     fn feed(&self, s: &mut Dictation, pcm: &[f32]) {
         s.audio.extend_from_slice(pcm);
         if !s.passes.is_empty() {
-            accept_all(&mut s.passes, pcm);
             for pass in &mut s.passes {
-                if let Some(p) = pass.stream.partial() {
-                    pass.partial = p;
-                }
+                pass.send(pcm);
+                pass.poll_partial();
             }
             if let Some(pass) = self.favoured(&s.passes)
                 && pass.partial != s.shown.1
@@ -315,9 +379,10 @@ impl Worker {
         }
     }
 
-    /// Hotkey released: finish recognition and emit `on_final`.
-    fn stop(&mut self) {
-        let released = Instant::now();
+    /// Hotkey released: finish recognition and emit `on_final`. Timings run from
+    /// `called`, when the host called `stop_dictation`.
+    fn stop(&mut self, called: Instant) {
+        let received = Instant::now();
         // Take the last audio that is already buffered.
         self.tick_audio();
         let Some(mut s) = self.dictation.take() else { return };
@@ -331,6 +396,7 @@ impl Worker {
         if !tail.is_empty() {
             self.feed(&mut s, &tail);
         }
+        let handed_over = Instant::now();
 
         let result: Result<(String, String, LanguageMode), BoloError> = if !s.passes.is_empty() {
             self.finish_passes(std::mem::take(&mut s.passes))
@@ -364,7 +430,7 @@ impl Worker {
                 })
                 .map(|(text, engine_id)| (text, engine_id, self.config.language))
         };
-        let stt_ms = released.elapsed().as_secs_f64() * 1e3;
+        let stt_ms = called.elapsed().as_secs_f64() * 1e3;
 
         match result {
             Ok((raw, engine_id, language)) => {
@@ -375,7 +441,18 @@ impl Worker {
                 let t_rules = Instant::now();
                 let text = self.romanize(raw.trim());
                 let rules_ms = t_rules.elapsed().as_secs_f64() * 1e3;
-                let total_ms = released.elapsed().as_secs_f64() * 1e3;
+                let total_ms = called.elapsed().as_secs_f64() * 1e3;
+                let ms = |a: Instant, b: Instant| b.duration_since(a).as_secs_f64() * 1e3;
+                // Where release → text goes (M2 ticket 01): Stop waiting for the engine
+                // thread, the last audio handed over, the tail decode, the rules.
+                tracing::debug!(
+                    queued_ms = ms(called, received),
+                    handover_ms = ms(received, handed_over),
+                    finish_ms = ms(handed_over, t_rules),
+                    rules_ms,
+                    total_ms,
+                    "stop breakdown"
+                );
                 self.events.on_final(FormattedOutput {
                     plain: text.clone(),
                     markdown: text,
@@ -395,11 +472,15 @@ impl Worker {
     /// Finish the passes and pick the result.
     ///
     /// When the Hindi pass's text at release already decides the language, only the
-    /// chosen pass is finished, so Auto costs no more after release than a forced mode:
-    /// finishing two passes at once measured ~260 ms p50 against ~190 ms for one.
-    /// Otherwise both are finished in parallel and Auto decides on their final text,
-    /// falling back to the other pass if the chosen one fails.
+    /// chosen pass is finished and the other is dropped, even mid-decode. Auto then
+    /// costs no more after release than a forced mode: finishing two passes at once
+    /// measured ~260 ms p50 against ~190 ms for one. Otherwise both are finished in
+    /// parallel and Auto decides on their final text, falling back to the other pass if
+    /// the chosen one fails.
     fn finish_passes(&self, mut passes: Vec<Pass>) -> Result<(Transcript, Language), BoloError> {
+        for pass in &mut passes {
+            pass.poll_partial();
+        }
         if passes.len() > 1 {
             let hindi = passes.iter().find(|p| p.language == Language::Hi).map_or("", |p| p.partial.as_str());
             let early = match detect(hindi) {
@@ -411,16 +492,10 @@ impl Worker {
                 passes.retain(|p| p.language == choice);
             }
         }
-        let finished: Vec<(Language, Result<Transcript, SttError>)> = std::thread::scope(|scope| {
-            let running: Vec<_> =
-                passes.into_iter().map(|p| (p.language, scope.spawn(move || p.stream.finish()))).collect();
-            running
-                .into_iter()
-                .map(|(language, h)| {
-                    (language, h.join().unwrap_or_else(|_| Err(SttError::Model("decoder thread panicked".into()))))
-                })
-                .collect()
-        });
+        // Ask every pass to finish before waiting on any, so they flush in parallel.
+        passes.iter().for_each(Pass::request_finish);
+        let finished: Vec<(Language, Result<Transcript, SttError>)> =
+            passes.into_iter().map(|p| (p.language, p.wait_finished())).collect();
         let choice = match finished.as_slice() {
             [(only, _)] => *only,
             _ => {
@@ -515,7 +590,7 @@ impl Worker {
                     }
                     let _ = reply.send(r);
                 }
-                Ok(Cmd::Stop) => self.stop(),
+                Ok(Cmd::Stop(called)) => self.stop(called),
                 Ok(Cmd::Cancel) => self.cancel(),
                 Ok(Cmd::Release) => self.release(),
                 Ok(Cmd::UpdateConfig(c)) => {

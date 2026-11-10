@@ -75,8 +75,8 @@ pub fn run(
     std::thread::sleep(Duration::from_secs(3)); // let the model load, as the app does at startup
 
     let mut lat = Vec::new();
-    // The engine's own release→text (`Timings::total_ms`). It leaves out any wait for the
-    // engine thread to finish a chunk it was decoding when the stop arrived.
+    // The engine's own release→text (`Timings::total_ms`): from the `stop_dictation` call to
+    // the output being ready. Stop→text adds only the event's trip back to this thread.
     let mut engine_lat = Vec::new();
     let mut errs: HashMap<String, ErrorCount> = HashMap::new();
     // Per category: how often each language was chosen.

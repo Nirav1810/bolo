@@ -22,13 +22,16 @@ const SAMPLES_PER_PARTIAL: usize = 1600;
 /// How long to wait for the engine thread before failing a test.
 const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Length of the replayed waveform.
-const AUDIO_SECS: f32 = 0.5;
+pub const AUDIO_SECS: f32 = 0.5;
 
 /// What one stream language says: partials in order, then the final text.
 #[derive(Debug, Clone, Default)]
 pub struct Script {
     pub partials: Vec<String>,
     pub final_text: String,
+    /// A chunk decode that blocks `accept` for this long once the stream has taken in
+    /// this many samples, like a slow real decode.
+    pub slow_decode: Option<(usize, Duration)>,
 }
 
 /// A streaming STT engine that returns preset text per stream language. Like Nemotron,
@@ -37,6 +40,8 @@ pub struct Script {
 pub struct FakeStt {
     scripts: Mutex<Vec<(Language, Script)>>,
     opened: Mutex<Vec<Language>>,
+    /// (language, samples accepted) of every stream that finished.
+    finished: Arc<Mutex<Vec<(Language, usize)>>>,
 }
 
 impl FakeStt {
@@ -52,12 +57,31 @@ impl FakeStt {
 
     /// Re-script between dictations (streams opened from now on use it).
     pub fn set_script(&self, language: Language, partials: &[&str], final_text: &str) {
-        let script =
-            Script { partials: partials.iter().map(|p| (*p).to_owned()).collect(), final_text: final_text.into() };
+        let script = Script {
+            partials: partials.iter().map(|p| (*p).to_owned()).collect(),
+            final_text: final_text.into(),
+            slow_decode: None,
+        };
         if let Ok(mut g) = self.scripts.lock() {
             g.retain(|(l, _)| *l != language);
             g.push((language, script));
         }
+    }
+
+    /// Make the `language` stream's decode block `accept` for `stall` once it has taken in
+    /// `at_samples` samples.
+    pub fn slow_decode(self, language: Language, at_samples: usize, stall: Duration) -> Self {
+        if let Ok(mut g) = self.scripts.lock()
+            && let Some((_, script)) = g.iter_mut().find(|(l, _)| *l == language)
+        {
+            script.slow_decode = Some((at_samples, stall));
+        }
+        self
+    }
+
+    /// (language, samples accepted) of every stream that finished, in order.
+    pub fn finished(&self) -> Vec<(Language, usize)> {
+        self.finished.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
     /// Languages of every stream opened so far, in order.
@@ -98,6 +122,7 @@ impl SttEngine for FakeStt {
             script: self.script_for(opts.language),
             samples: 0,
             shown: 0,
+            finished: self.finished.clone(),
         }))
     }
 }
@@ -107,11 +132,19 @@ struct FakeStream {
     script: Script,
     samples: usize,
     shown: usize,
+    finished: Arc<Mutex<Vec<(Language, usize)>>>,
 }
 
 impl SttStream for FakeStream {
     fn accept(&mut self, samples: &[f32]) {
+        let before = self.samples;
         self.samples += samples.len();
+        if let Some((at, stall)) = self.script.slow_decode
+            && before < at
+            && self.samples >= at
+        {
+            std::thread::sleep(stall);
+        }
     }
 
     fn partial(&mut self) -> Option<String> {
@@ -124,6 +157,9 @@ impl SttStream for FakeStream {
     }
 
     fn finish(self: Box<Self>) -> bolo_stt::Result<Transcript> {
+        if let Ok(mut g) = self.finished.lock() {
+            g.push((self.language, self.samples));
+        }
         Ok(transcript(self.language, self.script.final_text))
     }
 }
@@ -216,18 +252,23 @@ impl Harness {
 
     /// Events up to and including the next return to `Idle`.
     pub fn events_until_idle(&self) -> Vec<Ev> {
+        self.events_until_state(DictationState::Idle)
+    }
+
+    /// Events up to and including the next change to `state`.
+    pub fn events_until_state(&self, state: DictationState) -> Vec<Ev> {
         let deadline = Instant::now() + EVENT_TIMEOUT;
         let mut events = Vec::new();
         loop {
             match self.rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
                 Ok(ev) => {
-                    let idle = matches!(ev, Ev::State(DictationState::Idle));
+                    let reached = matches!(ev, Ev::State(s) if s == state);
                     events.push(ev);
-                    if idle {
+                    if reached {
                         return events;
                     }
                 }
-                Err(RecvTimeoutError::Timeout) => panic!("engine never returned to Idle; got {events:?}"),
+                Err(RecvTimeoutError::Timeout) => panic!("engine never reached {state:?}; got {events:?}"),
                 Err(RecvTimeoutError::Disconnected) => panic!("engine thread exited; got {events:?}"),
             }
         }
