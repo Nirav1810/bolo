@@ -269,3 +269,18 @@ Number style barely moves WER, since numbers are canonicalized on both sides: en
 
 - Polish lowers formatted WER on English (11.3% → 8.2%) while it raises verbatim WER (8.0% → 9.5%): it makes the edits a person would make. That's the gap Layer 1 aims to close on the instant path.
 - The formatted references are drafts until the user signs them off (ticket 02). Numbers here will be re-run if they change.
+
+## 12. Layer 1 rules: punctuation fix-ups and commands (M2 ticket 03)
+
+The rules pipeline (`bolo_format::rules`, ADR-0015) now runs on every final, inside `rules_ms`. So far it has the punctuation fix-ups, the "new line" and "new paragraph" commands, and Plain/`code_mode` rendering. `bolo run` runs it on each transcript (after romanization) before scoring and before `--polish`. `bolo replay` gets it through the engine.
+
+**Formatted WER after this ticket (2026-11-10, 40 clips):**
+
+| run | engine | WER en | fmt WER en | WER hinglish | fmt WER hinglish |
+|---|---|---|---|---|---|
+| `bolo run` | `local:nemotron-stream` | 8.0% | 11.3% | 31.2% | 34.6% |
+| `bolo run` | `deepgram:nova-3` (cached) | 4.6% | 7.4% | 20.1% | 24.4% |
+| `bolo replay --speed 50`, Auto | `local:nemotron-stream` | 8.0% | 11.3% | 27.7% | 30.9% |
+
+- Every number is unchanged from §11, as expected. WER ignores case and punctuation, which is all these passes touch, and no clip says "new line". The visible change is in the text: unpunctuated engine output now gets a capital and a final period ("kal meeting hai na achenda bhej dena" → "Kal meeting hai na achenda bhej dena."). The gap to the formatted references starts closing with fillers, corrections, numbers and lists (tickets 04–06).
+- **Latency gate:** `crates/bolo-format/tests/latency.rs` runs the whole pipeline over the 40 clips' transcripts, as written and as bare lowercase text, in all three format contexts, and fails above 1 ms p95. It measured p95 0.027 ms in a debug build, so it has a wide margin on CI runners.

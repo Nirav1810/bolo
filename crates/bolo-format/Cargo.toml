@@ -18,3 +18,7 @@ serde = { workspace = true }
 reqwest = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
+
+[dev-dependencies]
+toml = { workspace = true }
+proptest = { version = "1", default-features = false, features = ["std"] }

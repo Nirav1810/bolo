@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use bolo_audio::resample::StreamResampler;
 use bolo_format::language::{Detected, detect};
+use bolo_format::rules::{self, FormatContext, Markup};
 use bolo_models::Manifest;
 use bolo_stt::vad::{Vad, VadConfig};
 use bolo_stt::{Language, SttEngine, SttError, SttOptions, SttStream, Transcript};
@@ -28,7 +29,7 @@ use tokio::task::JoinHandle;
 use crate::audio::{AudioFactory, AudioSource};
 use crate::build::{BuiltStt, build_stt};
 use crate::{
-    BoloError, DictationState, EngineConfig, EngineEvents, FormattedOutput, HinglishScript, LanguageMode,
+    BoloError, DictationState, EngineConfig, EngineEvents, FormattedOutput, HinglishScript, LanguageMode, OutputFormat,
     TargetContext, Timings,
 };
 
@@ -144,6 +145,8 @@ fn decode_pass(
 }
 
 struct Dictation {
+    /// Where the text is going: picks the Layer 1 format context.
+    target: TargetContext,
     /// Streaming decodes: none (batch engine), one, or English + Hindi in Auto mode.
     passes: Vec<Pass>,
     vad: Option<Vad>,
@@ -172,6 +175,16 @@ pub(crate) struct Worker {
     /// The language of the previous dictation (`En` or `Hi`), for ambiguous Auto ones.
     /// Lives as long as the engine.
     previous_language: Option<Language>,
+}
+
+/// `TargetContext` → the rules pipeline's own format context (`bolo-format` does not
+/// depend on `bolo-core`). HTML targets get plain text until the HTML renderer (M3).
+fn format_context(target: &TargetContext) -> FormatContext {
+    let markup = match target.format {
+        OutputFormat::Markdown => Markup::Markdown,
+        OutputFormat::Plain | OutputFormat::Html => Markup::Plain,
+    };
+    FormatContext { markup, code_mode: target.code_mode }
 }
 
 fn pad(seg: &[f32]) -> Vec<f32> {
@@ -296,7 +309,6 @@ impl Worker {
         if self.dictation.is_some() {
             return Err(BoloError::Busy);
         }
-        let _ = ctx; // per-app format/tone lands with the formatter (M2/M3)
         let engine = self.ensure_stt()?;
         self.open_mic()?;
         self.model_loaded = true;
@@ -320,6 +332,7 @@ impl Worker {
             self.rt.spawn(async move { e.prewarm().await });
         }
         let mut dictation = Dictation {
+            target: ctx,
             passes,
             vad,
             segments: Vec::new(),
@@ -377,6 +390,17 @@ impl Worker {
         } else {
             text.to_owned()
         }
+    }
+
+    /// Layer 1 on a final: romanize (with the loanword lexicon), then the rules pipeline
+    /// (ADR-0015).
+    fn format(&self, raw: &str, language: LanguageMode, target: &TargetContext) -> String {
+        let language = match language {
+            LanguageMode::English => rules::Language::English,
+            LanguageMode::Hinglish => rules::Language::Hinglish,
+            LanguageMode::Auto => rules::Language::of_engine_output(raw),
+        };
+        rules::apply(&self.romanize(raw), language, format_context(target))
     }
 
     /// Hotkey released: finish recognition and emit `on_final`. Timings run from
@@ -439,7 +463,7 @@ impl Worker {
                     known => Some(known.stt_language()),
                 };
                 let t_rules = Instant::now();
-                let text = self.romanize(raw.trim());
+                let text = self.format(raw.trim(), language, &s.target);
                 let rules_ms = t_rules.elapsed().as_secs_f64() * 1e3;
                 let total_ms = called.elapsed().as_secs_f64() * 1e3;
                 let ms = |a: Instant, b: Instant| b.duration_since(a).as_secs_f64() * 1e3;

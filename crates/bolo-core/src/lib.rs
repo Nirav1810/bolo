@@ -4,7 +4,7 @@
 //! ```text
 //! start_dictation ─► mic (warm or opened) ─► 16 kHz ─┬─► streaming STT (partials) ─┐
 //!                                                     └─► VAD ─► per-segment batch STT ┤
-//! stop_dictation ─► flush last chunk / segment ─► romanize (Layer 1) ─► on_final ◄───┘
+//! stop_dictation ─► flush last chunk / segment ─► Layer 1 (romanize, rules) ─► on_final ◄┘
 //! ```
 //!
 //! In the Auto [`LanguageMode`] on an engine with a per-stream language option
@@ -107,6 +107,7 @@ pub enum DictationState {
 pub struct Timings {
     /// Stop → STT final text.
     pub stt_ms: f64,
+    /// Layer 1: romanization and the rules pipeline (`bolo_format::rules`).
     pub rules_ms: f64,
     /// 0 when the LLM layer was skipped.
     pub llm_ms: f64,

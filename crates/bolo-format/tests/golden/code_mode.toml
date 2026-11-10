@@ -1,0 +1,49 @@
+# code_mode targets (code editors, terminals): no automatic capitals and no final period.
+
+[[case]]
+note = "no capital and no period are added"
+format = "code"
+input = "rename the user id variable"
+expected = "rename the user id variable"
+
+[[case]]
+note = "the engine's final period is removed"
+format = "code"
+input = "rename the variable."
+expected = "rename the variable"
+
+[[case]]
+note = "the engine's capitalized first word is lowercased"
+format = "code"
+input = "Get user by ID."
+expected = "get user by ID"
+
+[[case]]
+note = "acronyms at the start stay"
+format = "code"
+input = "API key goes here"
+expected = "API key goes here"
+
+[[case]]
+note = "a question mark at the end is kept"
+format = "code"
+input = "why is this null?"
+expected = "why is this null?"
+
+[[case]]
+note = "i is not capitalized"
+format = "code"
+input = "for i in range ten"
+expected = "for i in range ten"
+
+[[case]]
+note = "spacing and doubled punctuation are still fixed"
+format = "code"
+input = "todo ,, fix this"
+expected = "todo, fix this"
+
+[[case]]
+note = "line commands work in code mode, with no capital after the break"
+format = "code"
+input = "first line new line second line"
+expected = "first line\nsecond line"
