@@ -203,6 +203,15 @@ impl FakeLlm {
     pub fn calls(&self) -> Vec<String> {
         self.calls.lock().map(|g| g.clone()).unwrap_or_default()
     }
+
+    /// Wait until a polish request has reached the client, so it is in flight.
+    pub fn wait_for_call(&self) {
+        let deadline = Instant::now() + EVENT_TIMEOUT;
+        while self.calls().is_empty() {
+            assert!(Instant::now() < deadline, "the LLM was never called");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
 }
 
 #[async_trait]

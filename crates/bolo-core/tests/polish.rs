@@ -104,10 +104,10 @@ fn cancel_during_polish_means_no_on_polished() {
     let (h, llm) = engine(on(), FakeLlm::answering(POLISHED, Duration::from_millis(300)));
     let events = h.dictate();
     assert_eq!(finals(&events).len(), 1);
+    llm.wait_for_call(); // the polish is in flight
     h.engine.cancel_dictation();
     let after = h.events_within(Duration::from_millis(300) + SETTLE);
     assert!(polished(&after).is_empty(), "no on_polished after cancel: {after:?}");
-    assert_eq!(llm.calls().len(), 1, "polish had started");
 }
 
 #[test]
