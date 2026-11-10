@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use bolo_core::{
-    BoloError, DictationState, Engine, EngineConfig, EngineEvents, FormattedOutput, Language, LanguageMode, LlmClient,
-    Polish, TargetContext, WavSource,
+    AudioSource, BoloError, DictationState, Engine, EngineConfig, EngineEvents, FormattedOutput, Language,
+    LanguageMode, LlmClient, Polish, TargetContext, WavSource,
 };
 use bolo_format::llm::{CleanupRequest, LlmError};
 use bolo_stt::{SttEngine, SttOptions, SttStream, Transcript};
@@ -181,26 +181,47 @@ pub struct Reply {
     pub answer: Result<String, String>,
 }
 
-/// An LLM client that answers every polish request with a preset reply and records the
-/// transcripts it was sent.
+/// One polish request the fake LLM received.
+#[derive(Debug, Clone)]
+pub struct Call {
+    pub transcript: String,
+    pub context: Option<String>,
+    pub at: Instant,
+}
+
+type Answer = Box<dyn Fn(&str) -> Reply + Send + Sync>;
+
+/// An LLM client that answers polish requests with preset replies and records the
+/// requests it was sent.
 pub struct FakeLlm {
-    reply: Reply,
-    calls: Mutex<Vec<String>>,
+    reply: Answer,
+    calls: Mutex<Vec<Call>>,
 }
 
 impl FakeLlm {
     /// Answers `text` after `delay`.
     pub fn answering(text: &str, delay: Duration) -> Self {
-        Self { reply: Reply { delay, answer: Ok(text.into()) }, calls: Mutex::default() }
+        let text = text.to_owned();
+        Self::replying(move |_| Reply { delay, answer: Ok(text.clone()) })
     }
 
     /// Fails after `delay`.
     pub fn failing(delay: Duration) -> Self {
-        Self { reply: Reply { delay, answer: Err("fake LLM error".into()) }, calls: Mutex::default() }
+        Self::replying(move |_| Reply { delay, answer: Err("fake LLM error".into()) })
+    }
+
+    /// Answers each request with `reply(transcript)`.
+    pub fn replying(reply: impl Fn(&str) -> Reply + Send + Sync + 'static) -> Self {
+        Self { reply: Box::new(reply), calls: Mutex::default() }
     }
 
     /// Transcripts of every polish request so far.
     pub fn calls(&self) -> Vec<String> {
+        self.log().into_iter().map(|c| c.transcript).collect()
+    }
+
+    /// Every polish request so far, in order.
+    pub fn log(&self) -> Vec<Call> {
         self.calls.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
@@ -218,10 +239,15 @@ impl FakeLlm {
 impl LlmClient for FakeLlm {
     async fn polish(&self, req: &CleanupRequest<'_>, _timeout: Duration) -> Result<String, LlmError> {
         if let Ok(mut g) = self.calls.lock() {
-            g.push(req.transcript.to_owned());
+            g.push(Call {
+                transcript: req.transcript.to_owned(),
+                context: req.context.map(str::to_owned),
+                at: Instant::now(),
+            });
         }
-        tokio::time::sleep(self.reply.delay).await;
-        self.reply.answer.clone().map_err(LlmError::Network)
+        let reply = (self.reply)(req.transcript);
+        tokio::time::sleep(reply.delay).await;
+        reply.answer.map_err(LlmError::Network)
     }
 }
 
@@ -267,6 +293,11 @@ impl EngineEvents for Recorder {
     }
 }
 
+/// `secs` of digital silence.
+pub fn silence(secs: f32) -> Vec<f32> {
+    vec![0.0; (secs * bolo_audio::SAMPLE_RATE as f32) as usize]
+}
+
 /// A 220 Hz tone: something non-silent for the "mic" to replay.
 pub fn tone(secs: f32) -> Vec<f32> {
     let rate = bolo_audio::SAMPLE_RATE as f32;
@@ -308,6 +339,34 @@ impl Harness {
             config(language, polish),
             Box::new(Recorder(Mutex::new(tx))),
             WavSource::factory(Arc::new(tone(AUDIO_SECS))),
+            stt.clone(),
+            llm,
+        )
+        .expect("engine starts with an injected STT engine and LLM client");
+        Self { engine, stt, rx }
+    }
+
+    /// An engine with `polish` going to `llm`, replaying `audio` `speed` times faster
+    /// than real time: long dictations in a test-sized wait.
+    pub fn with_audio(
+        stt: FakeStt,
+        language: LanguageMode,
+        polish: Polish,
+        llm: Arc<FakeLlm>,
+        audio: Vec<f32>,
+        speed: f64,
+    ) -> Self {
+        let (tx, rx) = mpsc::channel();
+        let stt = Arc::new(stt);
+        let audio = Arc::new(audio);
+        let factory: bolo_core::AudioFactory =
+            Arc::new(
+                move || Ok(Box::new(WavSource::with_speed(audio.as_ref().clone(), speed)) as Box<dyn AudioSource>),
+            );
+        let engine = Engine::with_llm_client(
+            config(language, polish),
+            Box::new(Recorder(Mutex::new(tx))),
+            factory,
             stt.clone(),
             llm,
         )

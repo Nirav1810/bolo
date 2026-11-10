@@ -10,7 +10,8 @@
 //!
 //! With [`Polish::On`] the instant text still goes out first; the polished text follows
 //! as `on_polished`, or not at all when polish times out, fails or fails its guard
-//! (ADR-0016).
+//! (ADR-0016). Dictations of [`SEGMENT_AFTER`] or longer are polished a segment at a
+//! time while the user speaks, so release only waits for the last one.
 //!
 //! In the Auto [`LanguageMode`] on an engine with a per-stream language option
 //! (Nemotron), the streaming STT runs twice, forced to English and to Hindi, and one
@@ -33,12 +34,14 @@ use serde::{Deserialize, Serialize};
 pub mod audio;
 mod build;
 mod polish;
+mod segment;
 mod worker;
 
 pub use audio::{AudioFactory, AudioSource, MicSource, WavSource};
 pub use bolo_stt::{HinglishScript, Language};
 pub use build::{BuiltStt, build_one, build_stt};
 pub use polish::{ANTHROPIC, LlmClient, POLISH_DEADLINE, Polish};
+pub use segment::{SEGMENT_AFTER, SEGMENT_PAUSE};
 
 use worker::{Cmd, Worker};
 
@@ -161,7 +164,8 @@ pub trait EngineEvents: Send + Sync {
     fn on_final(&self, out: FormattedOutput);
     /// With [`Polish::On`]: the polished text for the last `on_final`, which it replaces.
     /// Both `plain` and `markdown` hold the polished text, and `timings.llm_ms` is the
-    /// polish call. Never sent when polish timed out, failed or failed its guard, nor
+    /// wait for polish after `on_final`. In a long dictation polished per segment, a
+    /// segment whose polish failed keeps its Layer 1 text in the joined result. Never sent when polish timed out, failed or failed its guard, nor
     /// after `cancel_dictation` or the next `start_dictation`.
     fn on_polished(&self, out: FormattedOutput);
     fn on_error(&self, err: BoloError);

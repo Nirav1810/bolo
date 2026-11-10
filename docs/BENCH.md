@@ -371,3 +371,24 @@ Unit tests cover the observed case (تیم → "team"), plus ٹیم, میٹنگ,
 - Deepgram emitted no Urdu script in this run, so the WER doesn't move because of this ticket. hinglish/14, where "تیم" appeared in §8, came back in Latin ("Team is week ka …"). The cached batch outputs have no Urdu script either. The map is covered by unit and property tests rather than by this sample. Hinglish WER is within live-run noise of §8 (21.0%). The English drop from 9.2% to 12.2% comes from new live misses (en/12, en/13, en/14), not from this change, which leaves Latin text untouched.
 - **New gap:** hinglish/09 ("Ghar ke liye doodh, bread, ande aur sabzi le aana") came back entirely in **Telugu script** (100% WER). `multi` can pick a third script, so a general fix belongs with script handling, not with this map. It's logged as a follow-up.
 
+
+## 17. Per-segment polish on long dictations (M2 ticket 09)
+
+With polish on, a dictation that reaches 20 s is polished one segment at a time while it is still being spoken (ADR-0016). Each pause of 700 ms or more closes a segment. At release only the rest is polished, then the parts are joined.
+
+**How it was measured:** `bolo polish-latency` (2026-11-10). The English clips were chained with 1 s pauses into five dictations of 61–67 s, 106–119 words each. They were played in real time into `local:nemotron-stream` (English), with polish on and live `claude-haiku-5-5`. "Whole text" is release → `on_final` plus one polish call on the same instant text, which is how the dictation would be polished without segments.
+
+| run | audio | release → `on_final` | release → `on_polished`, per segment | release → polished, whole text |
+|---|---|---|---|---|
+| 1 | 67.4 s | 76 ms | 128 ms | 1496 ms |
+| 2 | 61.2 s | 1 ms | 2 ms | 1385 ms |
+| 3 | 63.2 s | 153 ms | 402 ms | 2127 ms |
+| 4 | 65.5 s | 143 ms | 143 ms | 1572 ms |
+| 5 | 67.2 s | 1 ms | 2 ms | 1487 ms |
+| **p50** | | **76 ms** | **128 ms** | **1496 ms** |
+
+- **Per segment, `on_polished` arrives 128 ms p50 after release**, about 50 ms after the instant text. The whole-text polish of 60 s of speech takes 1.4–2.1 s. That is at or over the engine's 1.5 s deadline, so without segments three of the five dictations would have **lost their polish entirely**: runs 1 and 5 came in just under the deadline, and runs 3 and 4 went over it.
+- Each dictation was cut into 5–7 segments (33 in total). All five runs were polished.
+- **Caveat:** each chained dictation ends with its 1 s clip pause plus 300 ms before release. That closes the last segment before release, so in runs 2, 4 and 5 the remaining text was empty and `on_polished` came straight after `on_final`. Someone who releases mid-sentence waits for one short polish call on the last phrase instead: runs 1 and 3 show +50 to +250 ms. That stays far under a whole-text call.
+- One segment call failed with a network error (run 5, first segment). It kept its Layer 1 text, and the rest of that dictation was still polished and joined. This is the fallback the engine tests cover.
+- Release → `on_final` of 1 ms (runs 2 and 5): after a long trailing pause the decoder has nothing left to decode at release.

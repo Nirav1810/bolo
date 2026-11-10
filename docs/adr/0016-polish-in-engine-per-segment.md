@@ -14,6 +14,12 @@ Until now, **polish** was wired up only in the CLI's `dictate` loop. It moves in
 - At release only the last segment is still waiting, so `on_polished` arrives about one short polish call after release.
 - Shorter dictations are polished once, as a whole.
 
+How it is built (M2 ticket 09):
+- When the Silero model isn't installed, a plain energy gate finds the pauses instead, so per-segment polish still works, and the engine tests can run without the model.
+- On a streaming engine, a segment is the shown pass's words since the last segment. If the final text no longer lines up with the segments at release, the segments are dropped and the whole text is polished. That happens when the other Auto pass wins, or when the final has fewer words than were already sent.
+- The previous segment reaches the model in a `<context>` block before the `<transcript>`. The system prompt tells the model never to repeat or change it.
+- A segment whose polish fails keeps its Layer 1 text in the joined result. `on_polished` is skipped only when no part was polished.
+
 A self-correction that spans a pause ("Tuesday … [pause] … actually no, Friday") is not fixed across segments. We accept this: Layer 1 already handles the common case within a segment.
 
 ## Considered Options
