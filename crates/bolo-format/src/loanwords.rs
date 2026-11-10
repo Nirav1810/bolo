@@ -146,6 +146,7 @@ pub fn english_for(devanagari_word: &str) -> Option<&'static str> {
 
 /// Devanagari → Roman Hinglish with English loanwords restored:
 /// "मुझे आज ऑफिस से जल्दी निकलना है" → "mujhe aaj office se jaldi nikalna hai".
+/// Urdu-script words go through the same path ("تیم" → टीम → "team").
 pub fn to_roman_hinglish(text: &str) -> String {
     devanagari_to_roman_with(text, |w| english_for(w).map(str::to_owned))
 }

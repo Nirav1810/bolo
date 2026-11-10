@@ -9,7 +9,7 @@ use anyhow::{Context, Result, anyhow};
 use bolo_format::llm::{self, CleanupRequest, Script};
 use serde::{Deserialize, Serialize};
 
-use crate::metrics::{ErrorCount, cer, contains_devanagari, percentile, wer};
+use crate::metrics::{ErrorCount, cer, percentile, wer};
 
 #[derive(Deserialize)]
 struct Row {
@@ -34,9 +34,14 @@ struct OutRow {
     reference: String,
 }
 
-/// Score text the way the app would show it: romanize any Devanagari first.
+/// Score text the way the app would show it: romanize any Devanagari or Urdu script
+/// first.
 fn romanized(text: &str) -> String {
-    if contains_devanagari(text) { bolo_format::loanwords::to_roman_hinglish(text) } else { text.to_owned() }
+    if bolo_format::translit::needs_romanizing(text) {
+        bolo_format::loanwords::to_roman_hinglish(text)
+    } else {
+        text.to_owned()
+    }
 }
 
 pub async fn run(csv_path: &Path, engines: &[String], out: &Path, aliases: &HashMap<String, String>) -> Result<()> {

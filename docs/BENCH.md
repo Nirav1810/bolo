@@ -88,7 +88,7 @@ Responses are cached in `bench-cache/<engine>/<sha256(audio ‖ options)>.json` 
 
 ## 5. Known limitations and next steps
 
-1. **Devanagari outputs.** Nemotron 3.5, Qwen3-ASR and Deepgram `multi` write Hindi words in Devanagari. `bolo-format` now transliterates them to Roman Hinglish and restores English loanwords (ADR-011), and the bench scores the transliterated output. Deepgram `multi` occasionally uses Urdu script instead, which is not handled yet (M2).
+1. **Devanagari outputs.** Nemotron 3.5, Qwen3-ASR and Deepgram `multi` write Hindi words in Devanagari. `bolo-format` now transliterates them to Roman Hinglish and restores English loanwords (ADR-011), and the bench scores the transliterated output. Deepgram `multi` occasionally uses Urdu script instead. Since M2 ticket 07 that goes through the same path (§16).
 2. **Sarvam `mode=translit` on `saaras:v4`.** The docs contradict each other. The first bench run will show whether the output is Roman.
 3. **RSS isolation.** All engines run in one process, sequentially, and each local model is released after its pass. Allocator retention can inflate later engines' baselines. If the numbers look odd, run one engine per invocation.
 4. **Streaming partials** are measured for cost (RTF) but not for quality. `bolo replay` measures release → text through the live engine (§7, §8), but not time to first partial.
@@ -165,7 +165,7 @@ $B replay -e deepgram
 
 - Streaming cuts release→text by about 1 s at p50. What's left is about one network round trip plus Deepgram's flush of the last audio.
 - Accuracy is within run-to-run noise of batch. Streaming fixes some batch errors (repeated words at segment joins, such as "Traffic Traffic" and "Bro Bro") and adds a few of its own.
-- `multi` sometimes writes a Hindi word in Urdu script ("تیم" for "team"). The Devanagari romanizer doesn't handle it. This affects batch too and belongs to the M2 rules work.
+- `multi` sometimes writes a Hindi word in Urdu script ("تیم" for "team"). This affected batch too. Fixed in M2 ticket 07 (§16).
 - Neither cloud engine reaches the 180 ms local bar from India. Nemotron stays the default, and `deepgram-stream` is the cloud option for the instant path.
 
 ## 9. M1 final numbers
@@ -352,3 +352,22 @@ The rules pipeline now turns an explicit spoken enumeration of three or more ite
 - en/11 is the set's only list. Deepgram writes "First, update the dependencies. Second, run the test. Third, deploy to staging.", and that now comes out as the formatted reference's numbered list. The only remaining error is "test" for "tests" (fmt WER 33% → 8%). Formatted English WER drops 5.5% → 4.3%. Verbatim WER rises 6.5% → 7.6% by design, because the markers are gone.
 - Nemotron doesn't hear the opening "First" ("Update the dependencies second run the test third deploy to staging"). With only two markers the text correctly stays prose, so Nemotron's numbers don't change.
 - **Latency gate:** p95 0.14 ms in a debug build (was 0.12 ms) and 0.03 ms in release, still 7× under the 1 ms budget.
+
+## 16. Urdu script to Roman Hinglish (M2 ticket 07)
+
+`bolo_format::urdu` maps Urdu script to Devanagari, and the result goes through the existing romanizer and loanword lexicon. This happens everywhere Roman-script mode romanizes Devanagari: in the engine (`HinglishScript::Roman`), in the `bolo run` and cleanup scoring, and in the Hinglish detector's function-word count. Because Urdu leaves short vowels unwritten, the map is a best guess, built in three parts:
+- a whole-word table for about 90 frequent Hindi words (ہے → है → "hai", کیا → "kya", بھیج → "bhej");
+- a letter map for everything else (ھ aspirates, ں nasalizes, و and ی become vowels after a consonant);
+- two narrow heuristics for English loanwords: final consonant clusters (ٹیسٹ → "test", دوست → "dost") and a final "-ing" (میٹنگ → "meeting").
+
+Unit tests cover the observed case (تیم → "team"), plus ٹیم, میٹنگ, رپورٹ, پروجیکٹ, ڈاکٹر and 28 common function words. A property test checks that Roman-script output never contains an Arabic-script character. Characters the map doesn't know are dropped, never passed through.
+
+**Re-measured (2026-11-10, `bolo replay -e deepgram-stream --speed 1.25`, 40 clips, `language=multi`, 0 failures):**
+
+| engine | WER en | fmt WER en | WER hinglish | fmt WER hinglish | stop→text p50 / p95 |
+|---|---|---|---|---|---|
+| `deepgram-stream` | 12.2% | 10.9% | 22.8% | 26.3% | 290 / 372 ms |
+
+- Deepgram emitted no Urdu script in this run, so the WER doesn't move because of this ticket. hinglish/14, where "تیم" appeared in §8, came back in Latin ("Team is week ka …"). The cached batch outputs have no Urdu script either. The map is covered by unit and property tests rather than by this sample. Hinglish WER is within live-run noise of §8 (21.0%). The English drop from 9.2% to 12.2% comes from new live misses (en/12, en/13, en/14), not from this change, which leaves Latin text untouched.
+- **New gap:** hinglish/09 ("Ghar ke liye doodh, bread, ande aur sabzi le aana") came back entirely in **Telugu script** (100% WER). `multi` can pick a third script, so a general fix belongs with script handling, not with this map. It's logged as a follow-up.
+

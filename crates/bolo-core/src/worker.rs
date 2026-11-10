@@ -375,7 +375,7 @@ impl Worker {
     }
 
     fn romanize(&self, text: &str) -> String {
-        if self.config.script == HinglishScript::Roman && bolo_format::translit::has_devanagari(text) {
+        if self.config.script == HinglishScript::Roman && bolo_format::translit::needs_romanizing(text) {
             bolo_format::loanwords::to_roman_hinglish(text)
         } else {
             text.to_owned()
