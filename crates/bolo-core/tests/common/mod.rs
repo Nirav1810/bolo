@@ -246,7 +246,12 @@ impl Harness {
 
     /// Start a dictation and let the whole waveform play into it.
     pub fn start_and_speak(&self) {
-        self.engine.start_dictation(TargetContext::default()).expect("start_dictation");
+        self.start_and_speak_into(TargetContext::default());
+    }
+
+    /// [`Self::start_and_speak`] for a given target app.
+    pub fn start_and_speak_into(&self, target: TargetContext) {
+        self.engine.start_dictation(target).expect("start_dictation");
         std::thread::sleep(Duration::from_secs_f32(AUDIO_SECS + 0.1));
     }
 
@@ -286,7 +291,12 @@ impl Harness {
 
     /// One complete dictation: start, speak, stop. Returns every event it produced.
     pub fn dictate(&self) -> Vec<Ev> {
-        self.start_and_speak();
+        self.dictate_into(TargetContext::default())
+    }
+
+    /// One complete dictation into a given target app.
+    pub fn dictate_into(&self, target: TargetContext) -> Vec<Ev> {
+        self.start_and_speak_into(target);
         self.engine.stop_dictation().expect("stop_dictation");
         self.events_until_idle()
     }

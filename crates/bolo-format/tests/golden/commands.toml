@@ -1,0 +1,96 @@
+# Spoken layout commands (ADR-0015): "new line" and "new paragraph", plus the Hinglish
+# forms. Spoken punctuation is not a command.
+
+[[case]]
+note = "new line breaks the line and the next line starts with a capital"
+input = "hi rahul new line thanks for the update"
+expected = "Hi rahul\nThanks for the update."
+
+[[case]]
+note = "new paragraph leaves a blank line"
+input = "See you tomorrow. New paragraph. Regards, Nirav."
+expected = "See you tomorrow.\n\nRegards, Nirav."
+
+[[case]]
+note = "the engine's punctuation around the command goes, a sentence end before it stays"
+input = "Hello. New line. How are you?"
+expected = "Hello.\nHow are you?"
+
+[[case]]
+note = "a comma before the command goes"
+input = "Hello, new line, how are you?"
+expected = "Hello\nHow are you?"
+
+[[case]]
+note = "the command is matched in any case"
+input = "First point NEW LINE second point"
+expected = "First point\nSecond point."
+
+[[case]]
+note = "newline as one word is a command"
+input = "item one newline item two"
+expected = "Item one\nItem two."
+
+[[case]]
+note = "two commands in a row merge, and the paragraph wins"
+input = "Thanks. New line. New paragraph. Bye."
+expected = "Thanks.\n\nBye."
+
+[[case]]
+note = "a command at the end keeps the break, so the next dictation starts on a new line"
+input = "Thanks new line"
+expected = "Thanks\n"
+
+[[case]]
+note = "a command at the start keeps the break"
+input = "New paragraph regards"
+expected = "\n\nRegards."
+
+[[case]]
+note = "a command on its own is just the break"
+input = "new line"
+expected = "\n"
+
+[[case]]
+note = "Hinglish nayi line"
+language = "hinglish"
+input = "kal milte hain nayi line agenda bhej dena"
+expected = "Kal milte hain\nAgenda bhej dena."
+
+[[case]]
+note = "Hinglish nai line spelling"
+language = "hinglish"
+input = "theek hai nai line bye"
+expected = "Theek hai\nBye."
+
+[[case]]
+note = "Hinglish naya paragraph"
+language = "hinglish"
+input = "sab theek hai naya paragraph baaki kal"
+expected = "Sab theek hai\n\nBaaki kal."
+
+[[case]]
+note = "a new line after an article is a noun phrase, not a command"
+input = "we are launching a new line of products"
+expected = "We are launching a new line of products."
+
+[[case]]
+note = "new line before of is a noun phrase, not a command"
+input = "launch new line of shoes"
+expected = "Launch new line of shoes."
+
+[[case]]
+note = "the new paragraph after a determiner is kept"
+input = "add this new paragraph to the doc"
+expected = "Add this new paragraph to the doc."
+
+[[case]]
+note = "Hinglish ek nayi line is a noun phrase"
+language = "hinglish"
+input = "ek nayi line add karo"
+expected = "Ek nayi line add karo."
+
+[[case]]
+note = "comma and full stop are not commands"
+input = "the comma goes before the full stop"
+expected = "The comma goes before the full stop."

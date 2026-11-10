@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow, bail};
+use bolo_format::rules::{self, FormatContext};
 use bolo_models::{Manifest, ModelStatus, Platform};
 use bolo_stt::cloud::{self, DeepgramEngine, GroqEngine, SarvamEngine};
 use bolo_stt::local::LocalEngine;
@@ -187,6 +188,15 @@ impl From<ModeArg> for bolo_core::LanguageMode {
             ModeArg::En => Self::English,
             ModeArg::Hi => Self::Hinglish,
         }
+    }
+}
+
+/// The rules pipeline's language for one STT request's output, as the engine picks it.
+fn rules_language(requested: Language, raw: &str) -> rules::Language {
+    match requested {
+        Language::En => rules::Language::English,
+        Language::Hi => rules::Language::Hinglish,
+        Language::Auto => rules::Language::of_engine_output(raw),
     }
 }
 
@@ -508,7 +518,8 @@ struct ClipRow {
     devanagari: bool,
     cached: bool,
     hypothesis: String,
-    /// Romanized hypothesis actually scored (only when the engine emitted Devanagari).
+    /// The hypothesis actually scored: romanized when the engine emitted Devanagari,
+    /// then formatted by the Layer 1 rules.
     hypothesis_scored: String,
     /// With `--polish`: the polished text.
     polished: String,
@@ -600,11 +611,14 @@ async fn run(args: RunArgs, manifest: &Manifest, models_dir: &Path) -> Result<()
             // Devanagari output vs a Roman reference: score the transliteration (this is
             // what a Roman-Hinglish user would get from the app's translit pass).
             let dev = contains_devanagari(&text);
-            let scored = if dev && !contains_devanagari(&clip.reference) {
+            let romanized = if dev && !contains_devanagari(&clip.reference) {
                 bolo_format::loanwords::to_roman_hinglish(&text)
             } else {
                 text.clone()
             };
+            // Layer 1 rules, as the engine applies them to a final (plain target), so
+            // both WERs and polish see what the user would get.
+            let scored = rules::apply(romanized.trim(), rules_language(opts.language, &text), FormatContext::plain());
             let polished = match polisher.as_mut() {
                 Some(p) => Some(p.polish(&scored).await),
                 None => None,
@@ -639,7 +653,7 @@ async fn run(args: RunArgs, manifest: &Manifest, models_dir: &Path) -> Result<()
                 cer: c.rate(),
                 devanagari: dev,
                 cached,
-                hypothesis_scored: if dev { scored } else { String::new() },
+                hypothesis_scored: scored,
                 hypothesis: text,
                 polished: polished.unwrap_or_default(),
                 reference: clip.reference.clone(),

@@ -1,0 +1,18 @@
+# Whole-pipeline cases: several passes on one dictation. Passes added later (fillers,
+# corrections, numbers, lists) add their combined cases here.
+
+[[case]]
+note = "a short message with commands, i and loose punctuation"
+input = "hi team , new line i will be late today new paragraph thanks"
+expected = "Hi team\nI will be late today\n\nThanks."
+
+[[case]]
+note = "a Hinglish message with a command"
+language = "hinglish"
+input = "kal meeting hai na , nayi line agenda bhej dena please"
+expected = "Kal meeting hai na\nAgenda bhej dena please."
+
+[[case]]
+note = "already-finished engine output passes through unchanged"
+input = "Can you send me the report by Friday? I need it for the review."
+expected = "Can you send me the report by Friday? I need it for the review."

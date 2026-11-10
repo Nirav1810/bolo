@@ -1,0 +1,166 @@
+# Punctuation fix-ups (ADR-0015): sentence-start capitals, a final period, a capital
+# "I", spacing and no doubled punctuation. The pass never adds commas.
+
+[[case]]
+note = "already-finished text is left alone"
+input = "Sounds good, see you tomorrow."
+expected = "Sounds good, see you tomorrow."
+
+[[case]]
+note = "unpunctuated engine output gets a capital and a final period"
+input = "please send the report"
+expected = "Please send the report."
+
+[[case]]
+note = "no commas are added"
+input = "hi rahul can you send me the deck"
+expected = "Hi rahul can you send me the deck."
+
+[[case]]
+note = "a question mark or exclamation mark is a final mark"
+input = "can you make it?"
+expected = "Can you make it?"
+
+[[case]]
+note = "exclamation at the end is kept"
+input = "that's great!"
+expected = "That's great!"
+
+[[case]]
+note = "every sentence starts with a capital"
+input = "thanks. that works for me! see you then? sure."
+expected = "Thanks. That works for me! See you then? Sure."
+
+[[case]]
+note = "a trailing comma becomes the final period"
+input = "see you tomorrow,"
+expected = "See you tomorrow."
+
+[[case]]
+note = "a trailing semicolon becomes the final period"
+input = "see you tomorrow;"
+expected = "See you tomorrow."
+
+[[case]]
+note = "standalone i is capitalized"
+input = "i think i can do it"
+expected = "I think I can do it."
+
+[[case]]
+note = "i in contractions is capitalized"
+input = "Yes i'm sure i'll be there and i've told them i'd come."
+expected = "Yes I'm sure I'll be there and I've told them I'd come."
+
+[[case]]
+note = "i with a curly apostrophe is capitalized"
+input = "Ok i’m on my way."
+expected = "Ok I’m on my way."
+
+[[case]]
+note = "i inside a word is not touched"
+input = "It is in the inbox."
+expected = "It is in the inbox."
+
+[[case]]
+note = "space before punctuation is removed"
+input = "Hello , how are you ?"
+expected = "Hello, how are you?"
+
+[[case]]
+note = "repeated spaces collapse"
+input = "Hello   there.   How are   you?"
+expected = "Hello there. How are you?"
+
+[[case]]
+note = "a comma stuck to the next word moves back"
+input = "Hello ,there."
+expected = "Hello, there."
+
+[[case]]
+note = "doubled commas collapse"
+input = "Yes,, that works."
+expected = "Yes, that works."
+
+[[case]]
+note = "doubled periods collapse"
+input = "Done.. See you."
+expected = "Done. See you."
+
+[[case]]
+note = "a comma next to a period keeps the period"
+input = "Okay,. See you."
+expected = "Okay. See you."
+
+[[case]]
+note = "a question mark beats a period"
+input = "Are you coming?."
+expected = "Are you coming?"
+
+[[case]]
+note = "an ellipsis is kept and does not start a sentence"
+input = "I was thinking... maybe tomorrow."
+expected = "I was thinking... maybe tomorrow."
+
+[[case]]
+note = "an ellipsis at the end is a final mark"
+input = "Well..."
+expected = "Well..."
+
+[[case]]
+note = "punctuation at the very start is dropped"
+input = ", and then we left."
+expected = "And then we left."
+
+[[case]]
+note = "times, decimals and thousands keep their inner punctuation"
+input = "meet at 5:30, it costs 3.5 lakh or 1,000 dollars"
+expected = "Meet at 5:30, it costs 3.5 lakh or 1,000 dollars."
+
+[[case]]
+note = "a URL at the start of a sentence is not capitalized"
+input = "example.com is down"
+expected = "example.com is down."
+
+[[case]]
+note = "an email address is not capitalized"
+input = "Write to me. rahul@example.com works"
+expected = "Write to me. rahul@example.com works."
+
+[[case]]
+note = "a mixed-case brand name is not capitalized"
+input = "iPhone is charging"
+expected = "iPhone is charging."
+
+[[case]]
+note = "acronyms stay as they are"
+input = "send the PDF to the CEO"
+expected = "Send the PDF to the CEO."
+
+[[case]]
+note = "comma and full stop spoken as words stay words"
+input = "put a comma after the name and a full stop at the end"
+expected = "Put a comma after the name and a full stop at the end."
+
+[[case]]
+note = "Roman Hinglish gets the same fix-ups"
+language = "hinglish"
+input = "kal meeting hai na. agenda bhej dena"
+expected = "Kal meeting hai na. Agenda bhej dena."
+
+[[case]]
+note = "Devanagari text ends with a danda, not a period"
+language = "hinglish"
+input = "कल मीटिंग है"
+expected = "कल मीटिंग है।"
+
+[[case]]
+note = "a danda already at the end is kept"
+language = "hinglish"
+input = "कल मीटिंग है।"
+expected = "कल मीटिंग है।"
+
+[[case]]
+note = "Markdown gets the same fix-ups as plain"
+format = "markdown"
+input = "thanks , see you"
+expected = "Thanks, see you."

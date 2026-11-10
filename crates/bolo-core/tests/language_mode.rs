@@ -5,11 +5,22 @@ mod common;
 
 use bolo_core::{Language, LanguageMode};
 use bolo_format::loanwords::to_roman_hinglish;
+use bolo_format::rules::{self, FormatContext};
 use common::{FakeStt, Harness, errors, finals, partials};
 
-/// Text as the engine inserts it: Devanagari romanized, English untouched.
+/// A partial as the engine shows it: Devanagari romanized, English untouched.
 fn roman(devanagari: &str) -> String {
     to_roman_hinglish(devanagari)
+}
+
+/// A final as the engine inserts it into a plain target: romanized, then the Layer 1
+/// rules.
+fn inserted(text: &str, language: rules::Language) -> String {
+    rules::apply(&roman(text), language, FormatContext::plain())
+}
+
+fn hinglish(text: &str) -> String {
+    inserted(text, rules::Language::Hinglish)
 }
 
 const EN_FINAL: &str = "Please send the report.";
@@ -61,7 +72,7 @@ fn auto_chooses_english_for_english_text() {
 #[test]
 fn auto_chooses_hinglish_for_hindi_function_words() {
     let h = harness(LanguageMode::Auto, script_hinglish);
-    assert_eq!(dictate(&h), (roman(HI_FINAL), LanguageMode::Hinglish));
+    assert_eq!(dictate(&h), (hinglish(HI_FINAL), LanguageMode::Hinglish));
 }
 
 #[test]
@@ -76,7 +87,7 @@ fn an_ambiguous_dictation_reuses_the_previous_language() {
     assert_eq!(dictate(&h).1, LanguageMode::Hinglish);
 
     script_ambiguous(&h.stt);
-    assert_eq!(dictate(&h), (roman("ओके"), LanguageMode::Hinglish));
+    assert_eq!(dictate(&h), (hinglish("ओके"), LanguageMode::Hinglish));
     assert_eq!(dictate(&h).1, LanguageMode::Hinglish, "still Hinglish: ambiguous keeps the language");
 
     script_english(&h.stt);
@@ -95,21 +106,21 @@ fn auto_decides_on_the_final_text_when_the_preview_was_ambiguous() {
     let events = h.dictate();
     assert_eq!(partials(&events), ["Call"], "the preview stayed on English");
     let finals = finals(&events);
-    assert_eq!((finals[0].plain.as_str(), finals[0].language), (roman(HI_FINAL).as_str(), LanguageMode::Hinglish));
+    assert_eq!((finals[0].plain.as_str(), finals[0].language), (hinglish(HI_FINAL).as_str(), LanguageMode::Hinglish));
 }
 
 #[test]
 fn forced_english_never_runs_a_second_pass() {
     // Even on Hinglish speech: the mode is pinned, so nothing is detected.
     let h = harness(LanguageMode::English, script_hinglish);
-    assert_eq!(dictate(&h), (HI_AS_EN.to_owned(), LanguageMode::English));
+    assert_eq!(dictate(&h), (inserted(HI_AS_EN, rules::Language::English), LanguageMode::English));
     assert_eq!(h.stt.opened(), [Language::En]);
 }
 
 #[test]
 fn forced_hinglish_never_runs_a_second_pass() {
     let h = harness(LanguageMode::Hinglish, script_english);
-    assert_eq!(dictate(&h), (roman(EN_AS_HI), LanguageMode::Hinglish));
+    assert_eq!(dictate(&h), (hinglish(EN_AS_HI), LanguageMode::Hinglish));
     assert_eq!(h.stt.opened(), [Language::Hi]);
 }
 
