@@ -12,13 +12,13 @@ publish.workspace = true
 bolo-audio = { workspace = true, features = ["capture"] }
 bolo-stt = { workspace = true }
 bolo-models = { workspace = true }
-bolo-format = { workspace = true }
+bolo-format = { workspace = true, features = ["llm"] }
 serde = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync"] }
+async-trait = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
-async-trait = { workspace = true }

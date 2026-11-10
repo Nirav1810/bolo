@@ -5,7 +5,12 @@
 //! start_dictation ─► mic (warm or opened) ─► 16 kHz ─┬─► streaming STT (partials) ─┐
 //!                                                     └─► VAD ─► per-segment batch STT ┤
 //! stop_dictation ─► flush last chunk / segment ─► Layer 1 (romanize, rules) ─► on_final ◄┘
+//!                                                       polish on ─► LLM (1.5 s) ─► on_polished
 //! ```
+//!
+//! With [`Polish::On`] the instant text still goes out first; the polished text follows
+//! as `on_polished`, or not at all when polish times out, fails or fails its guard
+//! (ADR-0016).
 //!
 //! In the Auto [`LanguageMode`] on an engine with a per-stream language option
 //! (Nemotron), the streaming STT runs twice, forced to English and to Hindi, and one
@@ -27,11 +32,13 @@ use serde::{Deserialize, Serialize};
 
 pub mod audio;
 mod build;
+mod polish;
 mod worker;
 
 pub use audio::{AudioFactory, AudioSource, MicSource, WavSource};
 pub use bolo_stt::{HinglishScript, Language};
 pub use build::{BuiltStt, build_one, build_stt};
+pub use polish::{ANTHROPIC, LlmClient, POLISH_DEADLINE, Polish};
 
 use worker::{Cmd, Worker};
 
@@ -109,7 +116,7 @@ pub struct Timings {
     pub stt_ms: f64,
     /// Layer 1: romanization and the rules pipeline (`bolo_format::rules`).
     pub rules_ms: f64,
-    /// 0 when the LLM layer was skipped.
+    /// The polish call; 0 in `on_final` and whenever polish was skipped.
     pub llm_ms: f64,
     pub format_ms: f64,
     /// Stop → output ready for insertion.
@@ -144,13 +151,19 @@ pub enum BoloError {
     Stopped,
 }
 
-/// Callbacks into the host app, called from the engine thread. Implementations must be
-/// cheap and non-blocking: post to the UI thread.
+/// Callbacks into the host app, called from the engine's threads. Implementations must
+/// be cheap and non-blocking: post to the UI thread.
 pub trait EngineEvents: Send + Sync {
     /// Input level for the waveform UI, ~30 Hz while listening.
     fn on_level(&self, rms: f32);
     fn on_partial(&self, text: String);
+    /// The instant text (Layer 1), as soon as recognition finishes.
     fn on_final(&self, out: FormattedOutput);
+    /// With [`Polish::On`]: the polished text for the last `on_final`, which it replaces.
+    /// Both `plain` and `markdown` hold the polished text, and `timings.llm_ms` is the
+    /// polish call. Never sent when polish timed out, failed or failed its guard, nor
+    /// after `cancel_dictation` or the next `start_dictation`.
+    fn on_polished(&self, out: FormattedOutput);
     fn on_error(&self, err: BoloError);
     fn on_state(&self, state: DictationState);
 }
@@ -195,6 +208,9 @@ pub struct EngineConfig {
     pub models_dir: PathBuf,
     /// Inference threads for local models (default min(4, cores)).
     pub threads: Option<i32>,
+    /// LLM polish after the instant text. `On` needs the `anthropic` key in `api_keys`.
+    #[serde(default)]
+    pub polish: Polish,
     #[serde(skip)]
     pub api_keys: ApiKeys,
 }
@@ -210,6 +226,7 @@ impl Default for EngineConfig {
             mic_warm_secs: 120,
             models_dir: PathBuf::new(),
             threads: None,
+            polish: Polish::Off,
             api_keys: ApiKeys::default(),
         }
     }
@@ -239,7 +256,7 @@ impl Engine {
         events: Box<dyn EngineEvents>,
         factory: AudioFactory,
     ) -> Result<Self, BoloError> {
-        Self::spawn(config, events, factory, None)
+        Self::spawn(config, events, factory, None, None)
     }
 
     /// Engine on a custom audio source and an injected STT engine, which replaces the one
@@ -251,7 +268,19 @@ impl Engine {
         factory: AudioFactory,
         stt: Arc<dyn bolo_stt::SttEngine>,
     ) -> Result<Self, BoloError> {
-        Self::spawn(config, events, factory, Some(stt))
+        Self::spawn(config, events, factory, Some(stt), None)
+    }
+
+    /// [`Self::with_stt_engine`] plus an injected LLM client for polish, used instead of
+    /// Claude (no `anthropic` key needed). For tests of polish with no network.
+    pub fn with_llm_client(
+        config: EngineConfig,
+        events: Box<dyn EngineEvents>,
+        factory: AudioFactory,
+        stt: Arc<dyn bolo_stt::SttEngine>,
+        llm: Arc<dyn LlmClient>,
+    ) -> Result<Self, BoloError> {
+        Self::spawn(config, events, factory, Some(stt), Some(llm))
     }
 
     fn spawn(
@@ -259,6 +288,7 @@ impl Engine {
         events: Box<dyn EngineEvents>,
         factory: AudioFactory,
         injected_stt: Option<Arc<dyn bolo_stt::SttEngine>>,
+        injected_llm: Option<Arc<dyn LlmClient>>,
     ) -> Result<Self, BoloError> {
         let state = Arc::new(Mutex::new(DictationState::Idle));
         let (tx, rx) = mpsc::channel();
@@ -268,7 +298,7 @@ impl Engine {
         // device handles are not guaranteed to be `Send`.
         let thread = std::thread::Builder::new()
             .name("bolo-engine".into())
-            .spawn(move || match Worker::new(config, Arc::from(events), st, factory, injected_stt) {
+            .spawn(move || match Worker::new(config, Arc::from(events), st, factory, injected_stt, injected_llm) {
                 Ok(worker) => {
                     let _ = ready_tx.send(Ok(()));
                     worker.run(rx);
@@ -298,11 +328,13 @@ impl Engine {
         rx.recv().map_err(|_| BoloError::Stopped)?
     }
 
-    /// Finish; the result arrives via `on_final` (or `on_error`).
+    /// Finish; the result arrives via `on_final` (or `on_error`), then `on_polished`
+    /// when polish is on and succeeds.
     pub fn stop_dictation(&self) -> Result<(), BoloError> {
         self.send(Cmd::Stop(std::time::Instant::now()))
     }
 
+    /// Drop the dictation in progress, or the polish still running for the last one.
     pub fn cancel_dictation(&self) {
         let _ = self.send(Cmd::Cancel);
     }

@@ -83,8 +83,8 @@ enum Cmd {
         /// dictation (on engines that support it); `en` and `hi` force one language.
         #[arg(long, value_enum, default_value = "auto")]
         lang: ModeArg,
-        /// After the instant text is on the clipboard, run the Claude polish and replace
-        /// it (needs ANTHROPIC_API_KEY).
+        /// Turn on the engine's Claude polish: the polished text replaces the instant
+        /// text on the clipboard when it arrives within 1.5 s (needs ANTHROPIC_API_KEY).
         #[arg(long)]
         polish: bool,
     },
@@ -355,7 +355,7 @@ pub(crate) fn env_nonempty(var: &str) -> Option<String> {
 /// API keys for the engine from `<PROVIDER>_API_KEY` variables. Never printed.
 pub(crate) fn api_keys_from_env() -> bolo_core::ApiKeys {
     let mut keys = bolo_core::ApiKeys::default();
-    for p in ["deepgram", "groq", "sarvam"] {
+    for p in ["deepgram", "groq", "sarvam", bolo_core::ANTHROPIC] {
         if let Some(k) = env_nonempty(&format!("{}_API_KEY", p.to_uppercase())) {
             keys.set(p, k);
         }

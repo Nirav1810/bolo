@@ -35,6 +35,8 @@ impl EngineEvents for Events {
             let _ = tx.send(Ev::Final(out));
         }
     }
+    /// The bench polishes with its own [`Polisher`] (longer deadline, cost tally).
+    fn on_polished(&self, _: FormattedOutput) {}
     fn on_error(&self, err: BoloError) {
         if let Ok(tx) = self.0.lock() {
             let _ = tx.send(Ev::Error(err));

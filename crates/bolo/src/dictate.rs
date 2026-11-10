@@ -6,8 +6,9 @@
 //!
 //! - Press Enter to start a dictation and Enter again to stop it (`c` + Enter cancels).
 //! - Partials show live. The final text goes to the clipboard, ready to paste.
-//! - `--polish` runs the Claude rewrite only after the instant text is on the clipboard,
-//!   then replaces it (ADR-012). Each result is shown with its own latency.
+//! - `--polish` turns on the engine's polish (ADR-0016): the instant text goes to the
+//!   clipboard first, and the polished text replaces it when `on_polished` arrives.
+//!   Each result is shown with its own latency.
 
 use std::io::Write;
 use std::path::Path;
@@ -15,9 +16,10 @@ use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use bolo_core::{
-    BoloError, DictationState, Engine, EngineConfig, EngineEvents, FormattedOutput, LanguageMode, TargetContext,
+    BoloError, DictationState, Engine, EngineConfig, EngineEvents, FormattedOutput, LanguageMode, POLISH_DEADLINE,
+    Polish, TargetContext,
 };
 use bolo_models::Manifest;
 
@@ -25,13 +27,15 @@ use crate::record::{Key, meter, stdin_lines};
 
 /// How long to wait for the final text after stopping before giving up.
 const FINAL_TIMEOUT: Duration = Duration::from_secs(20);
-/// Polish's hard deadline. The app uses 1.5 s; the terminal shows the latency anyway.
-const POLISH_TIMEOUT: Duration = Duration::from_millis(3000);
+/// How long after the instant text to wait for `on_polished`: the engine's deadline
+/// plus a margin for the event to arrive.
+const POLISH_WAIT: Duration = POLISH_DEADLINE.saturating_add(Duration::from_millis(250));
 
 enum Ev {
     Level(f32),
     Partial(String),
     Final(FormattedOutput),
+    Polished(FormattedOutput),
     Error(BoloError),
 }
 
@@ -55,6 +59,9 @@ impl EngineEvents for Events {
     }
     fn on_final(&self, out: FormattedOutput) {
         self.send(Ev::Final(out));
+    }
+    fn on_polished(&self, out: FormattedOutput) {
+        self.send(Ev::Polished(out));
     }
     fn on_error(&self, err: BoloError) {
         self.send(Ev::Error(err));
@@ -90,11 +97,20 @@ pub async fn run(
     polish: bool,
 ) -> Result<()> {
     let spec = engine_spec(engine_arg);
+    let api_keys = crate::api_keys_from_env();
+    if polish && api_keys.get(bolo_core::ANTHROPIC).is_none() {
+        return Err(anyhow!("--polish needs ANTHROPIC_API_KEY in .env"));
+    }
     let config = EngineConfig {
         engines: vec![spec.clone()],
         language,
         models_dir: models_dir.to_path_buf(),
-        api_keys: crate::api_keys_from_env(),
+        api_keys,
+        polish: if polish {
+            Polish::On { tone: "neutral".into(), app: "Notes".into(), dictionary: Vec::new() }
+        } else {
+            Polish::Off
+        },
         ..Default::default()
     };
     // Fail now, with a useful message, rather than on the first Enter. Building does not
@@ -109,13 +125,6 @@ pub async fn run(
             other => anyhow!("{other}"),
         });
     }
-    let anthropic = if polish {
-        let k = crate::env_nonempty("ANTHROPIC_API_KEY").context("--polish needs ANTHROPIC_API_KEY in .env")?;
-        Some((k, bolo_stt::cloud::http_client()?))
-    } else {
-        None
-    };
-
     let (tx, events) = mpsc::channel();
     let engine = Engine::new(config, Box::new(Events(Mutex::new(tx))))?;
     engine.prewarm(); // load the model in the background while the prompt is up
@@ -179,21 +188,19 @@ pub async fn run(
             out.timings.total_ms,
             if copied { " · copied to clipboard, paste with Ctrl+V" } else { "" }
         );
-        if let Some((key, client)) = &anthropic {
-            let req = bolo_format::llm::CleanupRequest {
-                transcript: &out.plain,
-                script: bolo_format::llm::Script::Roman,
-                tone: "neutral",
-                app: "Notes",
-                dictionary: &[],
-            };
-            match bolo_format::llm::cleanup(client, key, &req, POLISH_TIMEOUT).await {
-                Ok(r) => {
-                    let copied = clipboard.as_mut().is_some_and(|c| c.set_text(r.text.clone()).is_ok());
-                    println!("  ✨ {}", r.text);
-                    println!("  [polish +{:.0} ms{}]", r.latency_ms, if copied { " · clipboard updated" } else { "" });
+        if polish {
+            match wait_polished(&events) {
+                Some(p) => {
+                    let copied = clipboard.as_mut().is_some_and(|c| c.set_text(p.plain.clone()).is_ok());
+                    println!("  ✨ {}", p.plain);
+                    println!(
+                        "  [polish +{:.0} ms{}]",
+                        p.timings.llm_ms,
+                        if copied { " · clipboard updated" } else { "" }
+                    );
                 }
-                Err(e) => println!("  (polish skipped, instant text kept: {e})"),
+                // The engine logs why (timeout, error or guard) as a warning.
+                None => println!("  (polish skipped, instant text kept)"),
             }
         }
         if stopped == Stop::Quit {
@@ -221,7 +228,7 @@ fn listen(keys: &Receiver<Key>, events: &Receiver<Ev>) -> Result<Option<Stop>> {
                 Ev::Level(l) => level = l,
                 Ev::Partial(p) => shown = p,
                 Ev::Error(e) => println!("\n  (engine: {e})"),
-                Ev::Final(_) => {}
+                Ev::Final(_) | Ev::Polished(_) => {}
             }
         }
         print!(
@@ -251,9 +258,23 @@ fn wait_final(events: &Receiver<Ev>) -> Result<Result<FormattedOutput, BoloError
         match events.recv_timeout(left) {
             Ok(Ev::Final(o)) => return Ok(Ok(o)),
             Ok(Ev::Error(e)) => return Ok(Err(e)),
-            Ok(Ev::Level(_) | Ev::Partial(_)) => {}
+            Ok(Ev::Level(_) | Ev::Partial(_) | Ev::Polished(_)) => {}
             Err(RecvTimeoutError::Timeout) => return Err(anyhow!("no result {FINAL_TIMEOUT:?} after stopping")),
             Err(RecvTimeoutError::Disconnected) => return Err(anyhow!("the engine stopped")),
+        }
+    }
+}
+
+/// The polished text for the dictation just finished, or `None` when the engine
+/// skipped polish (it sends nothing then).
+fn wait_polished(events: &Receiver<Ev>) -> Option<FormattedOutput> {
+    let deadline = Instant::now() + POLISH_WAIT;
+    loop {
+        match events.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(Ev::Polished(p)) => return Some(p),
+            Ok(Ev::Error(e)) => println!("  (engine: {e})"),
+            Ok(_) => {}
+            Err(_) => return None,
         }
     }
 }
