@@ -7,6 +7,7 @@ mod cache;
 mod cleanup;
 mod dictate;
 mod metrics;
+mod polish;
 mod record;
 mod replay;
 mod rss;
@@ -25,7 +26,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
 use crate::cache::{Cache, Cached};
-use crate::metrics::{ErrorCount, cer, contains_devanagari, percentile, wer};
+use crate::metrics::{ErrorCount, WerSet, cer, contains_devanagari, percentile};
 
 #[derive(Parser)]
 #[command(
@@ -115,6 +116,13 @@ enum Cmd {
         clips: PathBuf,
         #[arg(long, default_value_t = usize::MAX)]
         limit: usize,
+        /// Also polish each output with Claude and score it (needs ANTHROPIC_API_KEY;
+        /// costs money). Without it no LLM calls are made.
+        #[arg(long)]
+        polish: bool,
+        /// Output folder for replay.csv and summary.md.
+        #[arg(long, default_value = "bench-results/replay")]
+        out: PathBuf,
     },
     /// Measure microphone start-up delay (leading digital silence).
     MicTest,
@@ -150,6 +158,10 @@ struct RunArgs {
     /// Inference threads for local engines (default min(4, cores)).
     #[arg(long)]
     threads: Option<i32>,
+    /// Also polish each output with Claude and score it (needs ANTHROPIC_API_KEY; costs
+    /// money). Without it no LLM calls are made.
+    #[arg(long)]
+    polish: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum, PartialEq)]
@@ -283,7 +295,7 @@ async fn main() -> Result<()> {
         Cmd::CleanupEval { csv, engines, out, clips } => {
             cleanup::run(&csv, &engines, &out, &load_aliases(&clips)).await?;
         }
-        Cmd::Replay { engine, lang, speed, clips, limit } => {
+        Cmd::Replay { engine, lang, speed, clips, limit, polish, out } => {
             if !(speed.is_finite() && speed > 0.0) {
                 bail!("--speed must be a positive number");
             }
@@ -292,8 +304,10 @@ async fn main() -> Result<()> {
                 bail!("deepgram-stream takes audio at up to 1.25x real time; use --speed 1");
             }
             let aliases = load_aliases(&clips);
+            let mut polisher = if polish { Some(polish::Polisher::from_env()?) } else { None };
+            let opts = replay::Options { language: lang.into(), speed, limit, out: &out };
             tokio::task::block_in_place(|| {
-                replay::run(&engine, lang.into(), speed, &clips, &models_dir, &aliases, limit)
+                replay::run(&engine, &opts, &clips, &models_dir, &aliases, polisher.as_mut())
             })?;
         }
         Cmd::MicTest => record::mic_test()?,
@@ -409,11 +423,27 @@ pub(crate) struct Clip {
     name: String,
     category: String,
     audio: Vec<f32>,
+    /// What was said, word for word (`<name>.txt`).
     reference: String,
+    /// What the user would send (`<name>.formatted.txt`); the verbatim reference when
+    /// the clip has none.
+    formatted: String,
+}
+
+/// The suffix of a clip's formatted reference, next to `<name>.txt`.
+const FORMATTED_SUFFIX: &str = ".formatted.txt";
+
+/// A clip's verbatim reference and, if it has one, its formatted reference.
+fn read_references(wav: &Path) -> Option<(String, Option<String>)> {
+    let verbatim = std::fs::read_to_string(wav.with_extension("txt")).ok()?;
+    let stem = wav.file_stem()?.to_string_lossy();
+    let formatted = std::fs::read_to_string(wav.with_file_name(format!("{stem}{FORMATTED_SUFFIX}"))).ok();
+    Some((verbatim.trim().to_owned(), formatted.map(|f| f.trim().to_owned())))
 }
 
 pub(crate) fn load_clips(dir: &Path) -> Result<Vec<Clip>> {
     let mut out = Vec::new();
+    let mut unformatted = 0;
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
         for e in std::fs::read_dir(&d).with_context(|| format!("reading {}", d.display()))? {
@@ -421,11 +451,11 @@ pub(crate) fn load_clips(dir: &Path) -> Result<Vec<Clip>> {
             if p.is_dir() {
                 stack.push(p);
             } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("wav")) {
-                let txt = p.with_extension("txt");
-                let Ok(reference) = std::fs::read_to_string(&txt) else {
-                    eprintln!("skipping {} (no {})", p.display(), txt.display());
+                let Some((reference, formatted)) = read_references(&p) else {
+                    eprintln!("skipping {} (no {})", p.display(), p.with_extension("txt").display());
                     continue;
                 };
+                unformatted += usize::from(formatted.is_none());
                 let category = p
                     .parent()
                     .and_then(|x| x.file_name())
@@ -436,10 +466,14 @@ pub(crate) fn load_clips(dir: &Path) -> Result<Vec<Clip>> {
                     name,
                     category,
                     audio: bolo_audio::codec::read_wav_16k_mono(&p)?,
-                    reference: reference.trim().to_owned(),
+                    formatted: formatted.unwrap_or_else(|| reference.clone()),
+                    reference,
                 });
             }
         }
+    }
+    if unformatted > 0 {
+        eprintln!("{unformatted} clips have no {FORMATTED_SUFFIX}; their formatted WER uses the verbatim reference");
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
@@ -465,13 +499,21 @@ struct ClipRow {
     latency_ms: f64,
     rtf: f64,
     wer: f64,
+    /// WER against the formatted reference (what the user would send).
+    wer_formatted: f64,
+    /// With `--polish`: WER of the polished text against each reference.
+    wer_polished: Option<f64>,
+    wer_formatted_polished: Option<f64>,
     cer: f64,
     devanagari: bool,
     cached: bool,
     hypothesis: String,
     /// Romanized hypothesis actually scored (only when the engine emitted Devanagari).
     hypothesis_scored: String,
+    /// With `--polish`: the polished text.
+    polished: String,
     reference: String,
+    reference_formatted: String,
 }
 
 #[derive(Serialize, Default)]
@@ -480,6 +522,12 @@ struct EngineSummary {
     clips: usize,
     failures: usize,
     wer_by_category: BTreeMap<String, f64>,
+    wer_formatted_by_category: BTreeMap<String, f64>,
+    /// With `--polish` only.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    wer_polished_by_category: BTreeMap<String, f64>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    wer_formatted_polished_by_category: BTreeMap<String, f64>,
     cer_by_category: BTreeMap<String, f64>,
     latency_p50_ms: Option<f64>,
     latency_p95_ms: Option<f64>,
@@ -497,6 +545,7 @@ async fn run(args: RunArgs, manifest: &Manifest, models_dir: &Path) -> Result<()
         bail!("no clips found in {} (see docs/BENCH.md)", args.clips.display());
     }
     let aliases = load_aliases(&args.clips);
+    let mut polisher = if args.polish { Some(polish::Polisher::from_env()?) } else { None };
     let cache = Cache::new(&args.cache_dir);
     std::fs::create_dir_all(&args.out)?;
     eprintln!("{} clips, {} engines", clips.len(), args.engines.len());
@@ -527,7 +576,7 @@ async fn run(args: RunArgs, manifest: &Manifest, models_dir: &Path) -> Result<()
         }
 
         let mut lat = Vec::new();
-        let mut errs: BTreeMap<String, (ErrorCount, ErrorCount)> = BTreeMap::new();
+        let mut errs: BTreeMap<String, (WerSet, ErrorCount)> = BTreeMap::new();
         let mut durations = Vec::new();
         for clip in &clips {
             let opts = SttOptions {
@@ -556,7 +605,11 @@ async fn run(args: RunArgs, manifest: &Manifest, models_dir: &Path) -> Result<()
             } else {
                 text.clone()
             };
-            let w = wer(&clip.reference, &scored, &aliases);
+            let polished = match polisher.as_mut() {
+                Some(p) => Some(p.polish(&scored).await),
+                None => None,
+            };
+            let w = WerSet::score(&clip.reference, &clip.formatted, &scored, polished.as_deref(), &aliases);
             let c = cer(&clip.reference, &scored);
             let entry = errs.entry(clip.category.clone()).or_default();
             entry.0.add(w);
@@ -565,10 +618,11 @@ async fn run(args: RunArgs, manifest: &Manifest, models_dir: &Path) -> Result<()
             durations.push(audio_s);
             s.devanagari_outputs += usize::from(dev);
             eprintln!(
-                "  {:<32} {:>6.0} ms  WER {:>5.1}%  {}",
+                "  {:<32} {:>6.0} ms  WER {:>5.1}%  fmt {:>5.1}%  {}",
                 clip.name,
                 latency_ms,
-                w.rate() * 100.0,
+                w.verbatim.rate() * 100.0,
+                w.formatted.rate() * 100.0,
                 truncate(&text, 60)
             );
             rows.push(ClipRow {
@@ -578,13 +632,18 @@ async fn run(args: RunArgs, manifest: &Manifest, models_dir: &Path) -> Result<()
                 audio_s,
                 latency_ms,
                 rtf: latency_ms / 1e3 / audio_s.max(1e-6),
-                wer: w.rate(),
+                wer: w.verbatim.rate(),
+                wer_formatted: w.formatted.rate(),
+                wer_polished: w.polished.map(|e| e.rate()),
+                wer_formatted_polished: w.formatted_polished.map(|e| e.rate()),
                 cer: c.rate(),
                 devanagari: dev,
                 cached,
                 hypothesis_scored: if dev { scored } else { String::new() },
                 hypothesis: text,
+                polished: polished.unwrap_or_default(),
                 reference: clip.reference.clone(),
+                reference_formatted: clip.formatted.clone(),
             });
         }
 
@@ -599,7 +658,14 @@ async fn run(args: RunArgs, manifest: &Manifest, models_dir: &Path) -> Result<()
         s.latency_p50_ms = percentile(&lat, 50.0);
         s.latency_p95_ms = percentile(&lat, 95.0);
         for (cat, (w, c)) in errs {
-            s.wer_by_category.insert(cat.clone(), w.rate());
+            s.wer_by_category.insert(cat.clone(), w.verbatim.rate());
+            s.wer_formatted_by_category.insert(cat.clone(), w.formatted.rate());
+            if let Some(p) = w.polished {
+                s.wer_polished_by_category.insert(cat.clone(), p.rate());
+            }
+            if let Some(p) = w.formatted_polished {
+                s.wer_formatted_polished_by_category.insert(cat.clone(), p.rate());
+            }
             s.cer_by_category.insert(cat, c.rate());
         }
         summaries.push(s);
@@ -607,6 +673,9 @@ async fn run(args: RunArgs, manifest: &Manifest, models_dir: &Path) -> Result<()
 
     write_outputs(&args.out, &rows, &summaries)?;
     println!("{}", std::fs::read_to_string(args.out.join("summary.md"))?);
+    if let Some(p) = &polisher {
+        println!("{}", p.report());
+    }
     Ok(())
 }
 
@@ -679,17 +748,31 @@ fn write_outputs(out: &Path, rows: &[ClipRow], summaries: &[EngineSummary]) -> R
     };
     let f = |v: Option<f64>, d: usize| v.map_or("–".to_owned(), |x| format!("{x:.d$}"));
     let pct = |v: Option<&f64>| v.map_or("–".to_owned(), |x| format!("{:.1}%", x * 100.0));
+    let polished = summaries.iter().any(|s| !s.wer_polished_by_category.is_empty());
+    let per_cat = if polished { 5 } else { 3 };
     let mut md = String::from("| engine | clips | fail |");
     for c in &cats {
-        md += &format!(" WER {c} | CER {c} |");
+        md += &format!(" WER {c} | fmt WER {c} |");
+        if polished {
+            md += &format!(" +polish WER {c} | +polish fmt WER {c} |");
+        }
+        md += &format!(" CER {c} |");
     }
     md += " p50 ms | p95 ms | load ms | peak RSS MB | download MB | $/hr | Devanagari |\n|---|---|---|";
-    md += &"---|---|".repeat(cats.len());
+    md += &"---|".repeat(per_cat * cats.len());
     md += "---|---|---|---|---|---|---|\n";
     for s in summaries {
         md += &format!("| {} | {} | {} |", s.engine, s.clips, s.failures);
         for c in &cats {
-            md += &format!(" {} | {} |", pct(s.wer_by_category.get(c)), pct(s.cer_by_category.get(c)));
+            md += &format!(" {} | {} |", pct(s.wer_by_category.get(c)), pct(s.wer_formatted_by_category.get(c)));
+            if polished {
+                md += &format!(
+                    " {} | {} |",
+                    pct(s.wer_polished_by_category.get(c)),
+                    pct(s.wer_formatted_polished_by_category.get(c))
+                );
+            }
+            md += &format!(" {} |", pct(s.cer_by_category.get(c)));
         }
         md += &format!(
             " {} | {} | {} | {} | {} | {} | {} |\n",
@@ -716,6 +799,38 @@ mod tests {
         let c = cloud_cost_per_hour("groq:whisper-large-v3-turbo", &[2.0, 2.0], false).unwrap();
         assert!((c - 0.04 * 5.0).abs() < 1e-9);
         assert!(cloud_cost_per_hour("local:x", &[2.0], false).is_none());
+    }
+
+    #[test]
+    fn reads_formatted_reference_next_to_verbatim() {
+        let dir = std::env::temp_dir().join(format!("bolo-refs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let wav = dir.join("01-x.wav");
+        assert_eq!(read_references(&wav), None, "no .txt, no clip");
+        std::fs::write(dir.join("01-x.txt"), "twelve fifty dollars\n").unwrap();
+        assert_eq!(read_references(&wav), Some(("twelve fifty dollars".into(), None)));
+        std::fs::write(dir.join("01-x.formatted.txt"), "$1,250\n").unwrap();
+        assert_eq!(read_references(&wav), Some(("twelve fifty dollars".into(), Some("$1,250".into()))));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn every_bench_clip_has_a_formatted_reference() {
+        let clips = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/clips");
+        let mut n = 0;
+        for cat in ["en", "hinglish"] {
+            for e in std::fs::read_dir(clips.join(cat)).unwrap() {
+                let p = e.unwrap().path();
+                let name = p.file_name().unwrap().to_string_lossy().into_owned();
+                if let Some(stem) = name.strip_suffix(".txt").filter(|s| !s.ends_with(".formatted")) {
+                    let f = p.with_file_name(format!("{stem}{FORMATTED_SUFFIX}"));
+                    let text = std::fs::read_to_string(&f).unwrap_or_else(|_| panic!("missing {}", f.display()));
+                    assert!(!text.trim().is_empty(), "{} is empty", f.display());
+                    n += 1;
+                }
+            }
+        }
+        assert_eq!(n, 40);
     }
 
     #[test]

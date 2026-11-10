@@ -233,6 +233,7 @@ dependencies = [
  "directories",
  "dotenvy",
  "hex",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",

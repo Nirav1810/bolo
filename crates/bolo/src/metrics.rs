@@ -212,6 +212,45 @@ pub fn wer(reference: &str, hypothesis: &str, aliases: &HashMap<String, String>)
     ErrorCount { errors: levenshtein(&r, &h), ref_len: r.len() }
 }
 
+/// Word errors for one output against both references: the verbatim one (what was
+/// said) and the formatted one (what the user would send). With `--polish`, also for the
+/// polished output.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct WerSet {
+    pub verbatim: ErrorCount,
+    pub formatted: ErrorCount,
+    pub polished: Option<ErrorCount>,
+    pub formatted_polished: Option<ErrorCount>,
+}
+
+impl WerSet {
+    pub fn score(
+        verbatim_ref: &str,
+        formatted_ref: &str,
+        text: &str,
+        polished: Option<&str>,
+        aliases: &HashMap<String, String>,
+    ) -> Self {
+        Self {
+            verbatim: wer(verbatim_ref, text, aliases),
+            formatted: wer(formatted_ref, text, aliases),
+            polished: polished.map(|p| wer(verbatim_ref, p, aliases)),
+            formatted_polished: polished.map(|p| wer(formatted_ref, p, aliases)),
+        }
+    }
+
+    pub fn add(&mut self, o: WerSet) {
+        self.verbatim.add(o.verbatim);
+        self.formatted.add(o.formatted);
+        if let Some(p) = o.polished {
+            self.polished.get_or_insert_default().add(p);
+        }
+        if let Some(p) = o.formatted_polished {
+            self.formatted_polished.get_or_insert_default().add(p);
+        }
+    }
+}
+
 /// Character errors after normalization, ignoring spaces.
 pub fn cer(reference: &str, hypothesis: &str) -> ErrorCount {
     let r: Vec<char> = tokens(reference).concat().chars().collect();
@@ -249,6 +288,44 @@ mod tests {
         assert_eq!((e.errors, e.ref_len), (2, 6));
         assert_eq!(wer("", "", &none).rate(), 0.0);
         assert_eq!(wer("", "extra", &none).rate(), 1.0);
+    }
+
+    #[test]
+    fn wer_set_scores_both_references() {
+        let none = HashMap::new();
+        let verbatim = "Let's meet on Tuesday, actually no, make it Wednesday after lunch.";
+        let formatted = "Let's meet on Wednesday after lunch.";
+        // The raw transcript matches what was said, not what would be sent.
+        let raw = WerSet::score(
+            verbatim,
+            formatted,
+            "lets meet on tuesday actually no make it wednesday after lunch",
+            None,
+            &none,
+        );
+        assert_eq!(raw.verbatim.errors, 1); // "lets" vs "let's"
+        assert_eq!(raw.formatted.errors, 6);
+        assert_eq!((raw.polished, raw.formatted_polished), (None, None));
+        // A correct edit scores 0 against the formatted reference.
+        let pol = WerSet::score(verbatim, formatted, "x", Some("Let's meet on Wednesday after lunch."), &none);
+        assert_eq!(pol.formatted_polished.map(|e| e.errors), Some(0));
+        assert!(pol.polished.is_some_and(|e| e.errors > 0));
+
+        let mut total = WerSet::default();
+        total.add(raw);
+        assert_eq!(total.polished, None);
+        total.add(pol);
+        assert_eq!(total.formatted_polished.map(|e| e.ref_len), Some(6));
+        assert_eq!(total.verbatim.ref_len, 22);
+    }
+
+    #[test]
+    fn formatted_style_scores_like_spoken_words() {
+        let none = HashMap::new();
+        let list = "1. Update the dependencies.\n2. Run the tests.\n3. Deploy to staging.";
+        assert_eq!(wer(list, "1. Update the dependencies. 2. Run the tests. 3. Deploy to staging.", &none).errors, 0);
+        assert_eq!(wer("the total comes to $1,250.", "the total comes to twelve fifty", &none).errors, 0);
+        assert_eq!(wer("lands at 6:30 in the evening", "lands at six thirty in the evening", &none).errors, 0);
     }
 
     #[test]

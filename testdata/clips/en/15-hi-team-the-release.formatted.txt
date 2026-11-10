@@ -1,0 +1,1 @@
+Hi team, the release went out last night and so far we haven't seen any errors in the logs.
