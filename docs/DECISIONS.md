@@ -123,3 +123,5 @@ The network is not the bottleneck: TCP takes 23 ms and TLS 50 ms to api.anthropi
 - Default path: local streaming STT + rules + translit/lexicon, inserted in about 0.2 s.
 - Layer 2 runs only where it can't be felt. Android composing text is replaced in place. Long dictations get cleanup per VAD segment while the user is still speaking. On desktop, cleanup is explicit opt-in per app.
 - Cloud STT should move from pre-recorded to Deepgram **streaming** (WebSocket), so that recognition happens during speech. Needs a bench.
+
+**Amended by** `docs/adr/0016-polish-in-engine-per-segment.md` (2026-11-10): polish moves into `bolo-core` with an `on_polished` event, and dictations of 20 s or longer are polished per segment during speech.
