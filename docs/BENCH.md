@@ -284,3 +284,27 @@ The rules pipeline (`bolo_format::rules`, ADR-0015) now runs on every final, ins
 
 - Every number is unchanged from §11, as expected. WER ignores case and punctuation, which is all these passes touch, and no clip says "new line". The visible change is in the text: unpunctuated engine output now gets a capital and a final period ("kal meeting hai na achenda bhej dena" → "Kal meeting hai na achenda bhej dena."). The gap to the formatted references starts closing with fillers, corrections, numbers and lists (tickets 04–06).
 - **Latency gate:** `crates/bolo-format/tests/latency.rs` runs the whole pipeline over the 40 clips' transcripts, as written and as bare lowercase text, in all three format contexts, and fails above 1 ms p95. It measured p95 0.027 ms in a debug build, so it has a wide margin on CI runners.
+
+## 13. Fillers and self-corrections (M2 ticket 04)
+
+The rules pipeline now removes fillers and applies spoken self-corrections (ADR-0015), ahead of the commands and punctuation passes.
+
+- **Fillers.** The pass removes hesitations ("um", "uh", "er"), "you know" between pauses, "like" between commas, and stutters ("the the", "I, I think"). Hindi fillers ("matlab", "haan toh", "woh", "na") go only at the start of a Hinglish dictation or as "matlab matlab". Words repeated on purpose are kept, as are numbers and Hindi reduplication ("jaldi jaldi").
+- **Self-corrections.** These act on "actually no", "I mean", "sorry", "scratch that", "nahi nahi" and "nahi wait". The words after the marker replace the nearest preceding date, time, number or (English only) noun phrase. They also replace the clause when the repair restates it.
+
+**Formatted WER after this ticket (2026-11-10, 40 clips):**
+
+| run | engine | WER en | fmt WER en | WER hinglish | fmt WER hinglish |
+|---|---|---|---|---|---|
+| `bolo run` | `local:nemotron-stream` | 9.9% | **9.4%** | 31.2% | 34.6% |
+| `bolo run` | `deepgram:nova-3` (cached) | 6.5% | **5.5%** | 23.2% | **21.2%** |
+| `bolo replay --speed 50`, Auto | `local:nemotron-stream` | 9.9% | **9.4%** | 27.7% | 30.9% |
+
+- Exactly three outputs changed, and each now matches its formatted reference word for word:
+  - en/12 on both engines. Nemotron writes "Let's meet on Tuesday actually no make it Wednesday after lunch." with no commas. Deepgram writes "… Tuesday. Actually, no. Make it …", with the marker in a sentence of its own.
+  - hinglish/11 on Deepgram ("Kal shaam ko chalte hain. Nahin wait parson chalte hain." → "Parson chalte hain.").
+
+  Verbatim WER rises on those clips by design: the output is now what the user meant, not what they said. Formatted WER on English drops 11.3% → 9.4% (Nemotron) and 7.4% → 5.5% (Deepgram), which is past Nemotron + polish's 8.2% in §11.
+- Nemotron's hinglish/11 ("Par shaam ko chalta hai nahin wait parson chalte hain.") stays verbatim. The recognizer heard "Par", not "kal", so there's no date for "parson" to replace. Polish can still fix it.
+- The recordings have no fillers, so this set doesn't measure the filler pass. The golden cases and property tests cover it.
+- **Latency gate:** p95 0.065 ms in a debug build (was 0.027 ms), still 15× under the 1 ms budget.

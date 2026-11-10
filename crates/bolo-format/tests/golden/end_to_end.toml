@@ -16,3 +16,14 @@ expected = "Kal meeting hai na\nAgenda bhej dena please."
 note = "already-finished engine output passes through unchanged"
 input = "Can you send me the report by Friday? I need it for the review."
 expected = "Can you send me the report by Friday? I need it for the review."
+
+[[case]]
+note = "fillers, a stutter and a correction in one unpunctuated dictation"
+input = "um so i i think we should meet on tuesday actually no make it friday new line thanks"
+expected = "So I think we should meet on friday\nThanks."
+
+[[case]]
+note = "a Hinglish dictation with a start filler and a correction"
+language = "hinglish"
+input = "matlab kal shaam ko chalte hain nahi wait parson chalte hain"
+expected = "Parson chalte hain."

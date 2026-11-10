@@ -4,7 +4,7 @@ Raw recognition is not text you'd send: it has fillers, spoken self-corrections,
 
 The guiding rule is **when unsure, leave it verbatim**. A wrong deletion on the instant path is worse than a missed fix, because **polish** can catch a miss but nothing restores a lost word. Concretely:
 
-- **Self-corrections** act only on explicit markers ("actually no", "scratch that", "I mean", "sorry", "nahi nahi"). They replace only the nearest preceding phrase of the same kind (date, time, number, noun phrase).
+- **Self-corrections** act only on explicit markers ("actually no", "scratch that", "I mean", "sorry", "nahi nahi", "nahi wait"). They replace only the nearest preceding phrase of the same kind (date, time, number, noun phrase).
 - **Hindi fillers** ("matlab", "haan toh", "na", "woh") are removed only where they are fillers, such as at the start of a dictation or when repeated, because they are often real words.
 - **Number words** are English only. Hindi number words ("do sau pachaas") are left for polish.
 - **Lists** form only from an explicit enumeration of at least three items ("first … second … third", "one … two … three", "number one …"). Prose joined with "and" never becomes a list.

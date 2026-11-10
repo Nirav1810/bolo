@@ -7,8 +7,8 @@
 //! fillers → self-corrections → numbers → lists and commands → punctuation fix-ups → render
 //! ```
 //!
-//! Only the commands, punctuation fix-ups and render passes exist so far. The others plug
-//! in at their place in [`apply`] (M2 tickets 04–06). Every pass follows the same rule:
+//! The numbers and lists passes are still to come; they plug in at their place in
+//! [`apply`] (M2 tickets 05 and 06). Every pass follows the same rule:
 //! when unsure, leave the text verbatim. Polish can catch a miss, but nothing restores a
 //! lost word.
 //!
@@ -16,6 +16,9 @@
 //! stays well under 1 ms on a dictation (the latency gate in `tests/latency.rs`).
 
 mod commands;
+mod corrections;
+mod fillers;
+mod kinds;
 mod punctuation;
 mod token;
 
@@ -73,9 +76,10 @@ impl FormatContext {
 
 /// Run the Layer 1 pipeline on a dictation's text.
 pub fn apply(text: &str, language: Language, ctx: FormatContext) -> String {
-    let _ = language; // read by the filler and correction passes (ticket 04)
     let mut tokens = token::tokenize(text);
-    // fillers → self-corrections → numbers: tickets 04 and 05.
+    fillers::apply(&mut tokens, language);
+    corrections::apply(&mut tokens, language);
+    // numbers: ticket 05.
     commands::apply(&mut tokens); // lists join this step in ticket 06
     punctuation::apply(&mut tokens, ctx);
     let out = token::render(&tokens, ctx);
