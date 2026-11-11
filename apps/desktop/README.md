@@ -2,7 +2,9 @@
 
 Tauri v2 + Svelte 5 + Vite + Tailwind. The Rust side (`src-tauri`, crate `bolo-desktop`) hosts one `bolo_core::Engine` in-process. The webviews only render what the Rust app controller sends them.
 
-M3 status: the shell (ticket 01). Bolo sits in the tray, and **Start dictation** in the tray menu starts and stops a dictation. The text goes to the log and to the debug window. Push-to-talk, insertion, the overlay pill and settings come in later M3 tickets (`.scratch/m3-desktop/`).
+M3 status: the shell (ticket 01) and push-to-talk (ticket 05). Bolo sits in the tray. **Hold Caps Lock** to dictate and let go to finish (ADR-0017); a quick tap still toggles Caps Lock, Shift+Caps Lock is plain Caps Lock, and Esc cancels a dictation. **Start dictation** in the tray menu works too, and **Pause Bolo** lets go of the key. The text goes to the log and to the debug window. Insertion, the overlay pill and settings come in later M3 tickets (`.scratch/m3-desktop/`).
+
+The push-to-talk key is `push_to_talk` in `%APPDATA%\Bolo\settings.toml`: `caps-lock` (the default), `right-ctrl`, `right-alt` or `f13` … `f24`. It is read at startup.
 
 ## Run it
 
@@ -31,6 +33,8 @@ Until settings land (ticket 02), the engine is configured from environment varia
 - `src-tauri/src/controller.rs`: engine events → `AppEvent`s on the `bolo://event` Tauri event (mirrored in `src/lib/events.ts`).
 - `src-tauri/src/session.rs`: what start, stop and pause do, tested with a fake engine.
 - `src-tauri/src/desktop.rs`: the `Desktop` seam (window in front, clipboard, keys) and its test fake.
+- `src-tauri/src/hotkey.rs`: the push-to-talk state machine (pure, fake-clock tests).
+- `src-tauri/src/keyhook.rs`: the `WH_KEYBOARD_LL` hook thread that runs it, and the tap replay.
 - `src-tauri/src/config.rs`: the `BOLO_*` variables.
 
 ## Checks

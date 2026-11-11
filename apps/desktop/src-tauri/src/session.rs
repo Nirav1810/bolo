@@ -1,5 +1,5 @@
-//! Starting, stopping and pausing dictations: what the tray (and, from ticket 05, the
-//! push-to-talk key) asks for, decided here so it's testable without a desktop.
+//! Starting, stopping and pausing dictations: what the tray and the push-to-talk key ask
+//! for, decided here so it's testable without a desktop.
 
 use bolo_core::{BoloError, DictationState, Engine, TargetContext};
 
@@ -42,6 +42,8 @@ pub enum Toggled {
     Stopped,
     /// Bolo is paused, so nothing happened.
     Paused,
+    /// Push-to-talk was held while a dictation was already listening; it carries on.
+    AlreadyListening,
 }
 
 #[derive(Debug, Default)]
@@ -67,6 +69,34 @@ impl Session {
         let app = ctx.app_id.clone();
         engine.start(ctx)?;
         Ok(Toggled::Started { app })
+    }
+
+    /// The push-to-talk key was held: start a dictation for the window in front. One
+    /// already listening (started from the tray) carries on, and the key's release stops it.
+    ///
+    /// It doesn't look at [`EngineControl::state`] first: a stop sent just before is still
+    /// queued, and the engine runs its commands in order, so a start after it succeeds.
+    pub fn press(&self, engine: &dyn EngineControl, desktop: &dyn Desktop) -> Result<Toggled, BoloError> {
+        if self.paused {
+            return Ok(Toggled::Paused);
+        }
+        let ctx = target_context(desktop);
+        let app = ctx.app_id.clone();
+        match engine.start(ctx) {
+            Ok(()) => Ok(Toggled::Started { app }),
+            Err(BoloError::Busy) => Ok(Toggled::AlreadyListening),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The push-to-talk key was released: stop the dictation if one is listening.
+    /// Whether one was.
+    pub fn release(&self, engine: &dyn EngineControl) -> Result<bool, BoloError> {
+        if engine.state() != DictationState::Listening {
+            return Ok(false);
+        }
+        engine.stop()?;
+        Ok(true)
     }
 
     /// Pausing drops a dictation in progress and unloads the model; nothing starts
@@ -122,6 +152,9 @@ mod tests {
             if self.fail_start {
                 return Err(BoloError::ModelMissing("nemotron-stream".into()));
             }
+            if *self.state.borrow() == DictationState::Listening {
+                return Err(BoloError::Busy);
+            }
             self.calls.borrow_mut().push(Call::Start(ctx.app_id, ctx.window_title));
             *self.state.borrow_mut() = DictationState::Listening;
             Ok(())
@@ -170,6 +203,26 @@ mod tests {
         assert!(
             matches!(session.toggle(&engine, &desktop), Err(BoloError::ModelMissing(id)) if id == "nemotron-stream")
         );
+    }
+
+    #[test]
+    fn press_starts_and_release_stops() {
+        let (engine, desktop, session) =
+            (FakeEngine::new(), FakeDesktop::in_front("code.exe", "x"), Session::default());
+        assert!(!session.release(&engine).unwrap(), "nothing to stop");
+        assert_eq!(session.press(&engine, &desktop).unwrap(), Toggled::Started { app: "code.exe".into() });
+        assert_eq!(session.press(&engine, &desktop).unwrap(), Toggled::AlreadyListening);
+        assert!(session.release(&engine).unwrap());
+        assert!(!session.release(&engine).unwrap(), "already processing");
+        assert_eq!(*engine.calls.borrow(), [Call::Start("code.exe".into(), Some("x".into())), Call::Stop]);
+    }
+
+    #[test]
+    fn press_while_paused_does_nothing() {
+        let (engine, desktop, mut session) = (FakeEngine::new(), FakeDesktop::default(), Session::default());
+        session.set_paused(true, None);
+        assert_eq!(session.press(&engine, &desktop).unwrap(), Toggled::Paused);
+        assert!(engine.calls.borrow().is_empty());
     }
 
     #[test]

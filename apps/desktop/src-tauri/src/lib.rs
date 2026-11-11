@@ -3,20 +3,25 @@
 //! - [`controller`] turns engine events into [`controller::AppEvent`]s for the webviews.
 //! - [`session`] decides what a start, stop or pause does.
 //! - [`desktop`] is the seam to the Windows desktop (window in front, clipboard, keys).
+//! - [`hotkey`] is the push-to-talk state machine and [`keyhook`] the hook that runs it.
 //! - [`config`] builds the engine config from `BOLO_*` variables until `bolo-store`.
 //!
 //! The app lives in the tray, runs as a single instance and keeps running when its
-//! windows close. Until push-to-talk lands (ticket 05) the tray starts and stops a
-//! dictation, and the final text goes to the log and the debug window.
+//! windows close. Holding the push-to-talk key (Caps Lock by default, ADR-0017) dictates;
+//! the tray can start and stop one too. Until insertion lands (ticket 06) the final text
+//! goes to the log and the debug window.
 
 pub mod config;
 pub mod controller;
 pub mod desktop;
+pub mod hotkey;
+pub mod keyhook;
 pub mod session;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use bolo_core::{BoloError, DictationState, Engine, EngineConfig};
+use bolo_store::{PushToTalkKey, Settings};
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -24,6 +29,8 @@ use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent, Wry};
 
 use controller::{AppEvent, Controller, Emit};
 use desktop::{Desktop, WinDesktop};
+use hotkey::{Command, Flags};
+use keyhook::{Handler, KeyHook};
 use session::{Session, Toggled};
 
 /// The one Tauri event every [`AppEvent`] is sent on.
@@ -77,13 +84,18 @@ struct Bolo {
     emit: Arc<dyn Emit>,
     /// Why the config or the engine could not be built at startup, for the debug window.
     startup_error: Mutex<Option<String>>,
+    /// Shared with the keyboard hook: whether a dictation is listening, and touches.
+    flags: Arc<Flags>,
+    push_to_talk: PushToTalkKey,
+    /// The push-to-talk hook; `None` while paused or if it could not be installed.
+    hook: Mutex<Option<KeyHook>>,
 }
 
 impl Bolo {
     fn engine(&self) -> Result<MutexGuard<'_, Option<Engine>>, BoloError> {
         let mut engine = lock(&self.engine);
         if engine.is_none() {
-            let events = Box::new(Controller::new(self.emit.clone()));
+            let events = Box::new(Controller::new(self.emit.clone(), self.flags.clone()));
             *engine = Some(Engine::new(self.config.clone(), events)?);
             *lock(&self.startup_error) = None;
         }
@@ -99,6 +111,7 @@ impl Bolo {
             Ok(Toggled::Started { app }) => tracing::info!(%app, "dictation started"),
             Ok(Toggled::Stopped) => tracing::info!("dictation stopped"),
             Ok(Toggled::Paused) => tracing::info!("paused; not starting"),
+            Ok(Toggled::AlreadyListening) => {}
             Err(e) => {
                 tracing::warn!(%e, "could not start or stop a dictation");
                 self.emit.emit(AppEvent::Error { message: e.to_string() });
@@ -106,16 +119,73 @@ impl Bolo {
         }
     }
 
-    fn set_paused(&self, paused: bool) {
+    /// What the push-to-talk key asks for (on the hook's command thread).
+    fn push_to_talk(&self, command: Command) {
+        let result = self.engine().and_then(|engine| {
+            let Some(e) = engine.as_ref() else { return Err(BoloError::Stopped) };
+            let session = lock(&self.session);
+            match command {
+                Command::Start => {
+                    session.press(e, self.desktop.as_ref()).map(|t| tracing::info!(?t, "push-to-talk held"))
+                }
+                Command::Stop => session.release(e).map(|stopped| tracing::info!(stopped, "push-to-talk released")),
+                Command::Cancel => {
+                    e.cancel_dictation();
+                    tracing::info!("dictation cancelled with Esc");
+                    Ok(())
+                }
+                Command::ReplayTap => Ok(()),
+            }
+        });
+        if let Err(e) = result {
+            tracing::warn!(%e, ?command, "push-to-talk failed");
+            self.emit.emit(AppEvent::Error { message: e.to_string() });
+        }
+    }
+
+    fn set_paused(&self, paused: bool, app: &AppHandle) {
         let engine = lock(&self.engine);
         lock(&self.session).set_paused(paused, engine.as_ref().map(|e| e as _));
+        drop(engine);
+        // Paused, Bolo lets go of the key entirely.
+        if paused {
+            drop(lock(&self.hook).take());
+        } else {
+            self.install_hook(app);
+        }
         tracing::info!(paused, "pause");
         self.emit.emit(AppEvent::Paused { paused });
     }
 
-    fn toggle_paused(&self) {
+    fn install_hook(&self, app: &AppHandle) {
+        let mut hook = lock(&self.hook);
+        if hook.is_some() {
+            return;
+        }
+        match KeyHook::install(self.push_to_talk, self.flags.clone(), PushToTalk(app.clone())) {
+            Ok(h) => {
+                tracing::info!(key = ?self.push_to_talk, "push-to-talk on");
+                *hook = Some(h);
+            }
+            Err(e) => {
+                tracing::error!(%e, "could not install the push-to-talk hook");
+                self.emit.emit(AppEvent::Error { message: format!("push-to-talk is unavailable: {e}") });
+            }
+        }
+    }
+
+    fn toggle_paused(&self, app: &AppHandle) {
         let paused = lock(&self.session).paused();
-        self.set_paused(!paused);
+        self.set_paused(!paused, app);
+    }
+}
+
+/// Hands the hook's commands to the app's [`Bolo`] state.
+struct PushToTalk(AppHandle);
+
+impl Handler for PushToTalk {
+    fn command(&self, command: Command) {
+        self.0.state::<Bolo>().push_to_talk(command);
     }
 }
 
@@ -187,12 +257,13 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         let bolo = app.state::<Bolo>();
         match event.id.as_ref() {
             "toggle" => bolo.toggle(),
-            "pause" => bolo.toggle_paused(),
+            "pause" => bolo.toggle_paused(app),
             "settings" => show_window(app, "settings"),
             "history" => show_window(app, "history"),
             "debug" => show_window(app, "debug"),
             "quit" => {
-                // Close the mic and unload the model before the process goes.
+                // Let go of the keyboard, close the mic and unload the model first.
+                drop(lock(&bolo.hook).take());
                 drop(lock(&bolo.engine).take());
                 app.exit(0);
             }
@@ -211,6 +282,14 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     tracing::info!(engines = ?config.engines, language = ?config.language, models = %config.models_dir.display(), "engine config");
+    // Only the key comes from settings so far; the rest arrives with tickets 07 and 09.
+    let push_to_talk = match Settings::default_path().and_then(|p| Settings::load(&p)) {
+        Ok(loaded) => loaded.settings.push_to_talk,
+        Err(e) => {
+            tracing::warn!(%e, "could not read the settings; push-to-talk is Caps Lock");
+            PushToTalkKey::default()
+        }
+    };
     let bolo = Bolo {
         config,
         engine: Mutex::new(None),
@@ -218,12 +297,16 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         desktop: Box::new(WinDesktop),
         emit,
         startup_error: Mutex::new(config_error),
+        flags: Arc::new(Flags::default()),
+        push_to_talk,
+        hook: Mutex::new(None),
     };
     if let Err(e) = bolo.engine() {
         tracing::error!(%e, "the engine could not start; it will be retried on the next dictation");
         lock(&bolo.startup_error).get_or_insert(e.to_string());
     }
     app.manage(bolo);
+    app.state::<Bolo>().install_hook(app.handle());
     Ok(())
 }
 

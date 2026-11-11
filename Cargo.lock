@@ -498,6 +498,7 @@ dependencies = [
  "anyhow",
  "bolo-core",
  "bolo-models",
+ "bolo-store",
  "serde",
  "serde_json",
  "tauri",
