@@ -38,7 +38,7 @@
   <div class="card-text">
     <span class="font-semibold">
       Bolo {update?.version ?? view.version}
-      {#if update?.badge}<span class="tag" class:accent={update.badge === "Nightly"}>{update.badge}</span>{/if}
+      {#if update?.badge}<span class="tag" class:nightly={update.badge === "Nightly"}>{update.badge}</span>{/if}
     </span>
     <span class="caption">Open-source dictation for English and Hinglish. MIT or Apache-2.0.</span>
   </div>

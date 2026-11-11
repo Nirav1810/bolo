@@ -266,6 +266,38 @@ pub fn install(app: &AppHandle, updates: &Updates) {
     }
 }
 
+/// The Nightly marker's colour on the tray icon (`--bolo-nightly`, dark-theme value).
+pub const NIGHTLY_RGB: [u8; 3] = [0xA7, 0x7B, 0xFF];
+
+/// `Bolo 0.4.0 · Beta`, the tray menu's first (disabled) line.
+pub fn menu_header(version: &str) -> String {
+    match badge(version) {
+        Some(b) => format!("Bolo {version} · {b}"),
+        None => format!("Bolo {version}"),
+    }
+}
+
+/// Mark an RGBA icon as a Nightly: a dot in the bottom-right corner, cut out from the
+/// icon by a transparent ring so it reads on any taskbar colour.
+pub fn mark_nightly(rgba: &mut [u8], width: u32, height: u32) {
+    let size = width.min(height) as f32;
+    let radius = size * 0.24;
+    let ring = (size * 0.07).max(1.0);
+    let (cx, cy) = (width as f32 - radius - 0.5, height as f32 - radius - 0.5);
+    for y in 0..height {
+        for x in 0..width {
+            let d = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
+            let i = ((y * width + x) * 4) as usize;
+            let Some(px) = rgba.get_mut(i..i + 4) else { return };
+            if d <= radius {
+                px.copy_from_slice(&[NIGHTLY_RGB[0], NIGHTLY_RGB[1], NIGHTLY_RGB[2], 255]);
+            } else if d <= radius + ring {
+                px[3] = 0;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex as StdMutex;
@@ -280,6 +312,30 @@ mod tests {
         assert_eq!(badge("1.0.0"), None);
         assert_eq!(title("0.4.0"), "Bolo 0.4.0 Beta");
         assert_eq!(title("1.0.0"), "Bolo 1.0.0");
+    }
+
+    #[test]
+    fn the_menu_header_names_the_variant() {
+        assert_eq!(menu_header("0.4.0"), "Bolo 0.4.0 · Beta");
+        assert_eq!(menu_header("0.5.0-nightly.20261111.7"), "Bolo 0.5.0-nightly.20261111.7 · Nightly");
+        assert_eq!(menu_header("1.0.0"), "Bolo 1.0.0");
+    }
+
+    #[test]
+    fn the_nightly_mark_is_a_dot_in_the_corner_with_a_clear_ring() {
+        let (w, h) = (32u32, 32u32);
+        let mut icon = vec![10u8; (w * h * 4) as usize];
+        mark_nightly(&mut icon, w, h);
+        let px = |x: u32, y: u32| &icon[((y * w + x) * 4) as usize..][..4];
+        assert_eq!(px(0, 0), &[10, 10, 10, 10], "the rest of the icon is untouched");
+        assert_eq!(px(16, 16), &[10, 10, 10, 10]);
+        let c = (w as f32 - 32.0 * 0.24 - 0.5) as u32;
+        assert_eq!(&px(c, c)[..3], &NIGHTLY_RGB, "the dot");
+        assert_eq!(px(c, c)[3], 255);
+        let ring = (c as f32 - 32.0 * 0.24 - 1.0) as u32;
+        assert_eq!(px(ring, c)[3], 0, "the ring is cut out");
+        // A short buffer is left alone rather than panicking.
+        mark_nightly(&mut [0u8; 8], 32, 32);
     }
 
     #[test]

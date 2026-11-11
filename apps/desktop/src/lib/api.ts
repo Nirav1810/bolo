@@ -129,6 +129,12 @@ export interface UpdateView {
   status: UpdateStatus;
 }
 
+/** Which build this is (ADR-0019): a Nightly from `main`, or a release (Beta until 1.0). */
+export function variant(version: string): { name: "Nightly" | "Beta" | "Release"; nightly: boolean } {
+  if (version.includes("-nightly.")) return { name: "Nightly", nightly: true };
+  return { name: version.startsWith("0.") ? "Beta" : "Release", nightly: false };
+}
+
 export const api = {
   settings: () => invoke<SettingsView>("settings_get"),
   save: (form: Form) => invoke<SettingsView>("settings_save", { form }),

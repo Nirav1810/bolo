@@ -31,6 +31,9 @@
   --bolo-live: #d93036;
   --bolo-ok: #187a42;
   --bolo-warn: #a15c00;
+  /* The Nightly build marker (ADR-0019): its own hue, never a state colour. */
+  --bolo-nightly: #7a3fd1;
+  --bolo-nightly-soft: #f1e9fd;
   --bolo-danger: #c42b1c;
 
   --bolo-pill-bg: rgb(251 251 251 / 0.94);
@@ -58,6 +61,8 @@
     --bolo-live: #ff5a5f;
     --bolo-ok: #4cc38a;
     --bolo-warn: #f0b246;
+    --bolo-nightly: #c4a5ff;
+    --bolo-nightly-soft: #33284a;
     --bolo-danger: #ff6b5e;
 
     --bolo-pill-bg: rgb(36 36 40 / 0.92);
@@ -86,6 +91,8 @@
   --color-live: var(--bolo-live);
   --color-ok: var(--bolo-ok);
   --color-warn: var(--bolo-warn);
+  --color-nightly: var(--bolo-nightly);
+  --color-nightly-soft: var(--bolo-nightly-soft);
   --color-danger: var(--bolo-danger);
   --color-pill: var(--bolo-pill-bg);
   --color-pill-border: var(--bolo-pill-border);

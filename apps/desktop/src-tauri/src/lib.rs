@@ -554,9 +554,13 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         settings.overlay.idle_button,
         None::<&str>,
     )?;
+    // Which build this is, first in the menu: a Nightly must never pass for a release.
+    let header = MenuItem::with_id(app, "version", updates::menu_header(updates::VERSION), false, None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[
+            &header,
+            &PredefinedMenuItem::separator(app)?,
             &toggle,
             &pause,
             &idle_button,
@@ -576,7 +580,13 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .menu(&menu)
         .show_menu_on_left_click(true);
     if let Some(icon) = app.default_window_icon() {
-        tray = tray.icon(icon.clone());
+        tray = tray.icon(if updates::is_nightly(updates::VERSION) {
+            let mut rgba = icon.rgba().to_vec();
+            updates::mark_nightly(&mut rgba, icon.width(), icon.height());
+            tauri::image::Image::new_owned(rgba, icon.width(), icon.height())
+        } else {
+            icon.clone()
+        });
     }
     tray.on_menu_event(|app, event| {
         let bolo = app.state::<Bolo>();
@@ -627,7 +637,8 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         match version {
             Some(v) => {
                 let _ = update_item.set_text(format!("Restart to update to {v}"));
-                if !shown && let Err(e) = menu.insert(&update_item, 0) {
+                // Under the version line and its separator.
+                if !shown && let Err(e) = menu.insert(&update_item, 2) {
                     tracing::warn!(%e, "could not add the update item to the tray");
                 }
             }

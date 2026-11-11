@@ -184,6 +184,11 @@
   .tag.accent {
     color: var(--bolo-accent);
   }
+  .tag.nightly {
+    background: var(--bolo-nightly-soft);
+    color: var(--bolo-nightly);
+    font-weight: 600;
+  }
   .chip {
     display: inline-flex;
     align-items: center;

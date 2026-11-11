@@ -2,6 +2,7 @@
   // The main window's pages, chosen by the URL hash, which Rust sets from the tray:
   // `#settings`, a settings tab (`#history`, `#engines`, ...), `#onboarding` and `#debug`.
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { api, variant } from "./lib/api";
   import Settings from "./settings/Settings.svelte";
   import Debug from "./Debug.svelte";
   import Onboarding from "./onboarding/Onboarding.svelte";
@@ -20,9 +21,18 @@
     return () => removeEventListener("hashchange", onHash);
   });
 
+  // " (Nightly)" in the title bar and taskbar, so a nightly is never taken for a release.
+  let suffix = $state("");
+  $effect(() => {
+    api
+      .updateView()
+      .then((v) => (suffix = variant(v.version).nightly ? " (Nightly)" : ""))
+      .catch(() => {});
+  });
+
   $effect(() => {
     const titles: Record<string, string> = { debug: "Bolo debug", onboarding: "Welcome to Bolo" };
-    getCurrentWindow().setTitle(titles[route] ?? "Bolo Settings");
+    getCurrentWindow().setTitle((titles[route] ?? "Bolo Settings") + suffix);
   });
 </script>
 

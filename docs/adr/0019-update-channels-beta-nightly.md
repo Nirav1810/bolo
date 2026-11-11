@@ -7,6 +7,14 @@ The Windows app updates itself with `tauri-plugin-updater`. It reads one of two 
 - **Beta**: every `vX.Y.Z` release cut by `scripts/release.py`. While the product version is 0.x, the app shows these builds with a **Beta** badge. From `v1.0.0` on, the badge is dropped and the channel is plain releases. We stop cutting `-beta.N` tags: one tag per release, and the badge carries the "not finished" meaning. `release.py` still accepts the suffix, so the old tags keep sorting right.
 - **Nightly**: CI builds a signed installer on every push to `main`. Its version is the next minor after the newest release tag plus `-nightly.<YYYYMMDD>.<run>`, for example `0.4.0-nightly.20261111.7`. That sorts below `0.4.0` in semver, so the release that ships the work overtakes the nightlies. The version is written into the manifests for that build only and is never committed. Each build replaces the assets of the one rolling `nightly` GitHub prerelease, whose tag moves to the built commit. The app shows a **Nightly** badge.
 
+A Nightly is marked wherever the app shows itself, so it is never taken for a release:
+- a violet dot on the tray icon;
+- the version line at the top of the tray menu ("Bolo 0.5.0-nightly.20261112.3 · Nightly");
+- "(Nightly)" in the window title;
+- a violet Nightly block at the foot of the settings sidebar on every page.
+
+Releases show "Beta" (or nothing after 1.0) in the same places, in neutral grey. The marker follows the installed build's version, not the chosen channel. Switching to Nightly changes nothing on screen until the nightly is installed.
+
 Feeds are static `latest.json` files (Tauri's updater format) attached as release assets:
 - Beta: `https://github.com/Nirav1810/bolo/releases/latest/download/latest.json`. For `/releases/latest/` to resolve, releases are no longer marked prerelease on GitHub. The Beta badge in the app replaces that flag.
 - Nightly: `https://github.com/Nirav1810/bolo/releases/download/nightly/latest.json`.
