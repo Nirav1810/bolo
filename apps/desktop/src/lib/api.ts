@@ -112,6 +112,23 @@ export interface DownloadEvent {
   error: string | null;
 }
 
+export type UpdateChannel = "beta" | "nightly";
+
+/** The self-updater's state (src-tauri/src/updates.rs, `Status`). */
+export type UpdateStatus =
+  | { state: "idle" | "checking" | "up-to-date" | "installing" }
+  | { state: "available"; version: string; notes: string | null }
+  | { state: "downloading"; downloaded: number; total: number | null }
+  | { state: "error"; message: string; manual: boolean };
+
+/** About's update section (src-tauri/src/updates.rs, `View`). */
+export interface UpdateView {
+  version: string;
+  badge: "Beta" | "Nightly" | null;
+  channel: UpdateChannel;
+  status: UpdateStatus;
+}
+
 export const api = {
   settings: () => invoke<SettingsView>("settings_get"),
   save: (form: Form) => invoke<SettingsView>("settings_save", { form }),
@@ -129,6 +146,10 @@ export const api = {
   openLink: (url: string) => invoke<void>("open_link", { url }),
   micCheck: () => invoke<MicCheck>("mic_check"),
   onboardingSave: (step: number | null) => invoke<void>("onboarding_save", { step }),
+  updateView: () => invoke<UpdateView>("update_view"),
+  checkUpdate: () => invoke<void>("update_check"),
+  installUpdate: () => invoke<void>("update_install"),
+  setChannel: (channel: UpdateChannel) => invoke<UpdateView>("update_channel", { channel }),
 };
 
 /** Mic levels (RMS) while the mic check listens. */

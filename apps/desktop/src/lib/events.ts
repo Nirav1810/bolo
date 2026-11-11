@@ -1,6 +1,7 @@
 // The payloads the Rust app controller emits (src-tauri/src/controller.rs, `AppEvent`).
 // The webviews only render these; dictation logic stays in Rust.
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { UpdateStatus } from "./api";
 
 export const EVENT = "bolo://event";
 
@@ -32,7 +33,8 @@ export type AppEvent =
   | { kind: "polished"; output: Output; swapped: boolean }
   | { kind: "notice"; message: string; hint: string | null }
   | { kind: "error"; message: string }
-  | { kind: "pill"; view: PillView };
+  | { kind: "pill"; view: PillView }
+  | { kind: "update"; status: UpdateStatus };
 
 /// What the overlay pill shows (src-tauri/src/pill.rs, `View`). The state machine and its
 /// timers live in Rust; the pill webview only draws.

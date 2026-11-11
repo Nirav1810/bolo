@@ -207,7 +207,11 @@ pub fn input(event: &AppEvent) -> Option<Input> {
         AppEvent::Polished { swapped, .. } => Input::Polished { swapped: *swapped },
         AppEvent::Notice { message, hint } => Input::Notice { message: message.clone(), hint: hint.clone() },
         AppEvent::Error { message } => Input::Error(message.clone()),
-        AppEvent::Paused { .. } | AppEvent::Level { .. } | AppEvent::Partial { .. } | AppEvent::Pill { .. } => {
+        AppEvent::Paused { .. }
+        | AppEvent::Level { .. }
+        | AppEvent::Partial { .. }
+        | AppEvent::Pill { .. }
+        | AppEvent::Update { .. } => {
             return None;
         }
     })

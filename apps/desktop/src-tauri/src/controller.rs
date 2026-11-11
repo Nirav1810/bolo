@@ -54,6 +54,10 @@ pub enum AppEvent {
     Pill {
         view: View,
     },
+    /// The self-updater's state (ADR-0019), for the settings window.
+    Update {
+        status: crate::updates::Status,
+    },
 }
 
 /// The notice when the window in front runs elevated and won't take Bolo's paste: the
