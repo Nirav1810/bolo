@@ -9,7 +9,16 @@ Open-source, local-first voice dictation for **Windows** and **Android**. Hold a
 
 > **Status: Milestone 2 done: core engine, formatting layer and `bolo` CLI preview.** There is no desktop app or Android keyboard yet. See the [M2 report](docs/M2-REPORT.md), the [M1 report](docs/M1-REPORT.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Try it (Windows x64)
+## Install the desktop app (Windows x64)
+
+1. Download `Bolo_X.Y.Z_x64-setup.exe` from the [latest release](https://github.com/Nirav1810/bolo/releases). You can check it against the `.sha256` file next to it.
+2. Run it. It installs for your user only, so it needs no admin rights. If WebView2 is missing, the installer downloads it (Windows 11 already has it).
+3. The installer isn't code-signed yet, so **Windows SmartScreen may say "Windows protected your PC"**. Click **More info**, then **Run anyway**. This happens only for unsigned downloads; the `.sha256` file lets you confirm it's the published file.
+4. On first run, Bolo walks you through a mic check and downloads the speech model (about 475 MB, once). It then waits in the tray.
+
+To uninstall, use Windows Settings › Apps. The uninstaller asks whether to delete your downloaded models and dictation history. Settings and API keys stay unless you tick "Delete the application data".
+
+## The CLI (Windows x64)
 
 1. Download `bolo-vX.Y.Z-windows-x64.zip` from the [latest release](https://github.com/Nirav1810/bolo/releases) (optionally check it against the `.sha256` next to it) and unzip it anywhere. Keep `bolo.exe` next to the DLLs.
 2. In PowerShell, in that folder:
@@ -88,7 +97,7 @@ python -I scripts/release.py 0.1.0             # branch, bump, regenerate CHANGE
 python -I scripts/release.py tag 0.1.0         # tag and push; .github/workflows/release.yml publishes
 ```
 
-The tag workflow builds `bolo` for Windows x64 and zips it with the sherpa-onnx DLLs, `README.txt` and the licences. It runs the unzipped `bolo --help` with nothing but Windows on `PATH`, then publishes the GitHub Release with that version's `CHANGELOG.md` section as notes. Don't edit `CHANGELOG.md` by hand. Each release PR regenerates it from the commit titles ([cliff.toml](cliff.toml)), and a stable release folds its betas into one section.
+The tag workflow builds `bolo` for Windows x64 and zips it with the sherpa-onnx DLLs, `README.txt` and the licences. It runs the unzipped `bolo --help` with nothing but Windows on `PATH`. It also builds the desktop app's per-user NSIS installer (`npx tauri build` in `apps/desktop`), installs and uninstalls it silently, and then publishes the GitHub Release with that version's `CHANGELOG.md` section as notes. Don't edit `CHANGELOG.md` by hand. Each release PR regenerates it from the commit titles ([cliff.toml](cliff.toml)), and a stable release folds its betas into one section.
 
 ## License
 

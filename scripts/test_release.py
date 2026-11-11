@@ -175,7 +175,7 @@ class DryRun(unittest.TestCase):
 
 
 class Package(unittest.TestCase):
-    def test_zip_has_one_folder_with_exe_dlls_readme_and_licences(self):
+    def test_zip_and_installer_with_their_checksums(self):
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -188,6 +188,11 @@ class Package(unittest.TestCase):
             for name in ("LICENSE-MIT", "LICENSE-APACHE"):
                 (tmp / name).write_bytes((ROOT / name).read_bytes())
             with mock.patch.object(release, "ROOT", tmp), redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(release.ReleaseError, "Bolo_0.1.0-beta.1_x64-setup.exe is missing"):
+                    release.package("v0.1.0-beta.1")
+                nsis = tmp / "target" / "release" / "bundle" / "nsis"
+                nsis.mkdir(parents=True)
+                (nsis / "Bolo_0.1.0-beta.1_x64-setup.exe").write_bytes(b"MZ setup")
                 release.package("v0.1.0-beta.1")
             stem = "bolo-v0.1.0-beta.1-windows-x64"
             with zipfile.ZipFile(tmp / "dist" / f"{stem}.zip") as z:
@@ -199,6 +204,10 @@ class Package(unittest.TestCase):
             self.assertIn("Bolo 0.1.0-beta.1", readme)
             sums = (tmp / "dist" / f"{stem}.zip.sha256").read_bytes()
             self.assertRegex(sums, rb"^[0-9a-f]{64}  " + stem.encode() + rb"\.zip\n$")  # LF only
+            setup = tmp / "dist" / "Bolo_0.1.0-beta.1_x64-setup.exe"
+            self.assertEqual(setup.read_bytes(), b"MZ setup")
+            sums = (tmp / "dist" / "Bolo_0.1.0-beta.1_x64-setup.exe.sha256").read_bytes()
+            self.assertRegex(sums, rb"^[0-9a-f]{64}  Bolo_0\.1\.0-beta\.1_x64-setup\.exe\n$")
 
 
 if __name__ == "__main__":

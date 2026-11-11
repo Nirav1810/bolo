@@ -42,7 +42,24 @@
     }
   },
   "bundle": {
-    "active": false,
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"]
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "Bolo contributors",
+    "copyright": "MIT OR Apache-2.0",
+    "shortDescription": "Hold a key, speak, and the text lands in the app you're in",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
+    "resources": {
+      "../../../.cache/sherpa-lib/onnxruntime.dll": "onnxruntime.dll",
+      "../../../.cache/sherpa-lib/onnxruntime_providers_shared.dll": "onnxruntime_providers_shared.dll",
+      "../../../.cache/sherpa-lib/sherpa-onnx-c-api.dll": "sherpa-onnx-c-api.dll",
+      "../../../.cache/sherpa-lib/sherpa-onnx-cxx-api.dll": "sherpa-onnx-cxx-api.dll"
+    },
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper" },
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "windows/hooks.nsh"
+      }
+    }
   }
 }
