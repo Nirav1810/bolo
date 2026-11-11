@@ -166,3 +166,23 @@ fn polish_on_without_an_anthropic_key_is_a_config_error() {
     let refused = engine.start_dictation(Default::default());
     assert!(matches!(refused, Err(BoloError::Config(_))), "got {refused:?}");
 }
+
+#[test]
+fn set_polish_applies_from_the_next_dictation_with_its_app() {
+    let (h, llm) = engine(Polish::Off, FakeLlm::answering(POLISHED, Duration::from_millis(20)));
+    let mut events = h.dictate();
+    events.extend(h.events_within(SETTLE));
+    assert!(polished(&events).is_empty(), "off at first: {events:?}");
+
+    h.engine.set_polish(Polish::On { tone: "neutral".into(), app: "Slack".into(), dictionary: vec![] });
+    let mut events = h.dictate();
+    events.extend(h.events_within(SETTLE));
+    assert_eq!(polished(&events)[0].plain, POLISHED);
+    assert_eq!(llm.log().iter().map(|c| c.app.as_str()).collect::<Vec<_>>(), ["Slack"], "the app is per dictation");
+
+    h.engine.set_polish(Polish::Off);
+    let mut events = h.dictate();
+    events.extend(h.events_within(SETTLE));
+    assert!(polished(&events).is_empty(), "off again: {events:?}");
+    assert_eq!(llm.calls().len(), 1);
+}

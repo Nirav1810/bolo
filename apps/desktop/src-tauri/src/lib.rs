@@ -3,9 +3,11 @@
 //! - [`controller`] turns engine events into [`controller::AppEvent`]s for the webviews.
 //! - [`session`] decides what a start, stop or pause does.
 //! - [`desktop`] is the seam to the Windows desktop (window in front, clipboard, keys).
+//! - [`rules`] maps the window in front to a target and a polish decision (app rules).
 //! - [`insert`] pastes the text and swaps in polish (ADR-0018).
+//! - [`journal`] records each dictation in history.
 //! - [`hotkey`] is the push-to-talk state machine and [`keyhook`] the hook that runs it.
-//! - [`config`] builds the engine config from `BOLO_*` variables until `bolo-store`.
+//! - [`config`] lays `BOLO_*` variables over the engine config from settings.
 //!
 //! The app lives in the tray, runs as a single instance and keeps running when its
 //! windows close. Holding the push-to-talk key (Caps Lock by default, ADR-0017) dictates;
@@ -16,15 +18,17 @@ pub mod controller;
 pub mod desktop;
 pub mod hotkey;
 pub mod insert;
+pub mod journal;
 pub mod keyhook;
+pub mod rules;
 pub mod session;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use bolo_core::{BoloError, DictationState, Engine, EngineConfig, Polish};
-use bolo_store::{PushToTalkKey, Settings};
+use bolo_core::{ANTHROPIC, ApiKeys, BoloError, DictationState, Engine, EngineConfig, Polish};
+use bolo_store::{History, PushToTalkKey, Secrets, Settings};
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -33,8 +37,10 @@ use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent, Wry};
 use controller::{AppEvent, Controller, Emit};
 use desktop::{Desktop, WinDesktop};
 use hotkey::{Command, Flags};
-use insert::{Inserter, Target, ThreadTimer};
+use insert::{Inserter, ThreadTimer};
+use journal::Journal;
 use keyhook::{Handler, KeyHook};
+use rules::{AppRules, Plan, PolishPrefs};
 use session::{Session, Toggled};
 
 /// The one Tauri event every [`AppEvent`] is sent on.
@@ -85,7 +91,11 @@ struct Bolo {
     engine: Mutex<Option<Engine>>,
     session: Mutex<Session>,
     desktop: Arc<dyn Desktop>,
+    /// The bundled app rules and the user's polish settings, for each dictation's plan.
+    rules: AppRules,
+    prefs: PolishPrefs,
     inserter: Arc<Inserter>,
+    journal: Arc<Journal>,
     emit: Arc<dyn Emit>,
     /// Why the config or the engine could not be built at startup, for the debug window.
     startup_error: Mutex<Option<String>>,
@@ -102,28 +112,42 @@ impl Bolo {
     fn engine(&self) -> Result<MutexGuard<'_, Option<Engine>>, BoloError> {
         let mut engine = lock(&self.engine);
         if engine.is_none() {
-            let events = Box::new(Controller::new(self.emit.clone(), self.flags.clone(), self.inserter.clone()));
+            let events = Box::new(Controller::new(
+                self.emit.clone(),
+                self.flags.clone(),
+                self.inserter.clone(),
+                self.journal.clone(),
+            ));
             *engine = Some(Engine::new(self.config.clone(), events)?);
+            lock(&self.session).engine_replaced();
             *lock(&self.startup_error) = None;
         }
         Ok(engine)
     }
 
-    /// A dictation started: tell the inserter how its text goes in. Every app gets the
-    /// defaults until the app rules land (ticket 07).
-    fn begin(&self) {
-        self.inserter.begin(Target::default(), matches!(self.config.polish, Polish::On { .. }));
+    /// The plan for a dictation into the window in front.
+    fn plan(&self) -> Plan {
+        let fg = self.desktop.foreground().unwrap_or_default();
+        rules::plan(&fg.exe, &fg.title, &self.rules, &self.prefs)
+    }
+
+    /// A dictation started: tell the inserter how its text goes in, and history where.
+    fn begin(&self, started: &Toggled) {
+        if let Toggled::Started { app, target, polish } = started {
+            self.inserter.begin(*target, *polish);
+            self.journal.begin(app, target.format);
+        }
     }
 
     fn toggle(&self) {
         let result = self.engine().and_then(|engine| match engine.as_ref() {
-            Some(e) => lock(&self.session).toggle(e, self.desktop.as_ref()),
+            Some(e) => lock(&self.session).toggle(e, || self.plan()),
             None => Err(BoloError::Stopped),
         });
         match result {
-            Ok(Toggled::Started { app }) => {
-                self.begin();
-                tracing::info!(%app, "dictation started");
+            Ok(started @ Toggled::Started { .. }) => {
+                self.begin(&started);
+                tracing::info!(?started, "dictation started");
             }
             Ok(Toggled::Stopped) => tracing::info!("dictation stopped"),
             Ok(Toggled::Paused) => tracing::info!("paused; not starting"),
@@ -139,12 +163,10 @@ impl Bolo {
     fn push_to_talk(&self, command: Command) {
         let result = self.engine().and_then(|engine| {
             let Some(e) = engine.as_ref() else { return Err(BoloError::Stopped) };
-            let session = lock(&self.session);
+            let mut session = lock(&self.session);
             match command {
-                Command::Start => session.press(e, self.desktop.as_ref()).map(|t| {
-                    if matches!(t, Toggled::Started { .. }) {
-                        self.begin();
-                    }
+                Command::Start => session.press(e, || self.plan()).map(|t| {
+                    self.begin(&t);
                     tracing::info!(?t, "push-to-talk held");
                 }),
                 Command::Stop => {
@@ -306,23 +328,24 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     .build(app)?;
 
     let emit: Arc<dyn Emit> = Arc::new(TauriEmit { app: app.handle().clone(), tray: TrayItems { toggle, pause } });
-    let models_dir = bolo_models::default_models_root().unwrap_or_default();
-    let (config, config_error) = match config::engine_config(|k| std::env::var(k).ok(), models_dir.clone()) {
-        Ok(c) => (c, None),
-        Err(e) => {
-            tracing::error!(%e, "bad BOLO_* setting; using the defaults");
-            (EngineConfig { models_dir, ..Default::default() }, Some(e))
-        }
-    };
+    let settings = load_settings();
+    let (config, config_error) = engine_config(&settings);
     tracing::info!(engines = ?config.engines, language = ?config.language, models = %config.models_dir.display(), "engine config");
-    // Only the key comes from settings so far; the rest arrives with tickets 07 and 09.
-    let push_to_talk = match Settings::default_path().and_then(|p| Settings::load(&p)) {
-        Ok(loaded) => loaded.settings.push_to_talk,
-        Err(e) => {
-            tracing::warn!(%e, "could not read the settings; push-to-talk is Caps Lock");
-            PushToTalkKey::default()
-        }
+    let prefs = PolishPrefs {
+        // Without the key polish never runs, so the switch only matters with one; then
+        // the config says whether settings (or BOLO_POLISH) turned it on.
+        enabled: matches!(config.polish, Polish::On { .. }),
+        tone: match &config.polish {
+            Polish::On { tone, .. } => tone.clone(),
+            Polish::Off => settings.polish.tone.clone(),
+        },
+        dictionary: config.dictionary.clone(),
+        apps: settings.polish.apps.clone(),
+        has_key: config.api_keys.get(ANTHROPIC).is_some(),
     };
+    let journal = Arc::new(Journal::new(open_history(&settings)));
+    keep_pruning(journal.clone(), settings.history.retention_days);
+    let push_to_talk: PushToTalkKey = settings.push_to_talk;
     let desktop: Arc<dyn Desktop> = Arc::new(WinDesktop);
     let flags = Arc::new(Flags::default());
     let hook_thread = Arc::new(AtomicU32::new(0));
@@ -336,7 +359,10 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         engine: Mutex::new(None),
         session: Mutex::new(Session::default()),
         desktop,
+        rules: AppRules::bundled(),
+        prefs,
         inserter,
+        journal,
         emit,
         startup_error: Mutex::new(config_error),
         flags,
@@ -351,6 +377,74 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(bolo);
     app.state::<Bolo>().install_hook(app.handle());
     Ok(())
+}
+
+/// The settings file, or the defaults if it can't be read.
+fn load_settings() -> Settings {
+    match Settings::default_path().and_then(|p| Settings::load(&p)) {
+        Ok(loaded) => {
+            if let Some(backup) = &loaded.recovered_from {
+                tracing::warn!(backup = %backup.display(), "the settings file was bad; it was replaced with the defaults");
+            }
+            loaded.settings
+        }
+        Err(e) => {
+            tracing::warn!(%e, "could not read the settings; using the defaults");
+            Settings::default()
+        }
+    }
+}
+
+/// The engine config from settings and the stored keys, with any `BOLO_*` variables on
+/// top. A bad variable is reported and ignored.
+fn engine_config(settings: &Settings) -> (EngineConfig, Option<String>) {
+    let keys = match Secrets::os() {
+        Ok(s) => s.api_keys().clone(),
+        Err(e) => {
+            tracing::warn!(%e, "could not open the credential store; no API keys");
+            ApiKeys::default()
+        }
+    };
+    let base = settings.engine_config_with_keys(keys);
+    match config::engine_config(|k| std::env::var(k).ok(), base.clone()) {
+        Ok(c) => (c, None),
+        Err(e) => {
+            tracing::error!(%e, "bad BOLO_* variable; using the settings");
+            (base, Some(e))
+        }
+    }
+}
+
+/// The history database, recording or not as settings say, pruned now. `None` if it
+/// can't be opened: dictation still works, unrecorded.
+fn open_history(settings: &Settings) -> Option<History> {
+    let opened = History::default_path().and_then(|p| History::open(&p));
+    let mut history = opened.inspect_err(|e| tracing::warn!(%e, "could not open history")).ok()?;
+    history.set_enabled(settings.history.enabled);
+    prune(&mut history, settings.history.retention_days);
+    Some(history)
+}
+
+fn prune(history: &mut History, retention_days: u32) {
+    match history.prune(retention_days, bolo_store::history::now_ms()) {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(n, retention_days, "pruned old history"),
+        Err(e) => tracing::warn!(%e, "could not prune history"),
+    }
+}
+
+/// Prune history once a day while Bolo runs.
+fn keep_pruning(journal: Arc<Journal>, retention_days: u32) {
+    const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+    let spawned = std::thread::Builder::new().name("bolo-history-prune".into()).spawn(move || {
+        loop {
+            std::thread::sleep(DAY);
+            journal.with_history(|h| prune(h, retention_days));
+        }
+    });
+    if let Err(e) = spawned {
+        tracing::warn!(%e, "could not start the daily history prune");
+    }
 }
 
 /// Run the app until the user quits from the tray.

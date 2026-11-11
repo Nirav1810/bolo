@@ -1,5 +1,5 @@
-//! The engine config: defaults plus `BOLO_*` environment variables, until settings land
-//! in `bolo-store` (ticket 02).
+//! `BOLO_*` environment variables on top of the engine config from settings: handy in
+//! development, and unset in normal use. A variable that's set wins over the setting.
 //!
 //! | Variable | Value |
 //! |---|---|
@@ -17,13 +17,13 @@ use bolo_core::{ANTHROPIC, EngineConfig, HinglishScript, LanguageMode, Polish};
 
 const PROVIDERS: [&str; 4] = ["deepgram", "groq", "sarvam", ANTHROPIC];
 
-/// The engine config from `var` (a lookup like [`std::env::var`]) on top of the
-/// defaults. `models_dir` is the ADR-007 location, used unless `BOLO_MODELS_DIR` is set.
-pub fn engine_config(var: impl Fn(&str) -> Option<String>, models_dir: PathBuf) -> Result<EngineConfig, String> {
+/// `base` (the config from settings) with the variables `var` (a lookup like
+/// [`std::env::var`]) has set.
+pub fn engine_config(var: impl Fn(&str) -> Option<String>, base: EngineConfig) -> Result<EngineConfig, String> {
     let var = |name: &str| var(name).map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
     let list = |v: String| v.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect::<Vec<_>>();
 
-    let mut config = EngineConfig { models_dir, ..Default::default() };
+    let mut config = base;
     if let Some(engines) = var("BOLO_ENGINES").map(list).filter(|l| !l.is_empty()) {
         config.engines = engines;
     }
@@ -54,7 +54,8 @@ pub fn engine_config(var: impl Fn(&str) -> Option<String>, models_dir: PathBuf) 
         }
     }
     config.polish = match var("BOLO_POLISH").map(|v| v.to_lowercase()).as_deref() {
-        None | Some("off") => Polish::Off,
+        None => config.polish,
+        Some("off") => Polish::Off,
         Some(tone) => {
             if config.api_keys.get(ANTHROPIC).is_none() {
                 return Err("BOLO_POLISH needs ANTHROPIC_API_KEY".into());
@@ -77,11 +78,14 @@ mod tests {
 
     fn config(vars: &[(&str, &str)]) -> Result<EngineConfig, String> {
         let vars: HashMap<String, String> = vars.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect();
-        engine_config(|k| vars.get(k).cloned(), PathBuf::from("models"))
+        engine_config(
+            |k| vars.get(k).cloned(),
+            EngineConfig { models_dir: PathBuf::from("models"), ..Default::default() },
+        )
     }
 
     #[test]
-    fn no_variables_gives_the_defaults_and_the_adr_007_models_dir() {
+    fn no_variables_gives_the_base_config() {
         let c = config(&[]).unwrap();
         let d = EngineConfig::default();
         assert_eq!(c.engines, d.engines);
@@ -136,5 +140,14 @@ mod tests {
     fn bad_values_are_reported_with_the_variable() {
         assert!(config(&[("BOLO_LANGUAGE", "french")]).unwrap_err().starts_with("BOLO_LANGUAGE=french"));
         assert!(config(&[("BOLO_SCRIPT", "latin")]).unwrap_err().starts_with("BOLO_SCRIPT=latin"));
+    }
+
+    #[test]
+    fn unset_polish_keeps_the_base_and_off_turns_it_off() {
+        let on = Polish::On { tone: "formal".into(), app: String::new(), dictionary: vec![] };
+        let base = || EngineConfig { polish: on.clone(), ..Default::default() };
+        assert_eq!(engine_config(|_| None, base()).unwrap().polish, on);
+        let off = engine_config(|k| (k == "BOLO_POLISH").then(|| "off".into()), base()).unwrap();
+        assert_eq!(off.polish, Polish::Off);
     }
 }

@@ -57,7 +57,7 @@ pub enum OutputFormat {
 
 /// Where the text is going. Desktop: foreground exe (+ window title for browsers).
 /// Android: `EditorInfo.packageName` + input type.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TargetContext {
     pub app_id: String,
     pub window_title: Option<String>,
@@ -352,8 +352,17 @@ impl Engine {
         let _ = self.send(Cmd::Release);
     }
 
+    /// Replace the whole config. The STT engine is dropped and rebuilt (the local model
+    /// reloads) on the next dictation, so use [`Self::set_polish`] when only polish changes.
     pub fn update_config(&self, config: EngineConfig) {
         let _ = self.send(Cmd::UpdateConfig(Box::new(config)));
+    }
+
+    /// Change polish alone, from the next dictation on; the model stays loaded. The
+    /// desktop app calls this per dictation as the target app's polish decision changes.
+    /// A polish already running for the last dictation is unaffected.
+    pub fn set_polish(&self, polish: Polish) {
+        let _ = self.send(Cmd::SetPolish(polish));
     }
 
     pub fn state(&self) -> DictationState {

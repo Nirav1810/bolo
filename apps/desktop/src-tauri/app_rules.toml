@@ -1,0 +1,109 @@
+# Bolo's app rules: how dictated text goes into each Windows app (M3 spec, ADR-0018).
+# Bundled into the app; the user's per-app polish choices in settings win over `polish`.
+#
+# The first rule that matches wins. A rule matches when the window in front belongs to
+# one of its `exe` names (lower-case image names). A rule with `title` and no `exe`
+# matches the `browsers` below when the window title contains `title`, ignoring case.
+# Apps that no rule matches get the defaults: plain text, Ctrl+V, polish as the global
+# setting says, no multi-line swap.
+#
+# Fields:
+#   name                 the app's name, given to polish ("Gmail", "Slack")
+#   format               plain | markdown | html
+#   code_mode            no sentence capitalisation or trailing period
+#   polish               false turns polish off here; unset follows the global setting
+#   paste                ctrl-v | shift-insert
+#   multiline_swap_safe  the app counts a pasted line break as one Shift+Left, so the
+#                        polish swap may replace multi-line text. Set it only for an app
+#                        checked by hand.
+
+browsers = ["chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "arc.exe"]
+
+# Browsers, by the page in the tab.
+
+[[rule]]
+name = "Gmail"
+title = "gmail"
+format = "html"
+
+# Code editors and terminals: code mode, no polish.
+
+[[rule]]
+name = "VS Code"
+exe = ["code.exe", "code - insiders.exe"]
+code_mode = true
+polish = false
+
+[[rule]]
+name = "Cursor"
+exe = ["cursor.exe"]
+code_mode = true
+polish = false
+
+[[rule]]
+name = "IntelliJ IDEA"
+exe = ["idea64.exe"]
+code_mode = true
+polish = false
+
+[[rule]]
+name = "Visual Studio"
+exe = ["devenv.exe"]
+code_mode = true
+polish = false
+
+[[rule]]
+name = "Terminal"
+exe = [
+    "windowsterminal.exe",
+    "wezterm-gui.exe",
+    "alacritty.exe",
+    "conhost.exe",
+    "openconsole.exe",
+    "cmd.exe",
+    "powershell.exe",
+    "pwsh.exe",
+]
+code_mode = true
+polish = false
+
+[[rule]]
+name = "Git Bash"
+exe = ["mintty.exe"]
+code_mode = true
+polish = false
+paste = "shift-insert"
+
+# Rich text: HTML.
+
+[[rule]]
+name = "Word"
+exe = ["winword.exe"]
+format = "html"
+
+[[rule]]
+name = "Outlook"
+exe = ["outlook.exe", "olk.exe"]
+format = "html"
+
+# Markdown.
+
+[[rule]]
+name = "Slack"
+exe = ["slack.exe"]
+format = "markdown"
+
+[[rule]]
+name = "Notion"
+exe = ["notion.exe"]
+format = "markdown"
+
+[[rule]]
+name = "Obsidian"
+exe = ["obsidian.exe"]
+format = "markdown"
+
+[[rule]]
+name = "Discord"
+exe = ["discord.exe"]
+format = "markdown"
