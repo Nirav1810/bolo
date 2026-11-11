@@ -2,7 +2,7 @@
   // The settings window (M3 ticket 09, design approved in ticket 04): a Windows 11
   // Settings layout, left nav and setting cards. Every change is saved and applied at
   // once by Rust (src-tauri/src/commands.rs); there is no Save button.
-  import { api, type Form, type SettingsView } from "../lib/api";
+  import { api, variant, type Form, type SettingsView } from "../lib/api";
   import General from "./General.svelte";
   import Engines from "./Engines.svelte";
   import Polish from "./Polish.svelte";
@@ -21,7 +21,7 @@
     ["about", "About"],
   ] as const;
 
-  let view: SettingsView | null = $state(null);
+  let view = $state<SettingsView | null>(null);
   let error = $state("");
 
   async function load() {
@@ -65,6 +65,7 @@
   });
 
   const title = $derived(TABS.find(([id]) => id === tab)?.[1] ?? "Settings");
+  const build = $derived(view ? variant(view.version) : null);
 </script>
 
 <div class="flex h-screen">
@@ -81,6 +82,22 @@
         {label}
       </button>
     {/each}
+    {#if view && build}
+      <!-- Which build this is, on every page: a Nightly must never pass for a release. -->
+      <button
+        type="button"
+        class="variant mt-auto flex w-full items-center gap-2 rounded-[4px] px-3 py-2 text-left hover:bg-hover"
+        class:nightly={build.nightly}
+        title="Bolo {view.version}. Open About for updates and the channel."
+        onclick={() => (tab = "about")}
+      >
+        <span class="dot" aria-hidden="true"></span>
+        <span class="flex min-w-0 flex-col">
+          <span class="text-[13px] font-semibold">{build.name}</span>
+          <span class="caption truncate">{view.version}</span>
+        </span>
+      </button>
+    {/if}
   </nav>
 
   <main
@@ -109,3 +126,22 @@
     {/if}
   </main>
 </div>
+
+<style>
+  .variant .dot {
+    width: 8px;
+    height: 8px;
+    flex: none;
+    border-radius: 999px;
+    background: var(--bolo-text-2);
+  }
+  .variant.nightly {
+    background: var(--bolo-nightly-soft);
+  }
+  .variant.nightly .dot {
+    background: var(--bolo-nightly);
+  }
+  .variant.nightly span {
+    color: var(--bolo-nightly);
+  }
+</style>

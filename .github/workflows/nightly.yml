@@ -1,7 +1,8 @@
 name: nightly
 
-# Every push to `main` publishes a signed desktop installer to the rolling `nightly`
-# prerelease (ADR-0019). Its version, the next minor plus `-nightly.<YYYYMMDD>.<run>`, is
+# Every push to `main` publishes a signed installer of Bolo Nightly, a separate app with
+# its own name, icon and install folder (tauri.nightly.conf.json), to the rolling
+# `nightly` prerelease (ADR-0019). Its version, the next minor plus `-nightly.<YYYYMMDD>.<run>`, is
 # written into the manifests for this build only. The app's Nightly channel reads
 # releases/download/nightly/latest.json.
 on:
@@ -52,11 +53,11 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
-      - name: Build the signed desktop installer
+      - name: Build the signed Bolo Nightly installer
         working-directory: apps/desktop
         run: |
           npm ci
-          npx tauri build --bundles nsis
+          npx tauri build --bundles nsis --config src-tauri/tauri.nightly.conf.json
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -65,14 +66,16 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           mkdir -p dist
-          setup="Bolo_${VERSION}_x64-setup.exe"
-          cp "target/release/bundle/nsis/$setup" "target/release/bundle/nsis/$setup.sig" dist/
+          built="target/release/bundle/nsis/Bolo Nightly_${VERSION}_x64-setup.exe"
+          setup="Bolo-Nightly_${VERSION}_x64-setup.exe"
+          cp "$built" "dist/$setup"
+          cp "$built.sig" "dist/$setup.sig"
           python -I -c "import hashlib,sys; p=sys.argv[1]; open(p+'.sha256','wb').write(f'{hashlib.sha256(open(p,\"rb\").read()).hexdigest()}  {p.split(\"/\")[-1]}\n'.encode())" "dist/$setup"
           cat "dist/$setup.sha256"
       - name: Smoke-test the installer
         shell: pwsh
         run: |
-          $setup = (Get-Item dist\Bolo_*_x64-setup.exe).FullName
+          $setup = (Get-Item dist\Bolo-Nightly_*_x64-setup.exe).FullName
           $dir = Join-Path $env:RUNNER_TEMP bolo-install
           Start-Process $setup -ArgumentList "/S", "/D=$dir" -Wait
           foreach ($f in "bolo-desktop.exe", "onnxruntime.dll", "sherpa-onnx-c-api.dll", "uninstall.exe") {
@@ -107,7 +110,7 @@ jobs:
           fi
           # Upload first (latest.json last, so the feed never names a missing installer),
           # then drop the previous build's assets.
-          keep=(dist/Bolo_*_x64-setup.exe dist/Bolo_*_x64-setup.exe.sig dist/Bolo_*_x64-setup.exe.sha256)
+          keep=(dist/Bolo-Nightly_*_x64-setup.exe dist/Bolo-Nightly_*_x64-setup.exe.sig dist/Bolo-Nightly_*_x64-setup.exe.sha256)
           gh release upload nightly --clobber "${keep[@]}"
           gh release upload nightly --clobber dist/latest.json
           for asset in $(gh release view nightly --json assets -q '.assets[].name'); do

@@ -90,28 +90,6 @@ impl Default for HistorySettings {
     }
 }
 
-/// Which builds the app updates to (ADR-0019).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum UpdateChannel {
-    /// The `vX.Y.Z` releases.
-    Beta,
-    /// A build of every push to `main`.
-    Nightly,
-}
-
-/// Self-update (ADR-0019).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct UpdateSettings {
-    /// `None` until the user picks one: the build's own channel then applies (a nightly
-    /// follows Nightly, a release Beta).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub channel: Option<UpdateChannel>,
-    #[serde(flatten)]
-    pub unknown: Table,
-}
-
 /// The overlay pill's always-on idle button (M3 ticket 15).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -148,7 +126,6 @@ pub struct Settings {
     pub polish: PolishSettings,
     pub history: HistorySettings,
     pub overlay: OverlaySettings,
-    pub updates: UpdateSettings,
     /// First-run onboarding's step while it's unfinished (0 = welcome); `None` once it's
     /// done. A settings file from before onboarding existed has none, so it isn't shown.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -171,7 +148,6 @@ impl Default for Settings {
             polish: PolishSettings::default(),
             history: HistorySettings::default(),
             overlay: OverlaySettings::default(),
-            updates: UpdateSettings::default(),
             onboarding_step: None,
             unknown: Table::new(),
         }
@@ -384,7 +360,6 @@ mod tests {
         s.history.retention_days = 7;
         s.overlay.idle_button = false;
         s.overlay.position = 0.25;
-        s.updates.channel = Some(UpdateChannel::Nightly);
         s
     }
 
@@ -411,17 +386,6 @@ mod tests {
         Settings::default().save(&path).unwrap();
         assert!(!fs::read_to_string(&path).unwrap().contains("onboarding"));
         assert_eq!(Settings::load(&path).unwrap().settings.onboarding_step, None);
-    }
-
-    #[test]
-    fn the_update_channel_is_absent_until_chosen() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("settings.toml");
-        Settings::default().save(&path).unwrap();
-        let text = fs::read_to_string(&path).unwrap();
-        assert!(!text.contains("channel"), "{text}");
-        fs::write(&path, "version = 1\n\n[updates]\nchannel = \"nightly\"\n").unwrap();
-        assert_eq!(Settings::load(&path).unwrap().settings.updates.channel, Some(UpdateChannel::Nightly));
     }
 
     #[test]

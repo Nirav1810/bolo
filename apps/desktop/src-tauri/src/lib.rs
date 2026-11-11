@@ -13,7 +13,8 @@
 //! - [`form`] is what the settings window edits, [`models`] the local models and their
 //!   downloads, [`keys`] the API key check, [`mic`] onboarding's mic check; [`commands`]
 //!   are the windows' calls.
-//! - [`updates`] is the self-updater and its Beta/Nightly channels (ADR-0019).
+//! - [`variant`] says whether this is Bolo or Bolo Nightly, and [`updates`] keeps it up
+//!   to date from its own feed (ADR-0019).
 //!
 //! The app lives in the tray, runs as a single instance and keeps running when its
 //! windows close. Holding the push-to-talk key (Caps Lock by default, ADR-0017) dictates;
@@ -37,6 +38,7 @@ pub mod pointer;
 pub mod rules;
 pub mod session;
 pub mod updates;
+pub mod variant;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -44,7 +46,7 @@ use std::time::{Duration, Instant};
 
 use bolo_core::{ANTHROPIC, ApiKeys, BoloError, DictationState, Engine, EngineConfig, Polish};
 use bolo_models::Manifest;
-use bolo_store::{History, PushToTalkKey, Secrets, Settings, UpdateChannel};
+use bolo_store::{History, PushToTalkKey, Secrets, Settings};
 use serde::Serialize;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -62,6 +64,7 @@ use overlay::{Clicks, HitRegion, Overlay};
 use rules::{AppRules, Plan, PolishPrefs};
 use session::{Session, Toggled};
 use updates::Updates;
+use variant::Variant;
 
 /// The one Tauri event every [`AppEvent`] is sent on.
 pub const EVENT: &str = "bolo://event";
@@ -277,6 +280,11 @@ impl Bolo {
             return;
         }
         let key = *lock(&self.push_to_talk);
+        // Bolo and Bolo Nightly never both hold the key: the other one pauses.
+        let other = Variant::current().other();
+        if variant::ask_to_step_aside(other) {
+            tracing::info!(other = other.product_name(), "asked the other Bolo to pause");
+        }
         match KeyHook::install(key, self.flags.clone(), PushToTalk(app.clone())) {
             Ok(h) => {
                 tracing::info!(?key, "push-to-talk on");
@@ -305,18 +313,27 @@ impl Bolo {
         drop(lock(&self.engine).take());
     }
 
-    /// The update channel: the user's pick, else the build's own.
-    fn channel(&self) -> UpdateChannel {
-        lock(&self.settings).updates.channel.unwrap_or_else(|| updates::build_channel(updates::VERSION))
+    /// The other Bolo started or resumed: pause, and say why.
+    fn step_aside(&self, app: &AppHandle) {
+        if lock(&self.session).paused() {
+            return;
+        }
+        let other = Variant::current().other().product_name();
+        tracing::info!(other, "pausing: the other Bolo took push-to-talk");
+        self.set_paused(true, app);
+        self.emit.emit(AppEvent::Notice {
+            message: format!("Paused while {other} runs"),
+            hint: Some("Resume from the tray".into()),
+        });
     }
 
     /// Look for an update on a thread of its own.
     fn check_for_update(&self, app: &AppHandle, manual: bool) {
-        let (app, channel) = (app.clone(), self.channel());
+        let app = app.clone();
         let spawned = std::thread::Builder::new().name("bolo-update-check".into()).spawn(move || {
             let exit_app = app.clone();
             let before_exit: updates::BeforeExit = Arc::new(move || exit_app.state::<Bolo>().shut_down());
-            updates::check(&app, &app.state::<Bolo>().updates, channel, manual, before_exit);
+            updates::check(&app, &app.state::<Bolo>().updates, manual, before_exit);
         });
         if let Err(e) = spawned {
             tracing::warn!(%e, "could not start an update check");
@@ -526,7 +543,7 @@ fn init_logging() {
     // %LOCALAPPDATA%\Bolo\data\logs, next to the models (ADR-007).
     let file = bolo_models::default_models_root()
         .and_then(|m| m.parent().map(|d| d.join("logs")))
-        .and_then(|dir| std::fs::create_dir_all(&dir).ok().map(|()| dir.join("desktop.log")))
+        .and_then(|dir| std::fs::create_dir_all(&dir).ok().map(|()| dir.join(Variant::current().log_file())))
         .and_then(|path| std::fs::OpenOptions::new().create(true).append(true).open(path).ok());
     let builder = tracing_subscriber::fmt().with_env_filter(filter).with_ansi(false);
     let _ = match file {
@@ -554,9 +571,13 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         settings.overlay.idle_button,
         None::<&str>,
     )?;
+    // Which build this is, first in the menu: a Nightly must never pass for a release.
+    let header = MenuItem::with_id(app, "version", variant::title(variant::VERSION), false, None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[
+            &header,
+            &PredefinedMenuItem::separator(app)?,
             &toggle,
             &pause,
             &idle_button,
@@ -572,10 +593,11 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // Shown at the top of the menu only while an update is available.
     let update_item = MenuItem::with_id(app, "update", "Update Bolo", true, None::<&str>)?;
     let mut tray = TrayIconBuilder::with_id("bolo")
-        .tooltip(updates::title(updates::VERSION))
+        .tooltip(variant::title(variant::VERSION))
         .menu(&menu)
         .show_menu_on_left_click(true);
     if let Some(icon) = app.default_window_icon() {
+        // Bolo Nightly builds with its own (violet) icons: tauri.nightly.conf.json.
         tray = tray.icon(icon.clone());
     }
     tray.on_menu_event(|app, event| {
@@ -627,7 +649,8 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         match version {
             Some(v) => {
                 let _ = update_item.set_text(format!("Restart to update to {v}"));
-                if !shown && let Err(e) = menu.insert(&update_item, 0) {
+                // Under the version line and its separator.
+                if !shown && let Err(e) = menu.insert(&update_item, 2) {
                     tracing::warn!(%e, "could not add the update item to the tray");
                 }
             }
@@ -688,6 +711,12 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(bolo);
     app.state::<Bolo>().install_hook(app.handle());
     keep_checking_for_updates(app.handle().clone());
+    let handle = app.handle().clone();
+    if let Err(e) = variant::listen_for_step_aside(Variant::current(), move || {
+        handle.state::<Bolo>().step_aside(&handle);
+    }) {
+        tracing::warn!(%e, "could not listen for the other Bolo");
+    }
     // First run (or onboarding left unfinished): open it.
     if onboarding {
         show_window(app.handle(), "onboarding");
@@ -826,7 +855,7 @@ fn keep_checking_for_updates(app: AppHandle) {
 /// Run the app until the user quits from the tray.
 pub fn run() {
     init_logging();
-    tracing::info!(version = env!("CARGO_PKG_VERSION"), "Bolo desktop starting");
+    tracing::info!(version = variant::VERSION, app = Variant::current().product_name(), "Bolo desktop starting");
     let app = tauri::Builder::default()
         // First, so a second launch exits before it builds anything.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_window(app, "settings")))
@@ -856,7 +885,6 @@ pub fn run() {
             commands::update_view,
             commands::update_check,
             commands::update_install,
-            commands::update_channel,
         ])
         .setup(setup)
         .on_window_event(|window, event| {

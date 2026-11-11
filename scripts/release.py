@@ -260,7 +260,9 @@ def trunk_errors(fetch: bool = True) -> list[str]:
     if dirty := run("git", "status", "--porcelain"):
         errors.append("working tree is not clean:\n" + dirty)
     if fetch:
-        run("git", "fetch", "--quiet", "--tags", "origin", MAIN_REFSPEC)
+        # --force: the rolling `nightly` tag moves on every build (ADR-0019), and a plain
+        # fetch refuses to update a tag that moved. Release tags never move.
+        run("git", "fetch", "--quiet", "--force", "--tags", "origin", MAIN_REFSPEC)
         head, upstream = run("git", "rev-parse", "HEAD"), run("git", "rev-parse", f"origin/{MAIN}")
         if head != upstream:
             errors.append(f"HEAD {head[:7]} is not origin/{MAIN} {upstream[:7]}; pull first")
@@ -411,8 +413,11 @@ PACKAGING = ROOT / "packaging" / "windows"
 
 
 def installer_name(version: str) -> str:
-    """The desktop app's NSIS installer, as Tauri names it."""
-    return f"Bolo_{version}_x64-setup.exe"
+    """The desktop installer as published. A nightly is the separate app "Bolo Nightly"
+    (ADR-0019); Tauri names its installer `Bolo Nightly_...`, and the space becomes a dash
+    because GitHub would turn it into a dot."""
+    product = "Bolo-Nightly" if NIGHTLY_RE.match(version) else "Bolo"
+    return f"{product}_{version}_x64-setup.exe"
 
 
 def write_sha256(path: Path) -> str:

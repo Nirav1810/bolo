@@ -1,67 +1,25 @@
-//! Self-update (ADR-0019): which channel a build belongs to, where its feed is, and what
-//! the settings window shows. [`Updater`] runs `tauri-plugin-updater` against the chosen
-//! channel's feed; everything above it is pure and tested.
+//! Self-update (ADR-0019). Each app follows its own feed: Bolo the releases, Bolo Nightly
+//! the nightlies ([`crate::variant`]). [`check`] and [`install`] run
+//! `tauri-plugin-updater`; the state above them is pure and tested.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use bolo_store::UpdateChannel;
 use semver::Version;
 use serde::Serialize;
-
 use tauri::AppHandle;
 
 use crate::controller::{AppEvent, Emit};
 use crate::lock;
+use crate::variant::{self, Variant};
 
-/// The Beta feed: `/releases/latest/` is the newest release (they're not prereleases).
-pub const BETA_FEED: &str = "https://github.com/Nirav1810/bolo/releases/latest/download/latest.json";
-/// The Nightly feed: the rolling `nightly` release, rebuilt on every push to `main`.
-pub const NIGHTLY_FEED: &str = "https://github.com/Nirav1810/bolo/releases/download/nightly/latest.json";
 /// How often a running Bolo looks for an update, after the check at launch.
 pub const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 /// The check at launch waits this long, so it doesn't compete with loading the model.
 pub const FIRST_CHECK_AFTER: Duration = Duration::from_secs(20);
 
-/// Whether `version` is a nightly build.
-pub fn is_nightly(version: &str) -> bool {
-    version.contains("-nightly.")
-}
-
-/// The channel a build follows until the user picks one.
-pub fn build_channel(version: &str) -> UpdateChannel {
-    if is_nightly(version) { UpdateChannel::Nightly } else { UpdateChannel::Beta }
-}
-
-/// The label next to the version: Nightly for nightlies, Beta for every 0.x release,
-/// none from 1.0 on.
-pub fn badge(version: &str) -> Option<&'static str> {
-    if is_nightly(version) {
-        Some("Nightly")
-    } else if version.starts_with("0.") {
-        Some("Beta")
-    } else {
-        None
-    }
-}
-
-/// `Bolo 0.4.0 Beta`, for the tray tooltip.
-pub fn title(version: &str) -> String {
-    match badge(version) {
-        Some(b) => format!("Bolo {version} {b}"),
-        None => format!("Bolo {version}"),
-    }
-}
-
-pub fn feed(channel: UpdateChannel) -> &'static str {
-    match channel {
-        UpdateChannel::Beta => BETA_FEED,
-        UpdateChannel::Nightly => NIGHTLY_FEED,
-    }
-}
-
-/// Updates only go forward: switching from Nightly back to Beta waits for a release newer
-/// than the nightly. `0.4.0-nightly.*` sorts below `0.4.0`, so the release overtakes it.
+/// Updates only go forward. `0.4.0-nightly.*` sorts below `0.4.0`, and the first nightly
+/// after a release above it.
 pub fn is_newer(current: &Version, offered: &Version) -> bool {
     offered > current
 }
@@ -110,9 +68,32 @@ impl Status {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct View {
     pub version: String,
+    pub product: &'static str,
+    pub variant: Variant,
     pub badge: Option<&'static str>,
-    pub channel: UpdateChannel,
+    /// The other app, to install next to this one.
+    pub other: Other,
     pub status: Status,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Other {
+    pub product: &'static str,
+    pub url: String,
+}
+
+impl View {
+    pub fn now(status: Status) -> Self {
+        let variant = Variant::current();
+        Self {
+            version: variant::VERSION.into(),
+            product: variant.product_name(),
+            variant,
+            badge: variant::badge(variant::VERSION),
+            other: Other { product: variant.other().product_name(), url: variant.other().download_page() },
+            status,
+        }
+    }
 }
 
 /// Told the available version, or `None`, when that changes.
@@ -180,22 +161,20 @@ impl Updates {
     }
 }
 
-/// This build's version.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
 /// Runs just before the installer starts and Bolo exits (the plugin exits on Windows):
 /// let go of the keyboard and the mic.
 pub type BeforeExit = Arc<dyn Fn() + Send + Sync>;
 
-/// Check `channel`'s feed now. Blocking; run it off the main thread. A failed background
+/// Check this app's feed now. Blocking; run it off the main thread. A failed background
 /// check is logged only; a `manual` one is shown.
-pub fn check(app: &AppHandle, updates: &Updates, channel: UpdateChannel, manual: bool, before_exit: BeforeExit) {
+pub fn check(app: &AppHandle, updates: &Updates, manual: bool, before_exit: BeforeExit) {
     use tauri_plugin_updater::UpdaterExt;
 
     if !updates.begin_check() {
         return;
     }
-    let url = feed(channel);
+    let variant = Variant::current();
+    let url = variant.feed();
     let found = tauri::async_runtime::block_on(async {
         let endpoint = url.parse().map_err(|e| format!("bad feed URL {url}: {e}"))?;
         let updater = app
@@ -210,20 +189,20 @@ pub fn check(app: &AppHandle, updates: &Updates, channel: UpdateChannel, manual:
     });
     match found {
         Ok(Some(update)) => {
-            tracing::info!(version = %update.version, ?channel, "update available");
+            tracing::info!(version = %update.version, ?variant, "update available");
             let status = Status::Available { version: update.version.clone(), notes: update.body.clone() };
             updates.offer(Some(&update.version));
             *lock(&updates.pending) = Some(update);
             updates.set(status);
         }
         Ok(None) => {
-            tracing::info!(?channel, "up to date");
+            tracing::info!(?variant, "up to date");
             *lock(&updates.pending) = None;
             updates.offer(None);
             updates.set(Status::UpToDate);
         }
         Err(message) => {
-            tracing::warn!(%message, ?channel, manual, "update check failed");
+            tracing::warn!(%message, ?variant, manual, "update check failed");
             // A quiet re-check that fails keeps the update the last one found.
             let pending = lock(&updates.pending)
                 .as_ref()
@@ -273,21 +252,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn badges_follow_the_version() {
-        assert_eq!(badge("0.4.0"), Some("Beta"));
-        assert_eq!(badge("0.5.0-nightly.20261111.7"), Some("Nightly"));
-        assert_eq!(badge("1.2.0-nightly.20270101.1"), Some("Nightly"));
-        assert_eq!(badge("1.0.0"), None);
-        assert_eq!(title("0.4.0"), "Bolo 0.4.0 Beta");
-        assert_eq!(title("1.0.0"), "Bolo 1.0.0");
-    }
-
-    #[test]
-    fn a_build_follows_its_own_channel_until_the_user_picks() {
-        assert_eq!(build_channel("0.4.0"), UpdateChannel::Beta);
-        assert_eq!(build_channel("0.5.0-nightly.20261111.7"), UpdateChannel::Nightly);
-        assert_eq!(feed(UpdateChannel::Beta), BETA_FEED);
-        assert_eq!(feed(UpdateChannel::Nightly), NIGHTLY_FEED);
+    fn the_about_view_names_this_app_and_the_other() {
+        let view = View::now(Status::Idle);
+        assert_eq!(view.version, variant::VERSION);
+        assert_ne!(view.product, view.other.product);
+        assert!(view.other.url.starts_with("https://github.com/Nirav1810/bolo/releases/"));
     }
 
     #[test]
@@ -300,7 +269,6 @@ mod tests {
         assert!(is_newer(&v("0.4.0-nightly.20261111.7"), &v("0.4.0-nightly.20261111.10")));
         // The first nightly after a release is newer than it.
         assert!(is_newer(&v("0.4.0"), &v("0.5.0-nightly.20261111.1")));
-        // Back on Beta from a nightly: the older release is not offered.
         assert!(!is_newer(&v("0.5.0-nightly.20261111.1"), &v("0.4.0")));
         assert!(!is_newer(&v("0.4.0"), &v("0.4.0")));
     }

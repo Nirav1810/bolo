@@ -2,6 +2,9 @@
 ;
 ; Bolo keeps its files outside Tauri's own app-data folders, so the uninstaller handles
 ; them here. None of this runs when the uninstaller runs as part of an update.
+;
+; Bolo Nightly (tauri.nightly.conf.json, ADR-0019) installs next to Bolo and shares these
+; folders with it, so its uninstaller leaves them alone and removes only its own autostart.
 ;   %LOCALAPPDATA%\Bolo   speech models, dictation history, logs: asked about (No when silent)
 ;   %APPDATA%\Bolo        settings, and the API keys in Credential Manager: removed only
 ;                         when "Delete the application data" is ticked
@@ -9,7 +12,10 @@
 !macro NSIS_HOOK_POSTUNINSTALL
   ${If} $UpdateMode <> 1
     ; "Start with Windows" would point at the removed exe.
-    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Bolo"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
+  ${EndIf}
+  ${If} $UpdateMode <> 1
+  ${AndIf} "${PRODUCTNAME}" == "Bolo"
 
     SetShellVarContext current
     IfFileExists "$LOCALAPPDATA\Bolo\*.*" 0 bolo_data_done

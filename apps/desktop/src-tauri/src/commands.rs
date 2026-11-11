@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use bolo_core::OutputFormat;
-use bolo_store::{History, PROVIDERS, Settings, UpdateChannel};
+use bolo_store::{History, PROVIDERS, Settings};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -317,12 +317,7 @@ pub fn onboarding_save(app: AppHandle, bolo: State<'_, Bolo>, step: Option<u32>)
 /// The About page's update section (ADR-0019).
 #[tauri::command]
 pub fn update_view(bolo: State<'_, Bolo>) -> updates::View {
-    updates::View {
-        version: updates::VERSION.into(),
-        badge: updates::badge(updates::VERSION),
-        channel: bolo.channel(),
-        status: bolo.updates.status(),
-    }
+    updates::View::now(bolo.updates.status())
 }
 
 /// Check now; the result arrives as an `update` event.
@@ -335,16 +330,4 @@ pub fn update_check(app: AppHandle, bolo: State<'_, Bolo>) {
 #[tauri::command]
 pub fn update_install(app: AppHandle, bolo: State<'_, Bolo>) {
     bolo.install_update(&app);
-}
-
-/// Follow another channel, and check it at once.
-#[tauri::command]
-pub fn update_channel(app: AppHandle, bolo: State<'_, Bolo>, channel: UpdateChannel) -> Result<updates::View, String> {
-    bolo.change_settings(&app, |s| {
-        let mut s = s.clone();
-        s.updates.channel = Some(channel);
-        s
-    })?;
-    bolo.check_for_update(&app, true);
-    Ok(update_view(bolo))
 }
