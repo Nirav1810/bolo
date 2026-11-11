@@ -1,5 +1,6 @@
 import { mount } from "svelte";
 import Pill from "./Pill.svelte";
+import "@fontsource-variable/inter";
 import "./app.css";
 
 const target = document.getElementById("pill");

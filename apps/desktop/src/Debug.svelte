@@ -53,40 +53,40 @@
   const meter = $derived(Math.max(0, Math.min(1, (Math.log10(Math.max(level, 1e-4)) + 4) / 3.3)));
 </script>
 
-<main class="flex h-screen flex-col gap-4 bg-neutral-50 p-5 text-sm text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100">
+<main class="flex h-screen flex-col gap-4 bg-background p-5 text-sm text-foreground">
     <header class="flex items-center justify-between">
       <h1 class="text-base font-semibold">Bolo debug</h1>
-      <span class="rounded-full bg-neutral-200 px-3 py-1 text-xs dark:bg-neutral-800">
+      <span class="rounded-md bg-accent px-2 py-0.5 text-xs font-medium text-muted-foreground">
         {paused ? "Paused" : dictation}
       </span>
     </header>
 
     <section class="flex items-center gap-3">
       <button
-        class="rounded-md bg-neutral-900 px-3 py-1.5 text-white disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900"
+        class="h-8 rounded-lg border border-primary bg-primary px-3 font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         disabled={paused}
         onclick={() => invoke("toggle_dictation")}
       >
         {dictation === "Listening" ? "Stop" : "Start"} dictation
       </button>
-      <div class="h-2 flex-1 overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800" aria-label="Input level">
-        <div class="h-full bg-emerald-500 transition-[width] duration-75" style:width="{meter * 100}%"></div>
+      <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-accent" aria-label="Input level">
+        <div class="h-full bg-success transition-[width] duration-75" style:width="{meter * 100}%"></div>
       </div>
     </section>
 
-    <p class="min-h-6 truncate text-neutral-500" dir="rtl" title={partial}>
+    <p class="min-h-6 truncate text-muted-foreground" dir="rtl" title={partial}>
       <bdi>{partial || (dictation === "Listening" ? "listening…" : "")}</bdi>
     </p>
 
     {#each errors as message}
-      <p class="rounded-md bg-red-100 px-3 py-2 text-red-900 dark:bg-red-950 dark:text-red-200">{message}</p>
+      <p class="rounded-xl border border-destructive/30 bg-destructive/5 px-3.5 py-2.5 text-destructive-foreground">{message}</p>
     {/each}
 
     <ol class="flex flex-1 flex-col gap-2 overflow-y-auto">
       {#each results as r}
-        <li class="rounded-md border border-neutral-200 p-3 dark:border-neutral-800">
+        <li class="rounded-xl border border-border bg-card p-3">
           <p class="whitespace-pre-wrap">{r.output.plain || "(nothing heard)"}</p>
-          <p class="mt-1 text-xs text-neutral-500">
+          <p class="mt-1 text-xs text-muted-foreground">
             {r.kind === "polished" ? `polished +${r.output.timings.llm_ms.toFixed(0)} ms` : `${r.output.timings.total_ms.toFixed(0)} ms`}
             · {r.output.engine_id} · {r.output.language} · {r.at.toLocaleTimeString()}
           </p>
