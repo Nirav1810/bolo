@@ -37,13 +37,21 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      # Caches compiled dependencies (not our crates) between nightlies, which saves
+      # most of the release compile. Keyed before set-version below rewrites the
+      # manifests, so the key only changes when the dependencies do. Nightly runs only
+      # on main, so it never restores a cache a PR wrote. The bundled sherpa DLLs come
+      # from .cache/sherpa-lib, not target/, so a restored target/ can't drop them.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly
       - name: Pick the nightly version
         id: version
         run: |
           version=$(python -I scripts/release.py nightly-version --run "$GITHUB_RUN_NUMBER")
           echo "version=$version" >> "$GITHUB_OUTPUT"
           python -I scripts/release.py set-version "$version"
-      - uses: dtolnay/rust-toolchain@stable
       - name: "Fetch verified sherpa-onnx prebuilt libs (ADR-008)"
         run: python -I scripts/fetch-sherpa-libs.py
         env:
