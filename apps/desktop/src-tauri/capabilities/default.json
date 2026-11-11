@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "The Bolo windows listen to controller events and call the app's own commands.",
   "windows": ["main", "pill"],
-  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten", "core:window:allow-set-title"]
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten", "core:window:allow-set-title", "core:window:allow-hide"]
 }

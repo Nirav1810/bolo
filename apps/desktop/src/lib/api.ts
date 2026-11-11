@@ -75,6 +75,16 @@ export interface SettingsView {
   version: string;
   paths: { settings: string; models: string; history: string };
   ram_mb: number;
+  onboarding_step: number | null;
+}
+
+/** Onboarding's mic check (src-tauri/src/mic.rs, `MicCheck`). */
+export interface MicCheck {
+  device: string;
+  leading_ms: number | null;
+  peak_rms: number;
+  heard: boolean;
+  late: boolean;
 }
 
 export type Tested =
@@ -117,7 +127,19 @@ export const api = {
   removeModel: (id: string) => invoke<void>("model_remove", { id }),
   openFolder: (which: "settings" | "models" | "logs") => invoke<void>("open_folder", { which }),
   openLink: (url: string) => invoke<void>("open_link", { url }),
+  micCheck: () => invoke<MicCheck>("mic_check"),
+  onboardingSave: (step: number | null) => invoke<void>("onboarding_save", { step }),
 };
+
+/** Mic levels (RMS) while the mic check listens. */
+export function onMicLevel(handler: (rms: number) => void): Promise<UnlistenFn> {
+  return listen<number>("bolo://mic", (e) => handler(e.payload));
+}
+
+/** RMS on a log scale, 0–1, for a level meter (speech sits around 0.01–0.2). */
+export function meter(rms: number): number {
+  return Math.max(0, Math.min(1, (Math.log10(Math.max(rms, 1e-4)) + 4) / 3.3));
+}
 
 export function onDownload(handler: (e: DownloadEvent) => void): Promise<UnlistenFn> {
   return listen<DownloadEvent>("bolo://download", (e) => handler(e.payload));

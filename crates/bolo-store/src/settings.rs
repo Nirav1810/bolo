@@ -126,6 +126,10 @@ pub struct Settings {
     pub polish: PolishSettings,
     pub history: HistorySettings,
     pub overlay: OverlaySettings,
+    /// First-run onboarding's step while it's unfinished (0 = welcome); `None` once it's
+    /// done. A settings file from before onboarding existed has none, so it isn't shown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub onboarding_step: Option<u32>,
     /// Keys this version doesn't know, written back as they were.
     #[serde(flatten)]
     pub unknown: Table,
@@ -144,6 +148,7 @@ impl Default for Settings {
             polish: PolishSettings::default(),
             history: HistorySettings::default(),
             overlay: OverlaySettings::default(),
+            onboarding_step: None,
             unknown: Table::new(),
         }
     }
@@ -157,6 +162,8 @@ pub struct Loaded {
     pub recovered_from: Option<PathBuf>,
     /// The file was an older version, migrated and saved.
     pub migrated_from: Option<i64>,
+    /// There was no file: Bolo's first run.
+    pub fresh: bool,
 }
 
 impl Settings {
@@ -171,7 +178,12 @@ impl Settings {
         let text = match fs::read_to_string(path) {
             Ok(t) => t,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Loaded { settings: Self::default(), recovered_from: None, migrated_from: None });
+                return Ok(Loaded {
+                    settings: Self::default(),
+                    recovered_from: None,
+                    migrated_from: None,
+                    fresh: true,
+                });
             }
             Err(e) => return Err(io_err(path)(e)),
         };
@@ -181,7 +193,7 @@ impl Settings {
                 if migrated_from.is_some() {
                     settings.save(path)?;
                 }
-                Ok(Loaded { settings, recovered_from: None, migrated_from })
+                Ok(Loaded { settings, recovered_from: None, migrated_from, fresh: false })
             }
             Err(Bad::Newer(v)) => Err(StoreError::NewerSettings(v)),
             Err(Bad::Invalid(why)) => {
@@ -190,7 +202,7 @@ impl Settings {
                 fs::rename(path, &backup).map_err(io_err(path))?;
                 let settings = Self::default();
                 settings.save(path)?;
-                Ok(Loaded { settings, recovered_from: Some(backup), migrated_from: None })
+                Ok(Loaded { settings, recovered_from: Some(backup), migrated_from: None, fresh: false })
             }
         }
     }
@@ -365,12 +377,27 @@ mod tests {
     }
 
     #[test]
+    fn the_onboarding_step_round_trips_and_is_absent_when_done() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        let s = Settings { onboarding_step: Some(2), ..Settings::default() };
+        s.save(&path).unwrap();
+        assert_eq!(Settings::load(&path).unwrap().settings.onboarding_step, Some(2));
+        Settings::default().save(&path).unwrap();
+        assert!(!fs::read_to_string(&path).unwrap().contains("onboarding"));
+        assert_eq!(Settings::load(&path).unwrap().settings.onboarding_step, None);
+    }
+
+    #[test]
     fn a_missing_file_gives_the_defaults_and_writes_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.toml");
         let loaded = Settings::load(&path).unwrap();
         assert_eq!(loaded.settings, Settings::default());
+        assert!(loaded.fresh);
         assert!(!path.exists());
+        Settings::default().save(&path).unwrap();
+        assert!(!Settings::load(&path).unwrap().fresh);
         let d = Settings::default();
         assert!(d.history.enabled && d.history.retention_days == 30);
         assert!(!d.polish.enabled && !d.autostart);

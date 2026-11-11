@@ -66,6 +66,8 @@ pub struct SettingsView {
     pub version: &'static str,
     pub paths: Paths,
     pub ram_mb: u64,
+    /// Onboarding's step while it's unfinished.
+    pub onboarding_step: Option<u32>,
 }
 
 fn models_root(bolo: &Bolo) -> PathBuf {
@@ -120,6 +122,7 @@ fn view(bolo: &Bolo) -> SettingsView {
             history: path(History::default_path()),
         },
         ram_mb,
+        onboarding_step: settings.onboarding_step,
     }
 }
 
@@ -287,4 +290,26 @@ pub fn open_link(url: String) -> Result<(), String> {
 
 fn open(target: &std::ffi::OsStr) -> Result<(), String> {
     std::process::Command::new("explorer.exe").arg(target).spawn().map(drop).map_err(|e| e.to_string())
+}
+
+/// Mic levels during the check go out on this event, as an RMS number.
+pub const MIC_EVENT: &str = "bolo://mic";
+
+/// Onboarding's mic check: listen for three seconds on a cold open of the default mic.
+#[tauri::command]
+pub async fn mic_check(app: AppHandle) -> Result<crate::mic::MicCheck, String> {
+    let levels = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::mic::check(|rms| {
+            let _ = levels.emit(MIC_EVENT, rms);
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Onboarding reached `step` (0 welcome … 3 try it); `None` when it's finished.
+#[tauri::command]
+pub fn onboarding_save(app: AppHandle, bolo: State<'_, Bolo>, step: Option<u32>) -> Result<(), String> {
+    bolo.change_settings(&app, |s| Settings { onboarding_step: step, ..s.clone() })
 }
