@@ -63,5 +63,9 @@ The single version number shared by the Windows app, the Android app and the cor
 _Avoid_: App version, build number (Android's versionCode is derived from it)
 
 **Release channel**:
-Which builds a user receives: **stable** (plain tags like `v0.4.0`) or **beta** (prerelease tags like `v0.4.0-beta.1`).
-_Avoid_: Track (Play Store term), ring
+Which builds a user's app updates to (ADR-0019): **Beta**, the `vX.Y.Z` releases (shown as Beta until 1.0), or **Nightly**, built from every push to `main` and versioned like `0.4.0-nightly.20261111.7`.
+_Avoid_: Track (Play Store term), ring, alpha
+
+**Nightly**:
+A signed desktop build of `main` published to the rolling `nightly` GitHub prerelease; never committed as a version.
+_Avoid_: Dev build, alpha

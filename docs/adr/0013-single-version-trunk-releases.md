@@ -1,5 +1,7 @@
 # One product version, squash-merged trunk, stable + beta channels
 
+> **Amended by ADR-0019:** the channels are now Beta (`vX.Y.Z` releases, Beta until 1.0) and Nightly (every push to `main`); no new `-beta.N` tags.
+
 Numbering continues from `docs/DECISIONS.md` (ADR-001…012), which is the predecessor log.
 
 Bolo ships a Windows app, an Android app and Rust crates from one repo. We use **one product version** for all of them (`vX.Y.Z` tags; Android `versionCode` is derived from it) rather than per-platform tags, so a version means the same feature set everywhere and the changelog is a single file. `main` is protected: changes land only through **squash-merged PRs** whose title is a Conventional Commit (linted in CI), so every commit on `main` passed CI and git-cliff can generate release notes straight from history. Releases are cut from tags on `main` in two **release channels**: stable (`v0.4.0`) and beta (`v0.4.0-beta.1`), mapping to separate Tauri updater feeds and to Play production / closed testing. No nightly channel; CI artifacts on `main` cover "latest".
