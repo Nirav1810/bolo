@@ -2,11 +2,16 @@
 //! may read them. Bolo's meter (`bolo-store` usage) works with any key; these add what
 //! only the provider knows: usage from other apps on the account, and credit left.
 //!
-//! - Deepgram: a key with the Admin (or Owner) role, stored as `deepgram-admin`. Reads
+//! Each report reads with the key on Engines & keys when that key may read usage, so
+//! nothing is asked twice; a separate usage key is only for when it may not.
+//!
+//! - Deepgram: the engine key, or a key with the Admin (or Owner) role stored as
+//!   `deepgram-admin`, which wins when both are there. Reads
 //!   `GET /v1/projects/{id}/usage/breakdown` (hours, requests), `/billing/breakdown`
 //!   (dollars) and `/balances` (credit left). An ordinary Member key gets 403.
 //! - Anthropic: an organization Admin key (`sk-ant-admin01-…`), stored as
-//!   `anthropic-admin`. Reads `GET /v1/organizations/usage_report/messages` for Bolo's own
+//!   `anthropic-admin` (or pasted as the engine key). An ordinary `sk-ant-api…` key can't
+//!   read the Admin API at all, so it is never tried. Reads `GET /v1/organizations/usage_report/messages` for Bolo's own
 //!   key (found by its hint in `/v1/organizations/api_keys`) and `/cost_report` for the
 //!   whole account. Individual Console accounts have no Admin API.
 //!
@@ -91,21 +96,55 @@ pub struct AnthropicReport {
     pub account_usd: Periods<f64>,
 }
 
+/// Which key a report read with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum KeySource {
+    #[default]
+    None,
+    /// The key on Engines & keys.
+    Engine,
+    /// A separate usage key (`deepgram-admin`, `anthropic-admin`).
+    Usage,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ProviderReports {
     pub deepgram: Report<DeepgramReport>,
     pub anthropic: Report<AnthropicReport>,
+    pub deepgram_key: KeySource,
+    pub anthropic_key: KeySource,
     pub fetched_ms: i64,
 }
 
 static CACHE: Mutex<Option<(Instant, ProviderReports)>> = Mutex::new(None);
 
-/// The keys to read with: the usage keys, and Bolo's Anthropic key to find in the report.
+/// The keys stored: the usage keys, and the engine keys (Bolo's Anthropic key is also
+/// the one to find in Anthropic's report).
 #[derive(Clone, Default)]
 pub struct Keys {
     pub deepgram_admin: Option<String>,
     pub anthropic_admin: Option<String>,
+    pub deepgram: Option<String>,
     pub anthropic: Option<String>,
+}
+
+/// The key to read a report with: the usage key, else the engine key when `engine_can`
+/// read usage.
+fn pick(usage: Option<&str>, engine: Option<&str>, engine_can: fn(&str) -> bool) -> (Option<String>, KeySource) {
+    let present = |k: Option<&str>| k.map(str::trim).filter(|k| !k.is_empty()).map(str::to_owned);
+    if let Some(k) = present(usage) {
+        return (Some(k), KeySource::Usage);
+    }
+    match present(engine) {
+        Some(k) if engine_can(&k) => (Some(k), KeySource::Engine),
+        _ => (None, KeySource::None),
+    }
+}
+
+/// Only an Admin key reads Anthropic's usage; an ordinary API key gets 401.
+fn is_anthropic_admin(key: &str) -> bool {
+    key.starts_with("sk-ant-admin")
 }
 
 /// The reports, from the cache when they are fresh and `refresh` is false.
@@ -123,24 +162,28 @@ pub async fn reports(keys: Keys, now_ms: i64, refresh: bool) -> ProviderReports 
             return ProviderReports {
                 deepgram: Report::Failed { message: message.clone() },
                 anthropic: Report::Failed { message },
+                deepgram_key: KeySource::None,
+                anthropic_key: KeySource::None,
                 fetched_ms: now_ms,
             };
         }
     };
+    let (dg_key, deepgram_key) = pick(keys.deepgram_admin.as_deref(), keys.deepgram.as_deref(), |_| true);
+    let (an_key, anthropic_key) = pick(keys.anthropic_admin.as_deref(), keys.anthropic.as_deref(), is_anthropic_admin);
     let deepgram = async {
-        match &keys.deepgram_admin {
+        match &dg_key {
             None => Report::NoKey,
             Some(k) => deepgram(&client, k, now_ms).await.into(),
         }
     };
     let anthropic = async {
-        match &keys.anthropic_admin {
+        match &an_key {
             None => Report::NoKey,
             Some(k) => anthropic(&client, k, keys.anthropic.as_deref(), now_ms).await.into(),
         }
     };
     let (deepgram, anthropic) = (deepgram.await, anthropic.await);
-    let out = ProviderReports { deepgram, anthropic, fetched_ms: now_ms };
+    let out = ProviderReports { deepgram, anthropic, deepgram_key, anthropic_key, fetched_ms: now_ms };
     *crate::lock(&CACHE) = Some((Instant::now(), out.clone()));
     out
 }
@@ -496,6 +539,21 @@ fn civil(days: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reports_read_with_the_engine_key_when_it_can() {
+        let any = |_: &str| true;
+        assert_eq!(pick(None, Some("dg"), any), (Some("dg".into()), KeySource::Engine));
+        assert_eq!(pick(Some("admin"), Some("dg"), any), (Some("admin".into()), KeySource::Usage));
+        assert_eq!(pick(Some(" "), Some("dg"), any), (Some("dg".into()), KeySource::Engine));
+        assert_eq!(pick(None, None, any), (None, KeySource::None));
+        // An ordinary Anthropic key can't read usage: not tried.
+        assert_eq!(pick(None, Some("sk-ant-api03-x"), is_anthropic_admin), (None, KeySource::None));
+        assert_eq!(
+            pick(None, Some("sk-ant-admin01-x"), is_anthropic_admin),
+            (Some("sk-ant-admin01-x".into()), KeySource::Engine)
+        );
+    }
 
     #[test]
     fn dates_are_utc_days() {

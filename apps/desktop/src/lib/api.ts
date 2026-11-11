@@ -137,9 +137,14 @@ export interface AnthropicReport {
   periods: Periods<{ input_tokens: number; cache_read_tokens: number; cache_write_tokens: number; output_tokens: number }>;
   account_usd: Periods<number>;
 }
+/** Which key a report read with: the Engines & keys one, or a separate usage key. */
+export type KeySource = "none" | "engine" | "usage";
+
 export interface ProviderReports {
   deepgram: Report<DeepgramReport>;
   anthropic: Report<AnthropicReport>;
+  deepgram_key: KeySource;
+  anthropic_key: KeySource;
   fetched_ms: number;
 }
 

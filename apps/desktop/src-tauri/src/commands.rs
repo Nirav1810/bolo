@@ -252,6 +252,7 @@ pub async fn usage_reports(app: AppHandle, refresh: bool) -> billing::ProviderRe
         billing::Keys {
             deepgram_admin: get(billing::DEEPGRAM_ADMIN),
             anthropic_admin: get(billing::ANTHROPIC_ADMIN),
+            deepgram: get("deepgram"),
             anthropic: get(bolo_core::ANTHROPIC),
         }
     };
