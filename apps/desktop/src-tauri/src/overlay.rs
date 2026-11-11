@@ -162,6 +162,11 @@ impl Overlay {
         let _ = self.tx.send(Msg::IdleButton(on));
     }
 
+    /// The push-to-talk key changed; `name` is for the idle hint.
+    pub fn set_key(&self, name: String) {
+        let _ = self.tx.send(Msg::Pill(Input::Key(name)));
+    }
+
     /// Where the webview's clickable parts are now.
     pub fn regions(&self, regions: Vec<HitRegion>) {
         let _ = self.tx.send(Msg::Regions(regions));

@@ -179,6 +179,11 @@ impl History {
         Ok(self.conn.execute("DELETE FROM dictations WHERE at_ms < ?1", [cutoff])?)
     }
 
+    /// Deletes row `id`. Whether there was one.
+    pub fn delete(&self, id: i64) -> Result<bool> {
+        Ok(self.conn.execute("DELETE FROM dictations WHERE id = ?1", [id])? > 0)
+    }
+
     /// Deletes every row and vacuums, so the text is gone from the file too.
     pub fn clear(&self) -> Result<()> {
         self.conn.execute("DELETE FROM dictations", [])?;
@@ -278,6 +283,16 @@ mod tests {
         assert_eq!(found("e_n"), [3_000]);
         assert_eq!(found("enon"), Vec::<i64>::new());
         assert_eq!(found("").len(), 3);
+    }
+
+    #[test]
+    fn delete_removes_one_row() {
+        let h = History::open_in_memory().unwrap();
+        let a = h.insert(&at(1_000, "keep")).unwrap().unwrap();
+        let b = h.insert(&at(2_000, "drop")).unwrap().unwrap();
+        assert!(h.delete(b).unwrap());
+        assert!(!h.delete(b).unwrap());
+        assert_eq!(h.latest(5).unwrap().iter().map(|r| r.id).collect::<Vec<_>>(), [a]);
     }
 
     #[test]

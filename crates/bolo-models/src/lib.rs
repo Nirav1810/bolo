@@ -7,8 +7,8 @@
 pub mod download;
 pub mod manifest;
 
-pub use download::{DownloadProgress, Downloader};
-pub use manifest::{Download, Family, License, Manifest, ModelEntry, ModelStatus, Platform, Tier};
+pub use download::{DownloadProgress, Downloader, Phase};
+pub use manifest::{Download, Family, License, Manifest, ModelEntry, ModelKind, ModelStatus, Platform, Tier};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ModelError {
