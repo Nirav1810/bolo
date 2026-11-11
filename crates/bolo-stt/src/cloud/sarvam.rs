@@ -15,7 +15,8 @@ use crate::{ApiKey, Billed, HinglishScript, Language, Result, SttEngine, SttErro
 
 pub const DEFAULT_BASE_URL: &str = "https://api.sarvam.ai";
 pub const DEFAULT_MODEL: &str = "saaras:v4";
-/// Pay-as-you-go ₹0.49/min ≈ ₹29.4/hr ≈ US$0.35/hr (at ~₹84/USD; excl. GST).
+/// Pay-as-you-go ₹0.49/min ≈ ₹29.4/hr ≈ US$0.35/hr (at ~₹84/USD; excl. GST), billed per
+/// second and rounded up per request (verified 2026-11-12).
 pub const PRICE_USD_PER_HOUR: f64 = 0.35;
 
 /// Keep each request under the 30 s REST limit.
@@ -128,7 +129,9 @@ impl SttEngine for SarvamEngine {
         // Normally the engine splits a dictation on VAD pauses well before 30 s; this is a backstop.
         let mut parts = Vec::new();
         let mut language = None;
+        let mut billed_secs = 0.0;
         for chunk in audio.chunks(MAX_CHUNK_SAMPLES) {
+            billed_secs += billed_seconds(chunk.len());
             let r = self.transcribe_chunk(chunk, opts).await?;
             language = language.or(r.language_code);
             let t = r.transcript.trim().to_owned();
@@ -140,9 +143,14 @@ impl SttEngine for SarvamEngine {
             text: parts.join(" "),
             engine_id: self.id.clone(),
             language,
-            billed: Billed::audio(audio.len(), PRICE_USD_PER_HOUR),
+            billed: Billed { audio_secs: billed_secs, cost_usd: billed_secs / 3600.0 * PRICE_USD_PER_HOUR },
         })
     }
+}
+
+/// Sarvam bills per second, rounding each request up to the next whole second.
+fn billed_seconds(samples: usize) -> f64 {
+    (samples as f64 / f64::from(bolo_audio::SAMPLE_RATE)).ceil()
 }
 
 #[cfg(test)]
@@ -155,6 +163,14 @@ mod tests {
         assert_eq!(SarvamEngine::mode_and_lang(&o), ("translit", "unknown"));
         let o = SttOptions { language: Language::En, ..Default::default() };
         assert_eq!(SarvamEngine::mode_and_lang(&o).0, "transcribe");
+    }
+
+    #[test]
+    fn each_request_rounds_up_to_a_whole_second() {
+        let rate = bolo_audio::SAMPLE_RATE as usize;
+        assert_eq!(billed_seconds(rate * 3), 3.0);
+        assert_eq!(billed_seconds(rate * 3 + 1), 4.0);
+        assert_eq!(billed_seconds(1), 1.0);
     }
 
     #[test]

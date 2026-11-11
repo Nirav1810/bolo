@@ -1,11 +1,9 @@
 <script lang="ts">
   // The usage meter: what each paid cloud request was billed for, as the provider
-  // reported it in its answer (Deepgram's audio duration, Claude's token counts),
-  // recorded per request by Rust (src-tauri/src/journal.rs). Works with any key.
-  // The provider's own report shows too (src-tauri/src/billing.rs): the whole account,
-  // and Deepgram's credit left. It reads with the key on Engines & keys when that key
-  // may; a separate usage key is only offered when it may not.
-  import { AudioLines, ExternalLink, Gauge, KeyRound, RefreshCw, RotateCcw, Sparkles } from "@lucide/svelte";
+  // reported it (audio length, Claude token counts), recorded per request by Rust
+  // (src-tauri/src/journal.rs) and priced at list price. An optional admin key adds
+  // the provider's own account totals (src-tauri/src/billing.rs).
+  import { AudioLines, ExternalLink, Gauge, RefreshCw, RotateCcw, Sparkles } from "@lucide/svelte";
   import type { Component } from "svelte";
   import { api, type ProviderReports, type ProviderUsage, type UsageView } from "../lib/api";
   import { onAppEvent } from "../lib/events";
@@ -125,11 +123,12 @@
   const info = (id: string): ProviderInfo =>
     PROVIDERS[id] ?? { name: id, icon: Gauge, console: "", speech: true };
 
-  /** Every cloud provider Bolo offers shows, used or not; anything else once used. */
+  /** Bolo's cloud providers, shown once they have a key or have been used; anything else once used. */
   const CLOUD = ["deepgram", "groq", "sarvam", "anthropic"];
   const rows = $derived.by(() => {
     const got = usage?.[period] ?? [];
-    const out: ProviderUsage[] = CLOUD.map(
+    const used = (p: string) => usage?.all_time.some((u) => u.provider === p) ?? false;
+    const out: ProviderUsage[] = CLOUD.filter((p) => storedKeys[p] || used(p)).map(
       (p) =>
         got.find((u) => u.provider === p) ?? {
           provider: p,
@@ -169,6 +168,10 @@
     return `${(n / 1_000_000).toFixed(1)}M`;
   }
 
+  const hasReport = (provider: string) =>
+    (provider === "deepgram" ? reports?.deepgram : reports?.anthropic)?.state === "ok";
+  const source = (provider: string) => (provider === "deepgram" ? reports?.deepgram_key : reports?.anthropic_key);
+
   const plural = (n: number, one: string, many: string) => `${count(n)} ${n === 1 ? one : many}`;
   const since = $derived(
     usage?.since_ms ? new Date(usage.since_ms).toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" }) : null,
@@ -198,62 +201,55 @@
   <div class="flex flex-col gap-2.5" aria-hidden="true">
     {#each [0, 1] as i (i)}<div class="h-28 animate-pulse rounded-xl bg-muted"></div>{/each}
   </div>
+{:else if rows.length === 0}
+  <p class="px-1 py-6 text-center text-sm text-muted-foreground">
+    No cloud usage yet. Add a key on Engines &amp; keys to use a cloud engine.
+  </p>
 {:else}
   {#each rows as r (r.provider)}
     {@const p = info(r.provider)}
+    {@const adminId = r.provider === "deepgram" ? "deepgram-admin" : r.provider === "anthropic" ? "anthropic-admin" : null}
     <SettingsSection title={p.name}>
       {#snippet action()}
-        {#if p.console}
-          <Button variant="ghost" size="sm" onclick={() => api.openLink(p.console)}>
-            Dashboard <ExternalLink aria-hidden="true" />
-          </Button>
-        {/if}
+        <span class="flex items-center gap-1">
+          {#if adminId && !hasReport(r.provider) && !addingKey[adminId] && source(r.provider) !== "usage"}
+            <Button
+              variant="ghost-muted"
+              size="sm"
+              title={r.provider === "deepgram"
+                ? "A Deepgram Admin-role key shows the account’s own totals and credit left"
+                : "An Anthropic Admin key (sk-ant-admin…) shows the account’s own totals"}
+              onclick={() => (addingKey[adminId] = true)}>Add admin key</Button
+            >
+          {/if}
+          {#if p.console}
+            <Button variant="ghost" size="sm" onclick={() => api.openLink(p.console)}>
+              Dashboard <ExternalLink aria-hidden="true" />
+            </Button>
+          {/if}
+        </span>
       {/snippet}
       <div class="grid grid-cols-3 [&>*+*]:border-l [&>*+*]:border-border/60">
         {#if p.speech}
-          <div class="flex min-w-0 flex-col gap-0.5 px-4 py-3.5">
-            <span class="text-xs text-muted-foreground">Audio sent</span>
-            <span class="text-xl font-semibold tracking-[-0.02em] text-foreground tabular-nums">{duration(r.audio_secs)}</span>
-            <span class="truncate text-2xs text-muted-foreground">{plural(r.requests, "request", "requests")}</span>
-          </div>
-          <div class="flex min-w-0 flex-col gap-0.5 px-4 py-3.5">
-            <span class="text-xs text-muted-foreground">Average</span>
-            <span class="text-xl font-semibold tracking-[-0.02em] text-foreground tabular-nums">{r.requests ? duration(r.audio_secs / r.requests) : "–"}</span>
-            <span class="truncate text-2xs text-muted-foreground">per request</span>
-          </div>
+          {@render stat("Audio", duration(r.audio_secs), plural(r.requests, "request", "requests"))}
+          {@render stat("Average", r.requests ? duration(r.audio_secs / r.requests) : "–", r.requests ? "per request" : "")}
         {:else}
-          <div class="flex min-w-0 flex-col gap-0.5 px-4 py-3.5">
-            <span class="text-xs text-muted-foreground">Polish calls</span>
-            <span class="text-xl font-semibold tracking-[-0.02em] text-foreground tabular-nums">{count(r.requests)}</span>
-            <span class="truncate text-2xs text-muted-foreground">{count(r.input_tokens + r.cache_read_tokens + r.cache_write_tokens)} in · {count(r.output_tokens)} out</span>
-          </div>
-          <div class="flex min-w-0 flex-col gap-0.5 px-4 py-3.5">
-            <span class="text-xs text-muted-foreground">Tokens</span>
-            <span class="text-xl font-semibold tracking-[-0.02em] text-foreground tabular-nums">{count(r.input_tokens + r.cache_read_tokens + r.cache_write_tokens + r.output_tokens)}</span>
-            <span class="truncate text-2xs text-muted-foreground">{count(r.cache_read_tokens)} from the prompt cache</span>
-          </div>
+          {@render stat("Polish calls", count(r.requests), "")}
+          {@render stat(
+            "Tokens",
+            count(r.input_tokens + r.cache_read_tokens + r.cache_write_tokens + r.output_tokens),
+            r.requests ? `${count(r.input_tokens + r.cache_read_tokens + r.cache_write_tokens)} in · ${count(r.output_tokens)} out` : "",
+          )}
         {/if}
-        <div class="flex min-w-0 flex-col gap-0.5 px-4 py-3.5">
-          <span class="text-xs text-muted-foreground">Estimated cost</span>
-          <span class="text-xl font-semibold tracking-[-0.02em] text-foreground tabular-nums">{money(r.cost_usd)}</span>
-          <span class="truncate text-2xs text-muted-foreground">{r.requests ? `${money(r.cost_usd / r.requests)} each` : "at list price"}</span>
-        </div>
+        {@render stat("Est. cost", money(r.cost_usd), r.requests ? `${money(r.cost_usd / r.requests)} each` : "")}
       </div>
-      {#if r.provider === "deepgram" || r.provider === "anthropic"}
-        {@render fromProvider(r.provider)}
-      {:else if r.provider === "groq" || r.provider === "sarvam"}
-        {@render noProviderReport(r.provider)}
-      {/if}
+      {#if adminId}{@render fromProvider(r.provider, adminId)}{/if}
     </SettingsSection>
   {/each}
 {/if}
 
-<div class="flex items-start justify-between gap-4 px-1">
-  <p class="max-w-md text-xs text-muted-foreground">
-    Counted by Bolo on this PC{since ? ` since ${since}` : ""}, from what each provider reported back for each request:
-    the audio length for Deepgram, Groq and Sarvam (Groq bills at least 10 s a request), Claude’s tokens. Costs are at pay-as-you-go list prices. A usage key adds the provider’s own
-    totals, which include other apps, and Deepgram’s credit left, read with your keys from Engines & keys.
-  </p>
+<div class="flex items-center justify-between gap-4 px-1">
+  <p class="text-xs text-muted-foreground">Estimated at list prices{since ? `, since ${since}` : ""}.</p>
   {#if !empty && usage}
     {#if confirmReset}
       <div class="flex shrink-0 items-center gap-1.5">
@@ -268,111 +264,70 @@
   {/if}
 </div>
 
-
-{#snippet fromProvider(provider: string)}
-  {@const id = provider === "deepgram" ? "deepgram-admin" : "anthropic-admin"}
-  {@const report = provider === "deepgram" ? reports?.deepgram : reports?.anthropic}
-  {@const source = provider === "deepgram" ? reports?.deepgram_key : reports?.anthropic_key}
-  <div class="flex flex-col gap-2 bg-muted/40 px-4 py-3 dark:bg-white/[0.015]">
-    {#if report?.state === "ok"}
-      <div class="flex items-center justify-between gap-3">
-        <span class="text-xs font-medium text-foreground">
-          From {provider === "deepgram" ? "Deepgram" : "Anthropic"}
-          <span class="font-normal text-muted-foreground">
-            · {period === "today" ? "today (UTC)" : period === "last_30_days" ? "last 30 days" : provider === "anthropic" ? "last 12 months" : "all time"}
-          </span>
-        </span>
-        <span class="flex items-center gap-1">
-          <Button variant="ghost-muted" size="icon-xs" title="Refresh" disabled={refreshing} onclick={() => loadReports(true)}>
-            <RefreshCw class={refreshing ? "animate-spin" : ""} aria-hidden="true" />
-          </Button>
-          {#if source === "usage"}
-            <Button variant="ghost-muted" size="xs" onclick={() => removeUsageKey(id)}>Remove usage key</Button>
-          {/if}
-        </span>
-      </div>
-      {#if reports?.deepgram.state === "ok" && provider === "deepgram"}
-        {@const d = reports.deepgram.report}
-        {@const f = d.periods[period]}
-        <p class="text-[13px] text-foreground tabular-nums">
-          {hours(f.hours)} of audio · {count(Math.round(f.requests))} requests{f.usd !== null ? ` · ${money(f.usd)} charged` : ""}
-          {#if d.balance !== null}
-            · <span class="font-medium">{money(d.balance)} credit left</span>
-          {/if}
-        </p>
-        <p class="text-2xs text-muted-foreground">The whole “{d.project}” project: every app and key in it.</p>
-      {:else if reports?.anthropic.state === "ok" && provider === "anthropic"}
-        {@const a = reports.anthropic.report}
-        {@const f = a.periods[period]}
-        <p class="text-[13px] text-foreground tabular-nums">
-          {count(f.input_tokens + f.cache_read_tokens + f.cache_write_tokens)} tokens in · {count(f.output_tokens)} out
-          · <span class="font-medium">{money(a.account_usd[period])}</span> charged to the account
-        </p>
-        <p class="text-2xs text-muted-foreground">
-          {a.key_name
-            ? `Tokens for Bolo’s key “${a.key_name}”; the charge is the whole account’s.`
-            : "Bolo’s key wasn’t found in this organization, so the tokens are every key’s."}
-        </p>
-      {/if}
-    {:else}
-      <div class="flex items-center gap-2">
-        <KeyRound class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <span class="text-xs text-muted-foreground">
-          {#if report?.state === "refused" && source === "engine"}
-            Your Deepgram key from Engines &amp; keys can’t read Deepgram’s usage (that needs the Admin or Owner role).
-            The counts above still work.
-          {:else if report?.state === "refused" || report?.state === "failed"}
-            {report.message}
-          {:else if provider === "deepgram"}
-            Add your Deepgram key on Engines &amp; keys to see Deepgram’s own totals and your credit left.
-          {:else}
-            The counts above come from your Claude key. Anthropic’s own report needs an organization Admin key; an
-            ordinary API key can’t read it.
-          {/if}
-        </span>
-        {#if !addingKey[id] && source !== "usage"}
-          <Button variant="ghost-muted" size="xs" class="ml-auto shrink-0" onclick={() => (addingKey[id] = true)}>
-            Add {provider === "deepgram" ? "Admin-role" : "Admin"} key
-          </Button>
-        {/if}
-      </div>
-      {#if addingKey[id] || source === "usage"}
-      <div class="flex items-center gap-1.5">
-        <label for="usage-key-{provider}" class="sr-only">{provider === "deepgram" ? "Deepgram" : "Anthropic"} usage key</label>
-        <input
-          id="usage-key-{provider}"
-          class="input h-7! flex-1 text-[13px]!"
-          type="password"
-          placeholder={provider === "deepgram" ? "Paste a Deepgram Admin-role key…" : "Paste an sk-ant-admin01-… key…"}
-          autocomplete="off"
-          spellcheck="false"
-          bind:value={keyInput[id]}
-          onkeydown={(e) => e.key === "Enter" && saveUsageKey(id)}
-        />
-        <Button variant="outline" size="sm" disabled={!keyInput[id]?.trim()} onclick={() => saveUsageKey(id)}>Add</Button>
-        {#if source === "usage"}
-          <Button variant="ghost-muted" size="sm" onclick={() => removeUsageKey(id)}>Remove</Button>
-        {:else}
-          <Button variant="ghost-muted" size="sm" onclick={() => (addingKey[id] = false)}>Cancel</Button>
-        {/if}
-      </div>
-      {/if}
-      {#if keyNote[id]}<p class="text-2xs text-muted-foreground">{keyNote[id]}</p>{/if}
-    {/if}
+{#snippet stat(label: string, value: string, sub: string)}
+  <div class="flex min-w-0 flex-col gap-0.5 px-4 py-3.5">
+    <span class="text-xs text-muted-foreground">{label}</span>
+    <span class="text-xl font-semibold tracking-[-0.02em] text-foreground tabular-nums">{value}</span>
+    <span class="truncate text-2xs text-muted-foreground">{sub || " "}</span>
   </div>
 {/snippet}
 
-{#snippet noProviderReport(provider: string)}
-  {@const name = info(provider).name}
-  <div class="flex items-center gap-2 bg-muted/40 px-4 py-3 dark:bg-white/[0.015]">
-    <KeyRound class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-    <span class="text-xs text-muted-foreground">
-      {#if storedKeys[provider]}
-        Counted from your {name} key on Engines &amp; keys. {name} has no usage API, so for the account’s own totals open its
-        dashboard.
+{#snippet fromProvider(provider: string, id: string)}
+  {@const report = provider === "deepgram" ? reports?.deepgram : reports?.anthropic}
+  {@const src = source(provider)}
+  {@const message = src === "usage" && (report?.state === "refused" || report?.state === "failed") ? report.message : ""}
+  {#if report?.state === "ok" || addingKey[id] || src === "usage" || keyNote[id]}
+    <div class="flex flex-col gap-2 bg-muted/40 px-4 py-3 dark:bg-white/[0.015]">
+      {#if report?.state === "ok"}
+        <div class="flex items-center justify-between gap-3">
+          <p class="text-[13px] text-foreground tabular-nums">
+            <span class="text-muted-foreground"
+              >Account{period === "today" ? " (today, UTC)" : period === "all_time" && provider === "anthropic" ? " (12 months)" : ""}:</span
+            >
+            {#if reports?.deepgram.state === "ok" && provider === "deepgram"}
+              {@const d = reports.deepgram.report}
+              {@const f = d.periods[period]}
+              {hours(f.hours)} · {count(Math.round(f.requests))} requests{f.usd !== null ? ` · ${money(f.usd)}` : ""}
+              {#if d.balance !== null}· <span class="font-medium">{money(d.balance)} credit left</span>{/if}
+            {:else if reports?.anthropic.state === "ok" && provider === "anthropic"}
+              {@const a = reports.anthropic.report}
+              {@const f = a.periods[period]}
+              {count(f.input_tokens + f.cache_read_tokens + f.cache_write_tokens)} in · {count(f.output_tokens)} out ·
+              <span class="font-medium">{money(a.account_usd[period])}</span>
+            {/if}
+          </p>
+          <span class="flex shrink-0 items-center gap-1">
+            <Button variant="ghost-muted" size="icon-xs" title="Refresh" disabled={refreshing} onclick={() => loadReports(true)}>
+              <RefreshCw class={refreshing ? "animate-spin" : ""} aria-hidden="true" />
+            </Button>
+            {#if src === "usage"}
+              <Button variant="ghost-muted" size="xs" onclick={() => removeUsageKey(id)}>Remove key</Button>
+            {/if}
+          </span>
+        </div>
       {:else}
-        Add a {name} key on Engines &amp; keys to dictate with {name}; its requests are counted here.
+        {#if message}<p class="text-xs text-muted-foreground">{message}</p>{/if}
+        <div class="flex items-center gap-1.5">
+          <label for="usage-key-{provider}" class="sr-only">{provider === "deepgram" ? "Deepgram" : "Anthropic"} admin key</label>
+          <input
+            id="usage-key-{provider}"
+            class="input h-7! flex-1 text-[13px]!"
+            type="password"
+            placeholder={provider === "deepgram" ? "Paste a Deepgram Admin-role key…" : "Paste an sk-ant-admin01-… key…"}
+            autocomplete="off"
+            spellcheck="false"
+            bind:value={keyInput[id]}
+            onkeydown={(e) => e.key === "Enter" && saveUsageKey(id)}
+          />
+          <Button variant="outline" size="sm" disabled={!keyInput[id]?.trim()} onclick={() => saveUsageKey(id)}>Add</Button>
+          {#if src === "usage"}
+            <Button variant="ghost-muted" size="sm" onclick={() => removeUsageKey(id)}>Remove</Button>
+          {:else}
+            <Button variant="ghost-muted" size="sm" onclick={() => ((addingKey[id] = false), (keyNote[id] = ""))}>Cancel</Button>
+          {/if}
+        </div>
+        {#if keyNote[id]}<p class="text-2xs text-muted-foreground">{keyNote[id]}</p>{/if}
       {/if}
-    </span>
-  </div>
+    </div>
+  {/if}
 {/snippet}
