@@ -54,6 +54,11 @@ pub enum AppEvent {
     Pill {
         view: View,
     },
+    /// The part of the pill under the mouse, for the pill webview's hover styles. The
+    /// window is click-through, so only Rust's mouse hook knows (see [`crate::pointer`]).
+    Hover {
+        region: Option<crate::pointer::Region>,
+    },
     /// The self-updater's state (ADR-0019), for the settings window.
     Update {
         status: crate::updates::Status,

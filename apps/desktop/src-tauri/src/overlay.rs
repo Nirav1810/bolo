@@ -211,6 +211,7 @@ pub fn input(event: &AppEvent) -> Option<Input> {
         | AppEvent::Level { .. }
         | AppEvent::Partial { .. }
         | AppEvent::Pill { .. }
+        | AppEvent::Hover { .. }
         | AppEvent::Update { .. } => {
             return None;
         }
@@ -385,7 +386,10 @@ impl Driver {
 
     fn pointer_action(&mut self, action: Action, now: Instant) {
         match action {
-            Action::Hover(region) => self.pill_input(Input::Hover(region.is_some()), now),
+            Action::Hover(region) => {
+                self.emit.emit(AppEvent::Hover { region });
+                self.pill_input(Input::Hover(region.is_some()), now);
+            }
             Action::Click(region) => match (region, self.pill.view()) {
                 (Region::Pill, View::Idle { .. }) => {
                     self.pill_input(Input::HandsFree, now);
@@ -774,6 +778,16 @@ mod tests {
         r.msg(Msg::Pointer(Action::Hover(Some(Region::Pill))));
         r.msg(Msg::Pointer(Action::Hover(None)));
         assert_eq!(r.views(), [idle(true), idle(false)]);
+    }
+
+    #[test]
+    fn hovering_a_button_tells_the_webview_which() {
+        let mut r = rig(true);
+        r.rec.take();
+        r.msg(Msg::Pointer(Action::Hover(Some(Region::Stop))));
+        r.msg(Msg::Pointer(Action::Hover(None)));
+        let hovers: Vec<_> = r.rec.take().into_iter().filter(|e| matches!(e, AppEvent::Hover { .. })).collect();
+        assert_eq!(hovers, [AppEvent::Hover { region: Some(Region::Stop) }, AppEvent::Hover { region: None }]);
     }
 
     #[test]
