@@ -416,3 +416,16 @@ These are from `--speed 50 --polish` (40 polish calls, 0 failed, $0.0012). Real-
 80 polish calls, 1 failed (its Layer 1 text was kept), $0.0026. Nemotron's finish-only p50 is 285–295 ms over three runs. The ticket 01 build reads 286 ms. M1's 158 ms (§9) hasn't been reproduced, and the cause hasn't been investigated (M2 report, gap 3).
 
 **Rules latency** (`cargo test -p bolo-format --release --test latency`): p95 0.025 ms, max 0.23 ms over 4800 runs.
+
+## 19. Other Indic scripts to Roman Hinglish (M3 ticket 12)
+
+`bolo_format::brahmic` maps Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada and Malayalam script to Devanagari. The result then goes through the same romanizer and loanword lexicon as Devanagari and Urdu (§16). This happens everywhere `translit::needs_romanizing` gates Roman-script mode: the engine, `bolo run` and cleanup scoring, and the Hinglish detector.
+- Unicode lays these eight blocks out like Devanagari, so most letters map by their offset within the block. A letter maps only when the Devanagari codepoint at that offset is one the romanizer reads.
+- A small explicit table covers the letters that don't map that way: Dravidian short e and o (read as e and o), ற/ఱ/റ (r), ழ/ఴ/ೞ/ഴ (ḷ), Tamil ன, Malayalam chillu letters and dot reph, Bengali ৎ, Assamese ৰ/ৱ, Gurmukhi tippi (nasal) and addak (doubles the next consonant: ਪੱਕਾ → "pakka").
+- Anything else in those blocks is dropped, never passed through.
+
+**Tests:** golden cases give "ghar ke liye doodh le aana" in all eight scripts. Tamil, which has no voiced or aspirated stops, gives "kar ke liye tooth le ana". There are also loanword cases (మీటింగ్ → "meeting", ઓફિસ → "office") and the hinglish/09 Deepgram transcript as a regression case. A property test checks that Roman-script output contains no Brahmic or Arabic-script character.
+
+**Re-measured (2026-11-11):**
+- `bolo run --engines deepgram:nova-3`, from the cached `multi` outputs: hinglish/09's Telugu output now comes out as "Karike le noon bred andi parsabji lehaal." instead of Telugu script. Deepgram misheard most of the words, so its WER stays at 100%, but its CER drops from 100% to 42%. Hinglish CER drops from 13.0% to 10.7%. Every other number is unchanged: WER en 7.6%, fmt WER en 4.3%, WER hinglish 23.2%, fmt WER hinglish 21.2%.
+- `bolo replay -e deepgram --speed 50`, live `multi`: no Brahmic or Urdu script appeared in any of the 40 outputs. This time hinglish/09 came back in Latin script ("Rose, bread, ande aur sabzi lehana."). WER en was 17.9% and WER hinglish 33.0%, but these aren't comparable with the real-time batch figures (7.6% / 22.8%, §8). Several outputs lose their first words at 50× ("Tak bhej dena…" for "Report Friday tak bhej dena…"). That looks like a replay artifact of the batch engine at high speed, not a script problem. It's left for follow-up.

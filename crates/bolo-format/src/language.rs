@@ -89,11 +89,12 @@ fn words(text: &str) -> impl Iterator<Item = &str> {
         .filter(|w| !w.is_empty())
 }
 
-/// Count words and Hindi function words in the Hindi pass's output. Urdu-script words
-/// are mapped to Devanagari first ([`crate::urdu`]), so ہے counts like है.
+/// Count words and Hindi function words in the Hindi pass's output. Urdu-script and
+/// other Indic-script words are mapped to Devanagari first
+/// ([`crate::translit::to_devanagari`]), so ہے counts like है.
 pub fn hindi_evidence(hindi_pass: &str) -> HindiEvidence {
     let set = function_words();
-    let mapped = crate::urdu::urdu_to_devanagari(hindi_pass);
+    let mapped = crate::translit::to_devanagari(hindi_pass);
     words(&mapped).fold(HindiEvidence::default(), |mut e, w| {
         e.words += 1;
         e.function_words += usize::from(set.contains(w));
@@ -113,6 +114,11 @@ mod tests {
     #[test]
     fn urdu_script_hindi_is_hinglish() {
         assert_eq!(detect("کل meeting ہے نا، agenda بھیج دینا"), Detected::Hinglish);
+    }
+
+    #[test]
+    fn telugu_script_hindi_is_hinglish() {
+        assert_eq!(detect("కల్ meeting హై నా, agenda భేజ్ దేనా"), Detected::Hinglish);
     }
 
     #[test]
