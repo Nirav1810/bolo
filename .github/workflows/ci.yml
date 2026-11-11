@@ -26,7 +26,28 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install ALSA headers (cpal microphone capture)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+        shell: bash
+        # On 2026-11-11 the runners stopped resolving *.ubuntu.com for hours, so this
+        # retries with timeouts and then falls back to Ubuntu mirrors hosted elsewhere.
+        run: |
+          pkgs="libasound2-dev pkg-config"
+          if dpkg -s $pkgs >/dev/null 2>&1; then echo "Already installed."; exit 0; fi
+          apt_opts="-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+          try_install() {
+            sudo apt-get $apt_opts update || true
+            sudo apt-get $apt_opts install -y --no-install-recommends $pkgs
+          }
+          try_install && exit 0
+          codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+          for mirror in https://mirrors.edge.kernel.org/ubuntu https://mirror.math.princeton.edu/pub/ubuntu https://ftp.uni-stuttgart.de/ubuntu; do
+            echo "::warning::Ubuntu's own mirrors failed; trying $mirror"
+            sudo mkdir -p /etc/apt/sources-off
+            sudo sh -c 'mv /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list /etc/apt/sources-off/ 2>/dev/null; : > /etc/apt/sources.list'
+            printf 'Types: deb\nURIs: %s\nSuites: %s %s-updates %s-security\nComponents: main universe\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' \
+              "$mirror" "$codename" "$codename" "$codename" | sudo tee /etc/apt/sources.list.d/fallback.sources
+            try_install && exit 0
+          done
+          exit 1
       - uses: taiki-e/install-action@v2
         with:
           tool: git-cliff@2.14.2
