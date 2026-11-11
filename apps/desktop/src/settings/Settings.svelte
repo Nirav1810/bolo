@@ -34,7 +34,7 @@
     polish: { label: "Polish", icon: Sparkles, blurb: "Claude tidies each dictation after it lands, then swaps the result in." },
     dictionary: { label: "Dictionary", icon: BookA, blurb: "Names and terms Bolo should spell your way." },
     history: { label: "History", icon: HistoryIcon, blurb: "Your dictations, kept as text on this PC." },
-    usage: { label: "Usage", icon: Gauge, blurb: "How much Deepgram and Claude your dictations used, and what it cost." },
+    usage: { label: "Usage", icon: Gauge, blurb: "What your cloud engines used, and what it cost." },
     about: { label: "About", icon: Info, blurb: "Version, updates and where Bolo keeps its files." },
   } as const;
   type Page = keyof typeof PAGES;
