@@ -13,8 +13,11 @@
 //! - A notice or an error stays [`NOTICE_FOR`]; the rest hide [`HIDE_AFTER`] after
 //!   they are reached.
 //! - Hiding plays the webview's exit, and the window goes [`EXIT`] later.
+//! - While the idle button is allowed (ticket 15: on in settings, Bolo not paused, no
+//!   fullscreen app in front), the pill rests as [`View::Idle`] instead of hiding. A
+//!   click on it starts a hands-free dictation, whose Listening has Stop and Cancel.
 //!
-//! [`place`] is where the window goes: bottom-centre on the monitor of the window in
+//! [`place`] is where the window goes: along the bottom of the monitor of the window in
 //! front, in that monitor's physical pixels.
 
 use std::time::{Duration, Instant};
@@ -40,8 +43,17 @@ pub const POLISH_WAIT: Duration = POLISH_DEADLINE.saturating_add(Duration::from_
 #[serde(tag = "state", rename_all = "lowercase")]
 pub enum View {
     Hidden,
+    /// The idle button: a small bar, grown into a hint on hover. `key` names the
+    /// push-to-talk key for the hint.
+    Idle {
+        hover: bool,
+        key: String,
+    },
     /// The webview draws the waveform and the partial from the level and partial events.
-    Listening,
+    /// Hands-free (started with a click) adds Stop and Cancel.
+    Listening {
+        hands_free: bool,
+    },
     Transcribing,
     Inserted,
     Polishing,
@@ -77,6 +89,12 @@ pub enum Input {
         hint: Option<String>,
     },
     Error(String),
+    /// Whether the idle button may show.
+    Idle(bool),
+    /// The mouse moved onto (or off) the pill.
+    Hover(bool),
+    /// The next dictation was started with a click, not the key.
+    HandsFree,
 }
 
 /// What the overlay does, in order.
@@ -103,10 +121,22 @@ pub struct Pill {
     view_until: Option<Instant>,
     /// When the window hides, after the exit.
     hide_at: Option<Instant>,
+    /// Whether the idle button may show; then the pill rests as Idle instead of hiding.
+    idle: bool,
+    hover: bool,
+    hands_free: bool,
+    /// The push-to-talk key's name, for the idle hint.
+    key: String,
 }
 
 impl Default for Pill {
     fn default() -> Self {
+        Self::new("Caps Lock")
+    }
+}
+
+impl Pill {
+    pub fn new(key: &str) -> Self {
         Self {
             view: View::Hidden,
             shown: false,
@@ -115,11 +145,17 @@ impl Default for Pill {
             transcribing_at: None,
             view_until: None,
             hide_at: None,
+            idle: false,
+            hover: false,
+            hands_free: false,
+            key: key.to_owned(),
         }
     }
-}
 
-impl Pill {
+    fn listening(&self) -> bool {
+        matches!(self.view, View::Listening { .. })
+    }
+
     pub fn view(&self) -> &View {
         &self.view
     }
@@ -138,10 +174,11 @@ impl Pill {
                 self.transcribing_at = None;
                 // Shown again even if showing: the window in front may be elsewhere.
                 self.shown = false;
-                self.set(View::Listening, None, now, &mut fx);
+                let hands_free = std::mem::take(&mut self.hands_free);
+                self.set(View::Listening { hands_free }, None, now, &mut fx);
             }
             Input::State(DictationState::Processing) => {
-                if self.view == View::Listening {
+                if self.listening() {
                     self.processing = true;
                     self.transcribing_at = Some(now + TRANSCRIBING_AFTER);
                 }
@@ -151,9 +188,9 @@ impl Pill {
                 self.transcribing_at = None;
                 match self.view {
                     // Idle straight from listening: cancelled (Esc, or Bolo paused).
-                    View::Listening if !processing => self.set(View::Cancelled, Some(HIDE_AFTER), now, &mut fx),
+                    View::Listening { .. } if !processing => self.set(View::Cancelled, Some(HIDE_AFTER), now, &mut fx),
                     // Stopped, and no text came (nor an error to show).
-                    View::Listening | View::Transcribing => self.set(View::Hidden, None, now, &mut fx),
+                    View::Listening { .. } | View::Transcribing => self.set(View::Hidden, None, now, &mut fx),
                     _ => {}
                 }
             }
@@ -185,6 +222,23 @@ impl Pill {
                 self.transcribing_at = None;
                 self.set(View::Error { message }, Some(NOTICE_FOR), now, &mut fx);
             }
+            Input::Idle(idle) => {
+                if self.idle != idle {
+                    self.idle = idle;
+                    match self.view {
+                        // Resting either way: show the button, or let it go.
+                        View::Hidden | View::Idle { .. } => self.set(View::Hidden, None, now, &mut fx),
+                        _ => {}
+                    }
+                }
+            }
+            Input::Hover(hover) => {
+                self.hover = hover;
+                if matches!(self.view, View::Idle { .. }) {
+                    self.set(View::Hidden, None, now, &mut fx);
+                }
+            }
+            Input::HandsFree => self.hands_free = true,
         }
         fx
     }
@@ -193,7 +247,7 @@ impl Pill {
         let mut fx = Vec::new();
         if self.transcribing_at.is_some_and(|t| now >= t) {
             self.transcribing_at = None;
-            if self.processing && self.view == View::Listening {
+            if self.processing && self.listening() {
                 self.set(View::Transcribing, None, now, &mut fx);
             }
         }
@@ -208,12 +262,19 @@ impl Pill {
         fx
     }
 
-    /// Show `view`, for `stay` if given. Hidden plays the exit, then hides the window.
+    /// Show `view`, for `stay` if given. Hidden rests as Idle while the idle button is
+    /// allowed; otherwise it plays the exit, then hides the window.
     fn set(&mut self, view: View, stay: Option<Duration>, now: Instant, fx: &mut Vec<Effect>) {
         self.view_until = stay.map(|d| now + d);
         if view == View::Hidden {
             self.processing = false;
             self.transcribing_at = None;
+        }
+        let view = match view {
+            View::Hidden if self.idle => View::Idle { hover: self.hover, key: self.key.clone() },
+            v => v,
+        };
+        if view == View::Hidden {
             if self.view != View::Hidden {
                 self.hide_at = Some(now + EXIT);
             }
@@ -259,15 +320,27 @@ impl Rect {
 }
 
 /// The pill window's rectangle on a monitor whose work area (the screen less the
-/// taskbar) is `work`, at `scale` (DPI / 96). Bottom-centre, so the pill is [`OFFSET`]
-/// above the work area; never wider than the work area.
-pub fn place(work: Rect, scale: f64) -> Rect {
+/// taskbar) is `work`, at `scale` (DPI / 96). Along the bottom, so the pill is
+/// [`OFFSET`] above the work area, centred at `position` across it (0 left, 0.5 centre,
+/// 1 right) but never past its edges, nor wider than it.
+pub fn place(work: Rect, scale: f64, position: f64) -> Rect {
     let px = |logical: f64| (logical * scale).round() as i32;
     let width = px(WINDOW_WIDTH).min(work.width());
     let height = px(WINDOW_HEIGHT);
-    let left = work.left + (work.width() - width) / 2;
+    let centre = work.left + (f64::from(work.width()) * position.clamp(0.0, 1.0)).round() as i32;
+    let left = (centre - width / 2).clamp(work.left, work.right - width);
     let bottom = work.bottom - px(OFFSET - BOTTOM_MARGIN);
     Rect { left, top: bottom - height, right: left + width, bottom }
+}
+
+/// The `position` that [`place`] would put a window of `rect`'s width at, so that a
+/// window dragged to `rect` stays there.
+pub fn position_of(work: Rect, rect: Rect) -> f64 {
+    if work.width() <= 0 {
+        return 0.5;
+    }
+    let centre = f64::from(rect.left - work.left) + f64::from(rect.width()) / 2.0;
+    (centre / f64::from(work.width())).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
@@ -339,7 +412,7 @@ mod tests {
     #[test]
     fn listening_shows_the_window_before_the_view() {
         let mut r = Rig::new();
-        assert_eq!(r.state(Listening), [Effect::Show, render(View::Listening)]);
+        assert_eq!(r.state(Listening), [Effect::Show, render(View::Listening { hands_free: false })]);
         assert_eq!(r.on(Input::Begin { polish: false }), []);
         assert_eq!(r.pill.deadline(), None, "listening has no time limit");
     }
@@ -484,7 +557,7 @@ mod tests {
         r.text(false);
         r.wait(600 + 70);
         assert_eq!(r.pill.view(), &View::Hidden);
-        assert_eq!(r.state(Listening), [Effect::Show, render(View::Listening)]);
+        assert_eq!(r.state(Listening), [Effect::Show, render(View::Listening { hands_free: false })]);
         assert_eq!(r.wait(1000), [], "the pending hide was dropped");
     }
 
@@ -494,7 +567,7 @@ mod tests {
         r.dictate(false);
         r.text(false);
         r.wait(200);
-        assert_eq!(r.state(Listening), [Effect::Show, render(View::Listening)]);
+        assert_eq!(r.state(Listening), [Effect::Show, render(View::Listening { hands_free: false })]);
         assert_eq!(r.wait(5000), [], "and the old hide timer is gone");
     }
 
@@ -506,6 +579,71 @@ mod tests {
         assert_eq!(r.pill.deadline(), Some(r.now + NOTICE_FOR));
     }
 
+    fn idle(hover: bool) -> View {
+        View::Idle { hover, key: "Caps Lock".into() }
+    }
+
+    #[test]
+    fn the_idle_button_shows_when_allowed_and_goes_when_not() {
+        let mut r = Rig::new();
+        assert_eq!(r.on(Input::Idle(true)), [Effect::Show, render(idle(false))]);
+        assert_eq!(r.pill.deadline(), None, "idle has no time limit");
+        assert_eq!(r.on(Input::Idle(true)), [], "no change");
+        assert_eq!(r.on(Input::Idle(false)), [render(View::Hidden)]);
+        assert_eq!(r.wait(140), [Effect::Hide]);
+    }
+
+    #[test]
+    fn hover_grows_the_idle_button() {
+        let mut r = Rig::new();
+        r.on(Input::Idle(true));
+        assert_eq!(r.on(Input::Hover(true)), [render(idle(true))]);
+        assert_eq!(r.on(Input::Hover(false)), [render(idle(false))]);
+    }
+
+    #[test]
+    fn with_the_idle_button_a_dictation_ends_back_at_idle_not_hidden() {
+        let mut r = Rig::new();
+        r.on(Input::Idle(true));
+        assert_eq!(r.state(Listening), [Effect::Show, render(View::Listening { hands_free: false })]);
+        r.on(Input::Begin { polish: false });
+        r.state(Processing);
+        assert_eq!(r.text(false), [render(View::Inserted)]);
+        assert_eq!(r.wait(600), [render(idle(false))]);
+        assert_eq!(r.wait(5000), [], "and the window stays");
+    }
+
+    #[test]
+    fn hover_during_a_dictation_waits_for_idle() {
+        let mut r = Rig::new();
+        r.on(Input::Idle(true));
+        r.state(Listening);
+        assert_eq!(r.on(Input::Hover(true)), []);
+        r.state(Idle);
+        assert_eq!(r.wait(600), [render(idle(true))], "still hovered when it comes back");
+    }
+
+    #[test]
+    fn going_fullscreen_mid_dictation_hides_only_afterwards() {
+        let mut r = Rig::new();
+        r.on(Input::Idle(true));
+        r.state(Listening);
+        assert_eq!(r.on(Input::Idle(false)), [], "the dictation keeps its pill");
+        r.state(Idle);
+        assert_eq!(r.wait(600), [render(View::Hidden)]);
+        assert_eq!(r.wait(140), [Effect::Hide]);
+    }
+
+    #[test]
+    fn a_click_started_dictation_is_hands_free_once() {
+        let mut r = Rig::new();
+        r.on(Input::Idle(true));
+        r.on(Input::HandsFree);
+        assert_eq!(r.state(Listening)[1], render(View::Listening { hands_free: true }));
+        r.state(Idle);
+        assert_eq!(r.state(Listening)[1], render(View::Listening { hands_free: false }), "the key's is not");
+    }
+
     fn rect(left: i32, top: i32, right: i32, bottom: i32) -> Rect {
         Rect { left, top, right, bottom }
     }
@@ -513,7 +651,7 @@ mod tests {
     #[test]
     fn the_window_sits_bottom_centre_with_the_pill_24_px_above_the_work_area() {
         // 1920×1080 at 100% with a 48 px taskbar.
-        let r = place(rect(0, 0, 1920, 1032), 1.0);
+        let r = place(rect(0, 0, 1920, 1032), 1.0, 0.5);
         assert_eq!(r, rect(680, 1032 - 8 - 72, 1240, 1024));
         let pill_bottom = r.bottom - BOTTOM_MARGIN as i32;
         assert_eq!(1032 - pill_bottom, 24);
@@ -523,7 +661,7 @@ mod tests {
     fn placement_scales_with_the_monitor_dpi() {
         // 2560×1440 at 150%, as a second monitor to the right of the first.
         let work = rect(1920, 0, 4480, 1368);
-        let r = place(work, 1.5);
+        let r = place(work, 1.5, 0.5);
         assert_eq!((r.width(), r.height()), (840, 108));
         assert_eq!(r.left - work.left, work.right - r.right, "centred");
         assert_eq!(work.bottom - r.bottom, 12);
@@ -531,14 +669,41 @@ mod tests {
 
     #[test]
     fn the_window_is_never_wider_than_the_work_area() {
-        let r = place(rect(-800, 0, 0, 600), 1.75);
+        let r = place(rect(-800, 0, 0, 600), 1.75, 0.5);
         assert_eq!((r.left, r.right), (-800, 0));
+    }
+
+    #[test]
+    fn position_moves_the_window_along_the_bottom_within_the_work_area() {
+        let work = rect(0, 0, 1920, 1032);
+        assert_eq!(place(work, 1.0, 0.25).left, 480 - 280);
+        assert_eq!(place(work, 1.0, 0.0).left, 0, "never past the left edge");
+        assert_eq!(place(work, 1.0, 1.0).right, 1920, "nor the right");
+        assert_eq!(place(work, 1.0, 0.25).bottom, place(work, 1.0, 0.5).bottom);
+    }
+
+    #[test]
+    fn a_dragged_window_keeps_its_place() {
+        let work = rect(1920, 0, 4480, 1368);
+        for p in [0.2, 0.5, 0.8] {
+            let r = place(work, 1.5, p);
+            let back = position_of(work, r);
+            assert!((back - p).abs() < 0.001, "{p} -> {back}");
+            assert_eq!(place(work, 1.5, back), r);
+        }
     }
 
     #[test]
     fn views_serialize_for_the_webview() {
         let json = |v: View| serde_json::to_value(v).unwrap();
-        assert_eq!(json(View::Listening), serde_json::json!({"state": "listening"}));
+        assert_eq!(
+            json(View::Listening { hands_free: true }),
+            serde_json::json!({"state": "listening", "hands_free": true})
+        );
+        assert_eq!(
+            json(View::Idle { hover: false, key: "Caps Lock".into() }),
+            serde_json::json!({"state": "idle", "hover": false, "key": "Caps Lock"})
+        );
         assert_eq!(
             json(View::Notice { message: "m".into(), hint: Some("Ctrl+V".into()) }),
             serde_json::json!({"state": "notice", "message": "m", "hint": "Ctrl+V"})

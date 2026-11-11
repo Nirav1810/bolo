@@ -18,7 +18,9 @@ use std::path::PathBuf;
 
 pub use history::{Dictation, History, HistoryRow};
 pub use secrets::{PROVIDERS, SERVICE, Secrets};
-pub use settings::{HistorySettings, Loaded, PolishSettings, PushToTalkKey, SETTINGS_VERSION, Settings};
+pub use settings::{
+    HistorySettings, Loaded, OverlaySettings, PolishSettings, PushToTalkKey, SETTINGS_VERSION, Settings,
+};
 
 /// Everything that can go wrong in the store. Messages never contain an API key.
 #[derive(Debug, thiserror::Error)]
