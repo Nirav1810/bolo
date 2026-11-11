@@ -1,30 +1,54 @@
 //! The app controller: the engine's [`EngineEvents`], turned into [`AppEvent`]s for the
-//! webviews.
+//! webviews, and the instant and polished text into the app in front.
 //!
 //! Dictation logic lives here, in Rust. The webviews render what they're sent and never
-//! decide anything. Insertion (ticket 06) and history (ticket 07) hang off `on_final` and
-//! `on_polished` here; for now the text goes to the log and the debug window.
+//! decide anything. `on_final` pastes the instant text and `on_polished` swaps in the
+//! polished text through the [`Inserter`]; history (ticket 07) hangs off both.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use bolo_core::{BoloError, DictationState, EngineEvents, FormattedOutput};
 use serde::Serialize;
 
 use crate::hotkey::Flags;
+use crate::insert::{Inserted, Inserter, Swapped};
 
 /// What the webviews are sent, as the payload of the [`crate::EVENT`] event. Mirrored by
 /// `src/lib/events.ts`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum AppEvent {
-    State { state: DictationState },
-    Paused { paused: bool },
-    Level { rms: f32 },
-    Partial { text: String },
-    Final { output: Output },
-    Polished { output: Output },
-    Error { message: String },
+    State {
+        state: DictationState,
+    },
+    Paused {
+        paused: bool,
+    },
+    Level {
+        rms: f32,
+    },
+    Partial {
+        text: String,
+    },
+    Final {
+        output: Output,
+    },
+    Polished {
+        output: Output,
+    },
+    /// Something the user should know that isn't an error, for the pill.
+    Notice {
+        message: String,
+    },
+    Error {
+        message: String,
+    },
 }
+
+/// The notice when the window in front runs elevated and won't take Bolo's paste.
+pub const BLOCKED_NOTICE: &str =
+    "This window runs as administrator, so Bolo can't paste into it. Your text is on the clipboard: press Ctrl+V.";
 
 /// [`FormattedOutput`] as the webviews see it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -71,16 +95,17 @@ pub trait Emit: Send + Sync {
     fn emit(&self, event: AppEvent);
 }
 
-/// The engine's event sink. Called on the engine's threads, so it only logs and posts.
+/// The engine's event sink. Called on the engine's threads.
 pub struct Controller {
     emit: Arc<dyn Emit>,
     /// Tells the keyboard hook whether a dictation is listening (Esc cancels then).
     flags: Arc<Flags>,
+    inserter: Arc<Inserter>,
 }
 
 impl Controller {
-    pub fn new(emit: Arc<dyn Emit>, flags: Arc<Flags>) -> Self {
-        Self { emit, flags }
+    pub fn new(emit: Arc<dyn Emit>, flags: Arc<Flags>, inserter: Arc<Inserter>) -> Self {
+        Self { emit, flags, inserter }
     }
 }
 
@@ -94,19 +119,23 @@ impl EngineEvents for Controller {
     }
 
     fn on_final(&self, out: FormattedOutput) {
-        // Temporary (M3 ticket 01): the text goes to the log until insertion lands.
-        tracing::info!(
-            engine = %out.engine_id,
-            language = ?out.language,
-            total_ms = out.timings.total_ms,
-            text = %out.plain,
-            "final"
-        );
+        let inserted = self.inserter.insert(&out, Instant::now());
+        tracing::info!(engine = %out.engine_id, language = ?out.language, ?inserted, "final");
+        match inserted {
+            Inserted::Pasted | Inserted::Empty => {}
+            Inserted::Blocked => self.emit.emit(AppEvent::Notice { message: BLOCKED_NOTICE.into() }),
+            Inserted::Failed(e) => self.emit.emit(AppEvent::Error { message: format!("could not paste: {e}") }),
+        }
         self.emit.emit(AppEvent::Final { output: out.into() });
     }
 
     fn on_polished(&self, out: FormattedOutput) {
-        tracing::info!(llm_ms = out.timings.llm_ms, text = %out.plain, "polished");
+        let llm_ms = out.timings.llm_ms;
+        match self.inserter.polished(&out, Instant::now()) {
+            Swapped::Swapped => tracing::info!(llm_ms, "polish swapped in"),
+            Swapped::Skipped(why) => tracing::info!(llm_ms, skip = why.as_str(), "polish not swapped"),
+            Swapped::Failed(e) => tracing::warn!(llm_ms, %e, "the polish swap failed"),
+        }
         self.emit.emit(AppEvent::Polished { output: out.into() });
     }
 
@@ -118,6 +147,10 @@ impl EngineEvents for Controller {
     fn on_state(&self, state: DictationState) {
         tracing::debug!(?state, "state");
         self.flags.set_listening(state == DictationState::Listening);
+        if state == DictationState::Listening {
+            // A new dictation: the previous one's polish no longer replaces anything.
+            self.inserter.drop_pending();
+        }
         self.emit.emit(AppEvent::State { state });
     }
 }
@@ -153,8 +186,35 @@ mod tests {
     use serde_json::json;
 
     use super::testing::Recorder;
-    use super::{AppEvent, Controller};
+    use super::{AppEvent, BLOCKED_NOTICE, Controller};
+    use crate::desktop::Key;
+    use crate::desktop::fake::{FakeDesktop, Op};
     use crate::hotkey::Flags;
+    use crate::insert::testing::FakeTimer;
+    use crate::insert::{Inserter, RESTORE_AFTER, Target};
+
+    struct Rig {
+        rec: Arc<Recorder>,
+        flags: Arc<Flags>,
+        desktop: Arc<FakeDesktop>,
+        timer: Arc<FakeTimer>,
+        inserter: Arc<Inserter>,
+        c: Controller,
+    }
+
+    fn rig() -> Rig {
+        let rec = Arc::new(Recorder::default());
+        let flags = Arc::new(Flags::default());
+        let desktop = Arc::new(FakeDesktop::in_front("notepad.exe", "Untitled - Notepad"));
+        let timer = Arc::new(FakeTimer::default());
+        let inserter = Inserter::new(desktop.clone(), timer.clone(), flags.clone(), || {});
+        let c = Controller::new(rec.clone(), flags.clone(), inserter.clone());
+        Rig { rec, flags, desktop, timer, inserter, c }
+    }
+
+    fn kinds(rec: &Recorder) -> Vec<String> {
+        rec.take().iter().map(|e| serde_json::to_value(e).unwrap()["kind"].as_str().unwrap().to_owned()).collect()
+    }
 
     fn output(text: &str) -> FormattedOutput {
         FormattedOutput {
@@ -169,9 +229,7 @@ mod tests {
 
     #[test]
     fn engine_events_become_app_events_in_order() {
-        let rec = Arc::new(Recorder::default());
-        let flags = Arc::new(Flags::default());
-        let c = Controller::new(rec.clone(), flags.clone());
+        let Rig { rec, flags, c, .. } = rig();
         c.on_state(DictationState::Listening);
         assert!(flags.listening(), "the hook needs this for Esc");
         c.on_level(0.05);
@@ -181,9 +239,48 @@ mod tests {
         c.on_final(output("Hello."));
         c.on_polished(output("Hello!"));
         c.on_error(BoloError::Busy);
-        let kinds: Vec<_> =
-            rec.take().iter().map(|e| serde_json::to_value(e).unwrap()["kind"].as_str().unwrap().to_owned()).collect();
-        assert_eq!(kinds, ["state", "level", "partial", "state", "final", "polished", "error"]);
+        assert_eq!(kinds(&rec), ["state", "level", "partial", "state", "final", "polished", "error"]);
+    }
+
+    #[test]
+    fn the_final_text_is_pasted_polish_swapped_and_the_clipboard_restored() {
+        let r = rig();
+        r.desktop.user_copies("mine");
+        r.inserter.begin(Target::default(), true);
+        r.c.on_state(DictationState::Listening);
+        r.c.on_state(DictationState::Processing);
+        r.c.on_final(output("helo"));
+        let ops = r.desktop.take_ops();
+        assert_eq!(ops.last(), Some(&Op::Keys(vec![Key::Paste])), "{ops:?}");
+        r.c.on_polished(output("Hello."));
+        let ops = r.desktop.take_ops();
+        assert_eq!(ops.last(), Some(&Op::Keys([[Key::ShiftLeft; 4].as_slice(), &[Key::Paste]].concat())));
+        r.timer.fire(RESTORE_AFTER);
+        assert_eq!(r.desktop.text().as_deref(), Some("mine"));
+    }
+
+    #[test]
+    fn a_new_dictation_supersedes_the_pending_swap() {
+        let r = rig();
+        r.inserter.begin(Target::default(), true);
+        r.c.on_final(output("helo"));
+        r.c.on_state(DictationState::Listening);
+        r.desktop.take_ops();
+        r.c.on_polished(output("Hello."));
+        assert_eq!(r.desktop.take_ops(), [], "the old polish lands nowhere");
+        assert_eq!(kinds(&r.rec), ["final", "state", "polished"], "but the webviews still see it");
+    }
+
+    #[test]
+    fn a_blocked_paste_sends_a_notice() {
+        let r = rig();
+        r.desktop.set_blocked(true);
+        r.c.on_final(output("Hello."));
+        let events = r.rec.take();
+        assert_eq!(events[0], AppEvent::Notice { message: BLOCKED_NOTICE.into() });
+        assert!(matches!(events[1], AppEvent::Final { .. }));
+        assert_eq!(r.desktop.text().as_deref(), Some("Hello."));
+        assert!(r.timer.delays().is_empty());
     }
 
     #[test]
@@ -196,6 +293,7 @@ mod tests {
         assert_eq!(to_json(AppEvent::Paused { paused: true }), json!({"kind": "paused", "paused": true}));
         assert_eq!(to_json(AppEvent::Partial { text: "hi".into() }), json!({"kind": "partial", "text": "hi"}));
         assert_eq!(to_json(AppEvent::Error { message: "boom".into() }), json!({"kind": "error", "message": "boom"}));
+        assert_eq!(to_json(AppEvent::Notice { message: "hm".into() }), json!({"kind": "notice", "message": "hm"}));
         let fin = to_json(AppEvent::Final { output: output("Hi.").into() });
         assert_eq!(fin["kind"], "final");
         assert_eq!(fin["output"]["plain"], "Hi.");
