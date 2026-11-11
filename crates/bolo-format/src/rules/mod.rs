@@ -92,8 +92,13 @@ pub struct Formatted {
 
 /// Run the Layer 1 pipeline on a dictation's text and render it for the target's markup.
 pub fn apply(text: &str, language: Language, ctx: FormatContext) -> String {
-    let out = token::render(&run(text, language, ctx.code_mode), ctx.markup);
-    if ctx.markup == Markup::Html { finish_html(out, text) } else { finish(out, text) }
+    let tokens = run(text, language, ctx.code_mode);
+    let out = token::render(&tokens, ctx.markup);
+    if ctx.markup == Markup::Html {
+        finish_html(out, &finish(token::render(&tokens, Markup::Plain), text))
+    } else {
+        finish(out, text)
+    }
 }
 
 /// Run the Layer 1 pipeline once and render the result as plain text, Markdown and HTML.
@@ -101,10 +106,11 @@ pub fn apply(text: &str, language: Language, ctx: FormatContext) -> String {
 /// after one.
 pub fn format(text: &str, language: Language, code_mode: bool) -> Formatted {
     let tokens = run(text, language, code_mode);
+    let plain = finish(token::render(&tokens, Markup::Plain), text);
     Formatted {
-        plain: finish(token::render(&tokens, Markup::Plain), text),
         markdown: finish(token::render(&tokens, Markup::Markdown), text),
-        html: finish_html(token::render(&tokens, Markup::Html), text),
+        html: finish_html(token::render(&tokens, Markup::Html), &plain),
+        plain,
     }
 }
 
@@ -115,7 +121,8 @@ pub fn format(text: &str, language: Language, code_mode: bool) -> Formatted {
 pub fn to_html(text: &str) -> String {
     let mut tokens = token::tokenize(text);
     token::number_lines_to_items(&mut tokens);
-    finish_html(token::render(&tokens, Markup::Html), text)
+    let plain = finish(token::render(&tokens, Markup::Plain), text);
+    finish_html(token::render(&tokens, Markup::Html), &plain)
 }
 
 fn run(text: &str, language: Language, code_mode: bool) -> Vec<token::Token> {
@@ -139,15 +146,20 @@ fn finish(out: String, text: &str) -> String {
     out
 }
 
-/// [`finish`] for HTML: when nothing is left, the input as one escaped paragraph.
-fn finish_html(out: String, text: &str) -> String {
-    if out.is_empty() && !text.is_empty() {
-        let mut html = String::from("<p>");
-        token::escape_html(&finish(out, text), &mut html);
-        html.push_str("</p>");
-        return html;
+/// [`finish`] for HTML. When the HTML is empty, it follows the finished `plain` text, so
+/// the two always hold the same words: a bare line break (a lone "new line", or a filler
+/// dropped before one) is a `<br>`, and anything else is one escaped paragraph.
+fn finish_html(out: String, plain: &str) -> String {
+    if !out.is_empty() || plain.is_empty() {
+        return out;
     }
-    out
+    if plain.trim().is_empty() {
+        return "<br>".into();
+    }
+    let mut html = String::from("<p>");
+    token::escape_html(plain, &mut html);
+    html.push_str("</p>");
+    html
 }
 
 #[cfg(test)]
@@ -162,6 +174,14 @@ mod tests {
     #[test]
     fn punctuation_only_input_is_kept() {
         assert_eq!(apply(" , ", Language::English, FormatContext::plain()), ",");
+    }
+
+    #[test]
+    fn a_bare_line_break_is_the_same_in_plain_and_html() {
+        // Proptest found "um\n": plain kept the line break, HTML fell back to "um".
+        let f = format("um\n", Language::English, false);
+        assert_eq!((f.plain.as_str(), f.html.as_str()), ("\n", "<br>"));
+        assert_eq!(format("new line", Language::English, false).html, "<br>");
     }
 
     #[test]
