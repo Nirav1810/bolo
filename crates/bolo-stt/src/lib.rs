@@ -56,6 +56,29 @@ pub struct Transcript {
     pub engine_id: String,
     /// Language reported by the engine, if any (e.g. `en`, `hi-IN`).
     pub language: Option<String>,
+    /// What a cloud engine was paid for: zero for local engines.
+    #[serde(default)]
+    pub billed: Billed,
+}
+
+/// What one cloud request costs: the audio sent (providers bill by audio length) and
+/// its estimated price at the provider's pay-as-you-go list price.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct Billed {
+    pub audio_secs: f64,
+    pub cost_usd: f64,
+}
+
+impl Billed {
+    /// `samples` of 16 kHz audio at `usd_per_hour`.
+    pub fn audio(samples: usize, usd_per_hour: f64) -> Self {
+        let audio_secs = samples as f64 / f64::from(bolo_audio::SAMPLE_RATE);
+        Self { audio_secs, cost_usd: audio_secs / 3600.0 * usd_per_hour }
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.audio_secs == 0.0 && self.cost_usd == 0.0
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

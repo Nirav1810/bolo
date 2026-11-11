@@ -245,7 +245,12 @@ impl Inner {
                 finish_online(&rec, &stream, tail_padding(chunking, audio.len(), audio.len()))
             }
         };
-        Ok(Transcript { text: text.trim().to_owned(), engine_id: self.id.clone(), language: None })
+        Ok(Transcript {
+            text: text.trim().to_owned(),
+            engine_id: self.id.clone(),
+            language: None,
+            ..Default::default()
+        })
     }
 }
 
@@ -421,7 +426,7 @@ impl SttStream for LocalStream {
 
     fn finish(self: Box<Self>) -> Result<Transcript> {
         let text = finish_online(&self.rec, &self.stream, tail_padding(self.chunking, self.samples, self.speech.end()));
-        Ok(Transcript { text: text.trim().to_owned(), engine_id: self.id, language: None })
+        Ok(Transcript { text: text.trim().to_owned(), engine_id: self.id, language: None, ..Default::default() })
     }
 }
 

@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use super::{check_status, map_reqwest, warm_connection};
-use crate::{ApiKey, HinglishScript, Language, Result, SttEngine, SttError, SttOptions, Transcript};
+use crate::{ApiKey, Billed, HinglishScript, Language, Result, SttEngine, SttError, SttOptions, Transcript};
 
 pub const DEFAULT_BASE_URL: &str = "https://api.sarvam.ai";
 pub const DEFAULT_MODEL: &str = "saaras:v4";
@@ -136,7 +136,12 @@ impl SttEngine for SarvamEngine {
                 parts.push(t);
             }
         }
-        Ok(Transcript { text: parts.join(" "), engine_id: self.id.clone(), language })
+        Ok(Transcript {
+            text: parts.join(" "),
+            engine_id: self.id.clone(),
+            language,
+            billed: Billed::audio(audio.len(), PRICE_USD_PER_HOUR),
+        })
     }
 }
 

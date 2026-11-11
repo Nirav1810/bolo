@@ -212,7 +212,8 @@ pub fn input(event: &AppEvent) -> Option<Input> {
         | AppEvent::Partial { .. }
         | AppEvent::Pill { .. }
         | AppEvent::Hover { .. }
-        | AppEvent::Update { .. } => {
+        | AppEvent::Update { .. }
+        | AppEvent::Usage => {
             return None;
         }
     })

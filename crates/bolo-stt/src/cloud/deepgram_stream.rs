@@ -36,7 +36,7 @@ use tokio_tungstenite::{Connector, connect_async_tls_with_config};
 
 use super::deepgram::{self, DeepgramEngine, listen_params};
 use crate::fallback::DEFAULT_CLOUD_TIMEOUT;
-use crate::{ApiKey, Result, SttEngine, SttError, SttOptions, SttStream, Transcript};
+use crate::{ApiKey, Billed, Result, SttEngine, SttError, SttOptions, SttStream, Transcript};
 
 pub const DEFAULT_WS_URL: &str = "wss://api.deepgram.com/v1";
 
@@ -153,6 +153,7 @@ impl SttEngine for DeepgramStreamEngine {
         let (ev_tx, ev_rx) = std_mpsc::channel();
         let connector = Connector::Rustls(self.tls.clone());
         let id = self.id.clone();
+        let price = deepgram::usd_per_hour(opts, true);
         let spawned = std::thread::Builder::new().name("bolo-deepgram".into()).spawn(move || {
             let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
                 Ok(rt) => rt,
@@ -161,7 +162,7 @@ impl SttEngine for DeepgramStreamEngine {
                     return;
                 }
             };
-            let result = rt.block_on(session(request, connector, cmd_rx, &ev_tx, id));
+            let result = rt.block_on(session(request, connector, cmd_rx, &ev_tx, id, price));
             let _ = ev_tx.send(Event::Done(result));
         });
         if let Err(e) = spawned {
@@ -261,6 +262,7 @@ async fn session(
     mut cmds: mpsc::UnboundedReceiver<Cmd>,
     events: &std_mpsc::Sender<Event>,
     engine_id: String,
+    usd_per_hour: f64,
 ) -> Result<Transcript> {
     let (ws, _) =
         tokio::time::timeout(CONNECT_TIMEOUT, connect_async_tls_with_config(request, None, true, Some(connector)))
@@ -269,6 +271,9 @@ async fn session(
             .map_err(map_ws_error)?;
     let (mut sink, mut incoming) = ws.split();
     let mut results = Assembler::default();
+    // PCM16 bytes sent: Deepgram bills live audio by its length.
+    let mut sent = 0usize;
+    let billed = |sent: usize| Billed::audio(sent / 2, usd_per_hour);
     // Set once `Finalize` + `CloseStream` are sent; bounds the wait for the server.
     let mut finish_deadline: Option<tokio::time::Instant> = None;
     loop {
@@ -276,6 +281,7 @@ async fn session(
         tokio::select! {
             cmd = cmds.recv(), if !finishing => match cmd {
                 Some(Cmd::Audio(bytes)) => {
+                    sent += bytes.len();
                     sink.send(Message::Binary(bytes.into())).await.map_err(map_ws_error)?;
                 }
                 Some(Cmd::Finish) => {
@@ -295,19 +301,19 @@ async fn session(
                     Step::Partial(p) => {
                         let _ = events.send(Event::Partial(p));
                     }
-                    Step::Flushed | Step::Metadata if finishing => return Ok(results.transcript(&engine_id)),
+                    Step::Flushed | Step::Metadata if finishing => return Ok(results.transcript(&engine_id, billed(sent))),
                     Step::Flushed | Step::Metadata | Step::None => {}
                 },
                 Some(Ok(Message::Close(frame))) => {
                     return match frame {
                         Some(f) if f.code != CloseCode::Normal => Err(close_error(&f)),
-                        _ if finishing => Ok(results.transcript(&engine_id)),
+                        _ if finishing => Ok(results.transcript(&engine_id, billed(sent))),
                         _ => Err(SttError::Network("deepgram closed the stream".into())),
                     };
                 }
                 Some(Ok(_)) => {}
                 Some(Err(WsError::ConnectionClosed)) | None if finishing => {
-                    return Ok(results.transcript(&engine_id));
+                    return Ok(results.transcript(&engine_id, billed(sent)));
                 }
                 Some(Err(e)) => return Err(map_ws_error(e)),
                 None => return Err(SttError::Network("deepgram closed the stream".into())),
@@ -452,8 +458,13 @@ impl Assembler {
     }
 
     /// The final transcript. Interim text left unconfirmed is dropped.
-    fn transcript(&self, engine_id: &str) -> Transcript {
-        Transcript { text: self.finals.join(" "), engine_id: engine_id.to_owned(), language: self.language.clone() }
+    fn transcript(&self, engine_id: &str, billed: Billed) -> Transcript {
+        Transcript {
+            text: self.finals.join(" "),
+            engine_id: engine_id.to_owned(),
+            language: self.language.clone(),
+            billed,
+        }
     }
 }
 
@@ -481,7 +492,7 @@ mod tests {
         assert_eq!(a.handle(&results("", false, false)), Step::None);
         assert_eq!(a.handle(&results("kal", false, false)), Step::Partial("Hello world. kal".into()));
         assert_eq!(a.handle(&results("Kal milte hain.", true, true)), Step::Flushed);
-        let t = a.transcript("deepgram-stream:nova-3");
+        let t = a.transcript("deepgram-stream:nova-3", Billed::default());
         assert_eq!(t.text, "Hello world. Kal milte hain.");
         assert_eq!(t.language.as_deref(), Some("hi"));
     }
@@ -491,7 +502,7 @@ mod tests {
         let mut a = Assembler::default();
         a.handle(&results("Send it.", true, false));
         a.handle(&results("and then", false, false));
-        assert_eq!(a.transcript("x").text, "Send it.");
+        assert_eq!(a.transcript("x", Billed::default()).text, "Send it.");
     }
 
     #[test]

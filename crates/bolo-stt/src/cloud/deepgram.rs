@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use super::{check_status, map_reqwest, warm_connection};
-use crate::{ApiKey, Language, Result, SttEngine, SttError, SttOptions, Transcript};
+use crate::{ApiKey, Billed, Language, Result, SttEngine, SttError, SttOptions, Transcript};
 
 pub const DEFAULT_BASE_URL: &str = "https://api.deepgram.com/v1";
 pub const DEFAULT_MODEL: &str = "nova-3";
@@ -17,6 +17,10 @@ pub const DEFAULT_MODEL: &str = "nova-3";
 pub const PRICE_USD_PER_HOUR_MONO: f64 = 0.258;
 pub const PRICE_USD_PER_HOUR_MULTI: f64 = 0.312;
 pub const PRICE_USD_PER_HOUR_KEYTERM: f64 = 0.078;
+/// Live streaming list prices per hour: monolingual $0.0077/min, multilingual $0.0092/min
+/// (Deepgram has run promotions below these; the app labels its costs as estimates).
+pub const PRICE_USD_PER_HOUR_STREAM_MONO: f64 = 0.462;
+pub const PRICE_USD_PER_HOUR_STREAM_MULTI: f64 = 0.552;
 
 const MAX_KEYTERMS: usize = 50;
 
@@ -69,9 +73,30 @@ pub(crate) fn listen_params(model: &str, opts: &SttOptions) -> Vec<(&'static str
     q
 }
 
+/// The list price per hour of audio for a request with `opts`: batch or live, one
+/// language or `multi`, plus the keyterm add-on when the dictionary is used.
+pub(crate) fn usd_per_hour(opts: &SttOptions, streaming: bool) -> f64 {
+    let multi = !matches!(opts.language, Language::En);
+    let base = match (streaming, multi) {
+        (false, false) => PRICE_USD_PER_HOUR_MONO,
+        (false, true) => PRICE_USD_PER_HOUR_MULTI,
+        (true, false) => PRICE_USD_PER_HOUR_STREAM_MONO,
+        (true, true) => PRICE_USD_PER_HOUR_STREAM_MULTI,
+    };
+    let keyterms = opts.dictionary.iter().any(|t| !t.trim().is_empty());
+    base + if keyterms { PRICE_USD_PER_HOUR_KEYTERM } else { 0.0 }
+}
+
 #[derive(Deserialize)]
 struct DgResponse {
     results: DgResults,
+    #[serde(default)]
+    metadata: Option<DgMetadata>,
+}
+#[derive(Deserialize)]
+struct DgMetadata {
+    /// Seconds of audio Deepgram processed: what it bills.
+    duration: Option<f64>,
 }
 #[derive(Deserialize)]
 struct DgResults {
@@ -113,10 +138,16 @@ impl SttEngine for DeepgramEngine {
             .await
             .map_err(map_reqwest)?;
         let body: DgResponse = check_status(resp).await?.json().await.map_err(map_reqwest)?;
+        let price = usd_per_hour(opts, false);
+        // Deepgram's own count of the audio, falling back to ours.
+        let billed = match body.metadata.as_ref().and_then(|m| m.duration) {
+            Some(secs) => Billed { audio_secs: secs, cost_usd: secs / 3600.0 * price },
+            None => Billed::audio(audio.len(), price),
+        };
         let channel = body.results.channels.into_iter().next();
         let language = channel.as_ref().and_then(|c| c.detected_language.clone());
         let text = channel.and_then(|c| c.alternatives.into_iter().next()).map(|a| a.transcript).unwrap_or_default();
-        Ok(Transcript { text: text.trim().to_owned(), engine_id: self.id.clone(), language })
+        Ok(Transcript { text: text.trim().to_owned(), engine_id: self.id.clone(), language, billed })
     }
 }
 
@@ -129,6 +160,7 @@ mod tests {
         let json = r#"{"metadata":{"duration":2.5},"results":{"channels":[{"alternatives":[{"transcript":"hello world","confidence":0.99}]}]}}"#;
         let r: DgResponse = serde_json::from_str(json).unwrap();
         assert_eq!(r.results.channels[0].alternatives[0].transcript, "hello world");
+        assert_eq!(r.metadata.and_then(|m| m.duration), Some(2.5), "the billed duration is Deepgram's");
     }
 
     #[test]
@@ -139,6 +171,20 @@ mod tests {
         let q = e.query(&o);
         assert_eq!(q.iter().filter(|(k, _)| *k == "keyterm").count(), 2);
         assert!(q.contains(&("language", "multi".to_owned())));
+    }
+
+    #[test]
+    fn prices_follow_mode_language_and_keyterms() {
+        let en = SttOptions { language: Language::En, ..Default::default() };
+        let multi = SttOptions::default();
+        let terms = SttOptions { dictionary: vec!["Bolo".into()], ..Default::default() };
+        assert_eq!(usd_per_hour(&en, false), PRICE_USD_PER_HOUR_MONO);
+        assert_eq!(usd_per_hour(&multi, true), PRICE_USD_PER_HOUR_STREAM_MULTI);
+        assert_eq!(usd_per_hour(&terms, false), PRICE_USD_PER_HOUR_MULTI + PRICE_USD_PER_HOUR_KEYTERM);
+        // A minute of multilingual batch audio is $0.0052.
+        let b = Billed::audio(60 * 16_000, usd_per_hour(&multi, false));
+        assert_eq!(b.audio_secs, 60.0);
+        assert!((b.cost_usd - 0.0052).abs() < 1e-9);
     }
 
     #[test]

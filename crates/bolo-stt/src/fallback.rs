@@ -160,7 +160,7 @@ mod tests {
             if self.fail {
                 return Err(SttError::Network("boom".into()));
             }
-            Ok(Transcript { text: self.id.into(), engine_id: self.id.into(), language: None })
+            Ok(Transcript { text: self.id.into(), engine_id: self.id.into(), language: None, ..Default::default() })
         }
     }
 

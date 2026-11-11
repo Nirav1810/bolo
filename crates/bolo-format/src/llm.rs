@@ -178,6 +178,19 @@ pub async fn cleanup(
     req: &CleanupRequest<'_>,
     timeout: Duration,
 ) -> Result<CleanupResult, LlmError> {
+    cleanup_metered(client, api_key, req, timeout, |_| {}).await
+}
+
+/// [`cleanup`], calling `meter` with the call's token usage (as Anthropic reported it)
+/// as soon as an answer arrives: also when the answer is then rejected as a refusal or
+/// a reply, since those were billed too. `text` is empty in what `meter` sees.
+pub async fn cleanup_metered(
+    client: &reqwest::Client,
+    api_key: &str,
+    req: &CleanupRequest<'_>,
+    timeout: Duration,
+    meter: impl FnOnce(&CleanupResult),
+) -> Result<CleanupResult, LlmError> {
     let body = serde_json::json!({
         "model": MODEL,
         "max_tokens": 1024,
@@ -202,6 +215,15 @@ pub async fn cleanup(
         return Err(LlmError::Status { status: status.as_u16(), body });
     }
     let r: ApiResponse = resp.json().await.map_err(|e| LlmError::Decode(e.to_string()))?;
+    let mut result = CleanupResult {
+        text: String::new(),
+        latency_ms: t0.elapsed().as_secs_f64() * 1e3,
+        input_tokens: r.usage.input_tokens,
+        output_tokens: r.usage.output_tokens,
+        cache_read_tokens: r.usage.cache_read_input_tokens,
+        cache_write_tokens: r.usage.cache_creation_input_tokens,
+    };
+    meter(&result);
     if r.stop_reason.as_deref() == Some("refusal") {
         return Err(LlmError::Refusal);
     }
@@ -213,14 +235,8 @@ pub async fn cleanup(
     if looks_like_reply(req.transcript, &text) {
         return Err(LlmError::Decode("model wrote a reply instead of cleaned text".into()));
     }
-    Ok(CleanupResult {
-        text: text.trim().to_owned(),
-        latency_ms: t0.elapsed().as_secs_f64() * 1e3,
-        input_tokens: r.usage.input_tokens,
-        output_tokens: r.usage.output_tokens,
-        cache_read_tokens: r.usage.cache_read_input_tokens,
-        cache_write_tokens: r.usage.cache_creation_input_tokens,
-    })
+    result.text = text.trim().to_owned();
+    Ok(result)
 }
 
 /// The length-ratio guard: true when the model seems to have answered or commented

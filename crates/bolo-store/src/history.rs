@@ -13,7 +13,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::{Result, io_err};
 
 /// The schema this build creates, stored in SQLite's `user_version`.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const MS_PER_DAY: i64 = 86_400_000;
 
@@ -60,7 +60,7 @@ pub struct HistoryRow {
 }
 
 pub struct History {
-    conn: Connection,
+    pub(crate) conn: Connection,
     enabled: bool,
 }
 
@@ -92,7 +92,7 @@ impl History {
     fn init(conn: Connection) -> Result<Self> {
         conn.busy_timeout(std::time::Duration::from_secs(2))?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version < SCHEMA_VERSION {
+        if version < 1 {
             conn.execute_batch(
                 "BEGIN;
                  CREATE TABLE IF NOT EXISTS dictations (
@@ -110,6 +110,9 @@ impl History {
                  PRAGMA user_version = 1;
                  COMMIT;",
             )?;
+        }
+        if version < SCHEMA_VERSION {
+            conn.execute_batch(crate::usage::SCHEMA_V2)?;
         }
         Ok(Self { conn, enabled: true })
     }

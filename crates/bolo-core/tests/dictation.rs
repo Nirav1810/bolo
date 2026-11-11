@@ -5,8 +5,8 @@ mod common;
 
 use std::time::Duration;
 
-use bolo_core::{DictationState, Language, LanguageMode};
-use common::{ENGINE_ID, FakeStt, Harness, errors, finals, partials, states};
+use bolo_core::{DictationState, Language, LanguageMode, Usage};
+use common::{ENGINE_ID, FakeStt, Harness, errors, finals, partials, states, usage};
 
 fn english() -> FakeStt {
     FakeStt::new().script(
@@ -34,6 +34,34 @@ fn a_dictation_yields_the_scripted_final_with_timings() {
     // The fake really streamed: partials arrived live, in script order.
     assert_eq!(partials(&events), ["please", "please send the", "please send the report"]);
     assert_eq!(h.stt.opened(), [Language::En]);
+}
+
+#[test]
+fn a_billed_engine_reports_its_audio_to_the_usage_meter() {
+    let h = Harness::new(english(), LanguageMode::English);
+    let events = h.dictate();
+
+    let finished = h.stt.finished();
+    assert_eq!(finished.len(), 1);
+    let secs = finished[0].1 as f64 / 16_000.0;
+    match usage(&events).as_slice() {
+        [Usage::Speech { engine_id, audio_secs, cost_usd }] => {
+            assert_eq!(engine_id, ENGINE_ID);
+            assert!((audio_secs - secs).abs() < 1e-9 && secs > 0.0, "{audio_secs} vs {secs}");
+            assert!((cost_usd - secs).abs() < 1e-9, "the fake bills $1 a second");
+        }
+        other => panic!("expected one speech usage, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_cancelled_dictation_reports_no_usage() {
+    let h = Harness::new(english(), LanguageMode::English);
+    h.start_and_speak();
+    h.engine.cancel_dictation();
+    let mut events = h.events_until_idle();
+    events.extend(h.events_within(Duration::from_millis(300)));
+    assert!(usage(&events).is_empty(), "{events:?}");
 }
 
 #[test]

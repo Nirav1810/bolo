@@ -7,7 +7,7 @@
   import Debug from "./Debug.svelte";
   import Onboarding from "./onboarding/Onboarding.svelte";
 
-  const TABS = ["general", "engines", "polish", "dictionary", "history", "about"];
+  const TABS = ["general", "engines", "polish", "dictionary", "history", "usage", "about"];
   const initial = location.hash.slice(1) || "settings";
   let route = $state(initial);
   let tab = $state(TABS.includes(initial) ? initial : "general");

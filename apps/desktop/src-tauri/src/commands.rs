@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use bolo_core::OutputFormat;
-use bolo_store::{History, PROVIDERS, Settings};
+use bolo_store::{History, PROVIDERS, ProviderUsage, Settings};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -14,7 +14,7 @@ use crate::desktop::Clipboard;
 use crate::form::{CLOUD_ENGINES, Form};
 use crate::keys::{self, Tested};
 use crate::models::{self, DownloadEvent, ModelView};
-use crate::{Bolo, key_name, lock, updates};
+use crate::{Bolo, billing, key_name, lock, updates};
 
 /// Download progress goes out on this event, as [`DownloadEvent`]s.
 pub const DOWNLOAD_EVENT: &str = "bolo://download";
@@ -141,6 +141,7 @@ pub fn settings_save(app: AppHandle, bolo: State<'_, Bolo>, form: Form) -> Resul
 /// Store `provider`'s key (blank deletes it). Its hint.
 #[tauri::command]
 pub fn key_save(bolo: State<'_, Bolo>, provider: String, key: String) -> Result<Option<String>, String> {
+    billing::forget();
     bolo.save_key(&provider, &key)
 }
 
@@ -210,6 +211,56 @@ pub fn history_delete(bolo: State<'_, Bolo>, id: i64) -> Result<(), String> {
 #[tauri::command]
 pub fn history_clear(bolo: State<'_, Bolo>) -> Result<(), String> {
     bolo.journal.with_history(|h| h.clear()).transpose().map(drop).map_err(|e| e.to_string())
+}
+
+/// The usage meter's totals, as the Usage page shows them.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UsageView {
+    /// Since `today_start_ms`, the viewer's local midnight.
+    pub today: Vec<ProviderUsage>,
+    pub last_30_days: Vec<ProviderUsage>,
+    pub all_time: Vec<ProviderUsage>,
+    /// When the meter's oldest request was recorded.
+    pub since_ms: Option<i64>,
+}
+
+const MS_PER_DAY: i64 = 86_400_000;
+
+#[tauri::command]
+pub fn usage_summary(bolo: State<'_, Bolo>, today_start_ms: i64) -> Result<UsageView, String> {
+    let now = bolo_store::history::now_ms();
+    bolo.journal
+        .with_history(|h| -> bolo_store::Result<UsageView> {
+            Ok(UsageView {
+                today: h.usage_since(today_start_ms)?,
+                last_30_days: h.usage_since(now - 30 * MS_PER_DAY)?,
+                all_time: h.usage_since(0)?,
+                since_ms: h.usage_started()?,
+            })
+        })
+        .unwrap_or_else(|| Ok(UsageView::default()))
+        .map_err(|e| e.to_string())
+}
+
+/// The providers' own usage reports, for the usage keys stored (see [`crate::billing`]).
+#[tauri::command]
+pub async fn usage_reports(app: AppHandle, refresh: bool) -> billing::ProviderReports {
+    let keys = {
+        let bolo = app.state::<Bolo>();
+        let secrets = lock(&bolo.secrets);
+        let get = |p: &str| secrets.as_ref().and_then(|s| s.api_keys().get(p).map(str::to_owned));
+        billing::Keys {
+            deepgram_admin: get(billing::DEEPGRAM_ADMIN),
+            anthropic_admin: get(billing::ANTHROPIC_ADMIN),
+            anthropic: get(bolo_core::ANTHROPIC),
+        }
+    };
+    billing::reports(keys, bolo_store::history::now_ms(), refresh).await
+}
+
+#[tauri::command]
+pub fn usage_reset(bolo: State<'_, Bolo>) -> Result<(), String> {
+    bolo.journal.with_history(|h| h.clear_usage()).transpose().map(drop).map_err(|e| e.to_string())
 }
 
 /// Put `text` on the clipboard (the History page's Copy).

@@ -34,6 +34,10 @@
       Pop $0
       nsExec::Exec 'cmdkey.exe /delete:sarvam.bolo'
       Pop $0
+      nsExec::Exec 'cmdkey.exe /delete:deepgram-admin.bolo'
+      Pop $0
+      nsExec::Exec 'cmdkey.exe /delete:anthropic-admin.bolo'
+      Pop $0
     ${EndIf}
   ${EndIf}
 !macroend

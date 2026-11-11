@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use bolo_format::llm::{self, CleanupRequest, LlmError};
 use serde::{Deserialize, Serialize};
 
-use crate::{ApiKeys, BoloError};
+use crate::{ApiKeys, BoloError, EngineEvents, Usage};
 
 /// Polish's hard deadline. A later answer is dropped and the Layer 1 text stands.
 pub const POLISH_DEADLINE: Duration = Duration::from_millis(1500);
@@ -46,16 +46,80 @@ pub trait LlmClient: Send + Sync {
     async fn polish(&self, req: &CleanupRequest<'_>, timeout: Duration) -> Result<String, LlmError>;
 }
 
-/// Claude via the Messages API (`bolo_format::llm`).
+/// How long a polish request may run on in the background after the engine stopped
+/// waiting for it, so the tokens it was billed for still reach the usage meter.
+const METERED_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Claude via the Messages API (`bolo_format::llm`). Reports each answered call's
+/// tokens, as Anthropic counted them, to the host's usage meter.
 pub(crate) struct AnthropicClient {
     http: reqwest::Client,
     key: String,
+    meter: Arc<dyn EngineEvents>,
 }
 
 #[async_trait]
 impl LlmClient for AnthropicClient {
-    async fn polish(&self, req: &CleanupRequest<'_>, timeout: Duration) -> Result<String, LlmError> {
-        llm::cleanup(&self.http, &self.key, req, timeout).await.map(|r| r.text)
+    /// The engine stops waiting at its deadline, but the request runs on in its own task
+    /// (up to [`METERED_TIMEOUT`]): Anthropic bills an answer that came too late, so its
+    /// usage is still recorded. `_timeout` is therefore not applied to the request.
+    async fn polish(&self, req: &CleanupRequest<'_>, _timeout: Duration) -> Result<String, LlmError> {
+        let (http, key, meter) = (self.http.clone(), self.key.clone(), self.meter.clone());
+        let owned = Owned::of(req);
+        let call = tokio::spawn(async move {
+            let req = owned.request();
+            llm::cleanup_metered(&http, &key, &req, METERED_TIMEOUT, |r| meter.on_usage(usage(r))).await
+        });
+        match call.await {
+            Ok(r) => r.map(|r| r.text),
+            Err(e) => Err(LlmError::Network(e.to_string())),
+        }
+    }
+}
+
+/// A [`CleanupRequest`] that can move into a task.
+struct Owned {
+    transcript: String,
+    script: llm::Script,
+    tone: String,
+    app: String,
+    dictionary: Vec<String>,
+    context: Option<String>,
+}
+
+impl Owned {
+    fn of(r: &CleanupRequest<'_>) -> Self {
+        Self {
+            transcript: r.transcript.to_owned(),
+            script: r.script,
+            tone: r.tone.to_owned(),
+            app: r.app.to_owned(),
+            dictionary: r.dictionary.to_vec(),
+            context: r.context.map(str::to_owned),
+        }
+    }
+
+    fn request(&self) -> CleanupRequest<'_> {
+        CleanupRequest {
+            transcript: &self.transcript,
+            script: self.script,
+            tone: &self.tone,
+            app: &self.app,
+            dictionary: &self.dictionary,
+            context: self.context.as_deref(),
+        }
+    }
+}
+
+/// The usage meter's record of one answered call.
+fn usage(r: &llm::CleanupResult) -> Usage {
+    Usage::Polish {
+        model: llm::MODEL.into(),
+        input_tokens: r.input_tokens,
+        output_tokens: r.output_tokens,
+        cache_read_tokens: r.cache_read_tokens,
+        cache_write_tokens: r.cache_write_tokens,
+        cost_usd: r.cost_usd(),
     }
 }
 
@@ -66,6 +130,7 @@ pub(crate) fn client(
     keys: &ApiKeys,
     injected: Option<&Arc<dyn LlmClient>>,
     http: &reqwest::Client,
+    meter: &Arc<dyn EngineEvents>,
 ) -> Result<Option<Arc<dyn LlmClient>>, BoloError> {
     if *polish == Polish::Off {
         return Ok(None);
@@ -76,7 +141,7 @@ pub(crate) fn client(
     let key = keys
         .get(ANTHROPIC)
         .ok_or_else(|| BoloError::Config("polish is on but no API key is configured for anthropic".into()))?;
-    Ok(Some(Arc::new(AnthropicClient { http: http.clone(), key: key.to_owned() })))
+    Ok(Some(Arc::new(AnthropicClient { http: http.clone(), key: key.to_owned(), meter: meter.clone() })))
 }
 
 /// The guard on an answer: `Some(text)` when it can replace `input`. An empty answer
@@ -98,15 +163,26 @@ mod tests {
         assert_eq!(serde_json::from_str::<Polish>(r#""off""#).ok(), Some(Polish::Off));
     }
 
+    struct NoEvents;
+    impl EngineEvents for NoEvents {
+        fn on_level(&self, _: f32) {}
+        fn on_partial(&self, _: String) {}
+        fn on_final(&self, _: crate::FormattedOutput) {}
+        fn on_polished(&self, _: crate::FormattedOutput) {}
+        fn on_error(&self, _: BoloError) {}
+        fn on_state(&self, _: crate::DictationState) {}
+    }
+
     #[test]
     fn on_without_a_key_is_a_config_error() {
+        let meter: Arc<dyn EngineEvents> = Arc::new(NoEvents);
         let on = Polish::On { tone: "neutral".into(), app: "Notes".into(), dictionary: vec![] };
         let http = bolo_stt::cloud::http_client().expect("http client");
         let mut keys = ApiKeys::default();
-        assert!(matches!(client(&on, &keys, None, &http), Err(BoloError::Config(_))));
-        assert!(matches!(client(&Polish::Off, &keys, None, &http), Ok(None)));
+        assert!(matches!(client(&on, &keys, None, &http, &meter), Err(BoloError::Config(_))));
+        assert!(matches!(client(&Polish::Off, &keys, None, &http, &meter), Ok(None)));
         keys.set(ANTHROPIC, "sk-test");
-        assert!(matches!(client(&on, &keys, None, &http), Ok(Some(_))));
+        assert!(matches!(client(&on, &keys, None, &http, &meter), Ok(Some(_))));
     }
 
     #[test]
