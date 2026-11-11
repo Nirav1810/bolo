@@ -6,6 +6,8 @@
 //! - [`rules`] maps the window in front to a target and a polish decision (app rules).
 //! - [`insert`] pastes the text and swaps in polish (ADR-0018).
 //! - [`journal`] records each dictation in history.
+//! - [`pill`] is the overlay pill's state machine and [`overlay`] the thread and window
+//!   that run it.
 //! - [`hotkey`] is the push-to-talk state machine and [`keyhook`] the hook that runs it.
 //! - [`config`] lays `BOLO_*` variables over the engine config from settings.
 //!
@@ -20,6 +22,8 @@ pub mod hotkey;
 pub mod insert;
 pub mod journal;
 pub mod keyhook;
+pub mod overlay;
+pub mod pill;
 pub mod rules;
 pub mod session;
 
@@ -40,6 +44,7 @@ use hotkey::{Command, Flags};
 use insert::{Inserter, ThreadTimer};
 use journal::Journal;
 use keyhook::{Handler, KeyHook};
+use overlay::Overlay;
 use rules::{AppRules, Plan, PolishPrefs};
 use session::{Session, Toggled};
 
@@ -47,6 +52,8 @@ use session::{Session, Toggled};
 pub const EVENT: &str = "bolo://event";
 
 const MAIN_WINDOW: &str = "main";
+/// The overlay pill, created hidden at startup (`tauri.conf.json`).
+const PILL_WINDOW: &str = "pill";
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
@@ -96,6 +103,8 @@ struct Bolo {
     prefs: PolishPrefs,
     inserter: Arc<Inserter>,
     journal: Arc<Journal>,
+    /// Every event goes through the overlay, which drives the pill, to the webviews.
+    overlay: Arc<Overlay>,
     emit: Arc<dyn Emit>,
     /// Why the config or the engine could not be built at startup, for the debug window.
     startup_error: Mutex<Option<String>>,
@@ -136,6 +145,7 @@ impl Bolo {
         if let Toggled::Started { app, target, polish } = started {
             self.inserter.begin(*target, *polish);
             self.journal.begin(app, target.format);
+            self.overlay.begin(*polish);
         }
     }
 
@@ -327,7 +337,9 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     })
     .build(app)?;
 
-    let emit: Arc<dyn Emit> = Arc::new(TauriEmit { app: app.handle().clone(), tray: TrayItems { toggle, pause } });
+    let webviews: Arc<dyn Emit> = Arc::new(TauriEmit { app: app.handle().clone(), tray: TrayItems { toggle, pause } });
+    let overlay = Overlay::spawn(webviews, pill_window(app));
+    let emit: Arc<dyn Emit> = overlay.clone();
     let settings = load_settings();
     let (config, config_error) = engine_config(&settings);
     tracing::info!(engines = ?config.engines, language = ?config.language, models = %config.models_dir.display(), "engine config");
@@ -363,6 +375,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         prefs,
         inserter,
         journal,
+        overlay,
         emit,
         startup_error: Mutex::new(config_error),
         flags,
@@ -377,6 +390,27 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(bolo);
     app.state::<Bolo>().install_hook(app.handle());
     Ok(())
+}
+
+/// The pill window, made click-through and non-activating.
+fn pill_window(app: &tauri::App) -> Box<dyn overlay::PillWindow> {
+    /// Stands in when the window is missing or can't be set up: no pill.
+    struct NoPill;
+    impl overlay::PillWindow for NoPill {
+        fn show(&self) {}
+        fn hide(&self) {}
+    }
+    let Some(window) = app.get_webview_window(PILL_WINDOW) else {
+        tracing::warn!("no pill window");
+        return Box::new(NoPill);
+    };
+    #[cfg(windows)]
+    match overlay::win::WinPill::new(app.handle().clone(), &window) {
+        Ok(pill) => return Box::new(pill),
+        Err(e) => tracing::warn!(%e, "could not set up the pill window"),
+    }
+    let _ = window;
+    Box::new(NoPill)
 }
 
 /// The settings file, or the defaults if it can't be read.

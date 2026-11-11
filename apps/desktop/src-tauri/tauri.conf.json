@@ -17,6 +17,22 @@
         "height": 640,
         "visible": false,
         "center": true
+      },
+      {
+        "label": "pill",
+        "title": "Bolo",
+        "url": "pill.html",
+        "width": 560,
+        "height": 72,
+        "visible": false,
+        "focus": false,
+        "focusable": false,
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
       }
     ],
     "security": {
