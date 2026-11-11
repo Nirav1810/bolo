@@ -266,6 +266,11 @@ class Nightly(unittest.TestCase):
         with self.assertRaises(ReleaseError):
             release.nightly_version(tags, day, 0)
 
+    def test_a_nightly_installer_is_named_for_its_own_app(self):
+        self.assertEqual(release.installer_name("0.4.0"), "Bolo_0.4.0_x64-setup.exe")
+        self.assertEqual(release.installer_name("0.5.0-nightly.20261111.7"),
+                         "Bolo-Nightly_0.5.0-nightly.20261111.7_x64-setup.exe")
+
     def test_nightly_versions_parse_as_tags_but_are_not_releases(self):
         self.assertEqual(release.parse_tag("v0.4.0-nightly.20261111.7"), "0.4.0-nightly.20261111.7")
         self.assertEqual(release.release_tags(["v0.4.0-nightly.20261111.7", "v0.3.0"]), ["v0.3.0"])

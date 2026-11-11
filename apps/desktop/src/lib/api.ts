@@ -106,13 +106,12 @@ export interface HistoryItem {
 
 export interface DownloadEvent {
   id: string;
-  phase: "downloading" | "verifying" | "unpacking" | "done" | "failed" | "cancelled";
+  phase:
+    "downloading" | "verifying" | "unpacking" | "done" | "failed" | "cancelled";
   downloaded: number;
   total: number;
   error: string | null;
 }
-
-export type UpdateChannel = "beta" | "nightly";
 
 /** The self-updater's state (src-tauri/src/updates.rs, `Status`). */
 export type UpdateStatus =
@@ -121,45 +120,61 @@ export type UpdateStatus =
   | { state: "downloading"; downloaded: number; total: number | null }
   | { state: "error"; message: string; manual: boolean };
 
-/** About's update section (src-tauri/src/updates.rs, `View`). */
+/** About's update section (src-tauri/src/updates.rs, `View`). Bolo and Bolo Nightly are
+ *  separate apps, each updating from its own feed (ADR-0019). */
 export interface UpdateView {
   version: string;
+  product: "Bolo" | "Bolo Nightly";
+  variant: "release" | "nightly";
   badge: "Beta" | "Nightly" | null;
-  channel: UpdateChannel;
+  /** The other app, to install next to this one. */
+  other: { product: string; url: string };
   status: UpdateStatus;
 }
 
 /** Which build this is (ADR-0019): a Nightly from `main`, or a release (Beta until 1.0). */
-export function variant(version: string): { name: "Nightly" | "Beta" | "Release"; nightly: boolean } {
+export function variant(version: string): {
+  name: "Nightly" | "Beta" | "Release";
+  nightly: boolean;
+} {
   if (version.includes("-nightly.")) return { name: "Nightly", nightly: true };
-  return { name: version.startsWith("0.") ? "Beta" : "Release", nightly: false };
+  return {
+    name: version.startsWith("0.") ? "Beta" : "Release",
+    nightly: false,
+  };
 }
 
 export const api = {
   settings: () => invoke<SettingsView>("settings_get"),
   save: (form: Form) => invoke<SettingsView>("settings_save", { form }),
-  saveKey: (provider: string, key: string) => invoke<string | null>("key_save", { provider, key }),
-  testKey: (provider: string, key?: string) => invoke<Tested>("key_test", { provider, key: key ?? null }),
+  saveKey: (provider: string, key: string) =>
+    invoke<string | null>("key_save", { provider, key }),
+  testKey: (provider: string, key?: string) =>
+    invoke<Tested>("key_test", { provider, key: key ?? null }),
   capture: (capturing: boolean) => invoke<void>("ptt_capture", { capturing }),
-  history: (query: string) => invoke<HistoryItem[]>("history_search", { query }),
+  history: (query: string) =>
+    invoke<HistoryItem[]>("history_search", { query }),
   deleteRow: (id: number) => invoke<void>("history_delete", { id }),
   clearHistory: () => invoke<void>("history_clear"),
   copy: (text: string) => invoke<void>("copy_text", { text }),
   download: (id: string) => invoke<void>("model_download", { id }),
   cancelDownload: (id: string) => invoke<void>("model_cancel", { id }),
   removeModel: (id: string) => invoke<void>("model_remove", { id }),
-  openFolder: (which: "settings" | "models" | "logs") => invoke<void>("open_folder", { which }),
+  openFolder: (which: "settings" | "models" | "logs") =>
+    invoke<void>("open_folder", { which }),
   openLink: (url: string) => invoke<void>("open_link", { url }),
   micCheck: () => invoke<MicCheck>("mic_check"),
-  onboardingSave: (step: number | null) => invoke<void>("onboarding_save", { step }),
+  onboardingSave: (step: number | null) =>
+    invoke<void>("onboarding_save", { step }),
   updateView: () => invoke<UpdateView>("update_view"),
   checkUpdate: () => invoke<void>("update_check"),
   installUpdate: () => invoke<void>("update_install"),
-  setChannel: (channel: UpdateChannel) => invoke<UpdateView>("update_channel", { channel }),
 };
 
 /** Mic levels (RMS) while the mic check listens. */
-export function onMicLevel(handler: (rms: number) => void): Promise<UnlistenFn> {
+export function onMicLevel(
+  handler: (rms: number) => void,
+): Promise<UnlistenFn> {
   return listen<number>("bolo://mic", (e) => handler(e.payload));
 }
 
@@ -168,7 +183,9 @@ export function meter(rms: number): number {
   return Math.max(0, Math.min(1, (Math.log10(Math.max(rms, 1e-4)) + 4) / 3.3));
 }
 
-export function onDownload(handler: (e: DownloadEvent) => void): Promise<UnlistenFn> {
+export function onDownload(
+  handler: (e: DownloadEvent) => void,
+): Promise<UnlistenFn> {
   return listen<DownloadEvent>("bolo://download", (e) => handler(e.payload));
 }
 

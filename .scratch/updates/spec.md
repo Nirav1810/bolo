@@ -1,4 +1,4 @@
-# Updates: in-app updater with Beta and Nightly channels
+# Updates: in-app updater; Bolo and Bolo Nightly
 
 **Why:** the next work is a large UI refinement, and you should be able to try each merged change from inside the app without reinstalling by hand. Today Bolo can't update itself, and About only links to the releases page. Decisions are in ADR-0019. This comes before the UI work and before M4.
 
@@ -27,3 +27,7 @@
 2. `02-nightly-builds`: a nightly workflow on every push to `main`, publishing to the rolling `nightly` release.
 3. `03-in-app-updater`: plugin, channel setting, checks, About page and tray.
 4. `04-cut-v0.4.0`: release, then end-to-end checks of nightly → nightly and v0.4.0 → nightly.
+
+## Change, 2026-11-11
+
+The user asked for the variant to be obvious from the app's icon and name. Bolo Nightly is now a separate app installed next to Bolo: its own name, violet icon, folder and feed, with the settings shared. The channel picker is gone. ADR-0019 is rewritten to match, and the work is in PR #48.
