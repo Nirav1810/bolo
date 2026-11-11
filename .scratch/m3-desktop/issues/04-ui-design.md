@@ -4,7 +4,7 @@
 
 **Blocked by:** none
 
-**Status:** done (approved by the user 2026-11-11)
+**Status:** done (approved by the user 2026-11-11). The look was superseded by `.scratch/ui-overhaul/spec.md` (T3 Code style), 2026-11-11.
 
 - [x] Use the `ui-ux-pro-max` and `emil-design-eng` skills. Light and dark, following Windows. Respect Windows 11 conventions (Mica-like surfaces, Segoe UI Variable or a chosen pairing, rounded corners).
 - [x] Overlay pill states: listening (waveform + partial line), processing, polishing (pending swap), inserted, notice ("Copied, couldn't paste into an admin window"), error, cancelled. Include sizes and motion: show and hide timing, and waveform behaviour at silence and at speech.

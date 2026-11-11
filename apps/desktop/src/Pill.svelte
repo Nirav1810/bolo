@@ -7,7 +7,7 @@
   // (src-tauri/src/pointer.rs). So this reports where its clickable parts are.
   import { invoke } from "@tauri-apps/api/core";
   import { onAppEvent, type AppEvent, type PillView } from "./lib/events";
-  import { barHeight, resting, step } from "./lib/waveform";
+  import { MAX, MIN, barHeight, resting, step } from "./lib/waveform";
 
   let view: PillView = $state({ state: "hidden" });
   /** The last view shown, kept on screen while the pill plays its exit. */
@@ -135,15 +135,15 @@
           {#if shown.state === "idle"}
             {#if shown.hover}
               <svg class="ic" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <rect x="5.5" y="1.75" width="5" height="8" rx="2.5" stroke="var(--color-text-2)" stroke-width="1.4" />
-                <path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.25" stroke="var(--color-text-2)" stroke-width="1.4" stroke-linecap="round" />
+                <rect x="5.5" y="1.75" width="5" height="8" rx="2.5" stroke="var(--color-muted-foreground)" stroke-width="1.4" />
+                <path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.25" stroke="var(--color-muted-foreground)" stroke-width="1.4" stroke-linecap="round" />
               </svg>
               <span class="muted">Click or hold {shown.key} to dictate</span>
             {/if}
           {:else if shown.state === "listening"}
             <span class="dot"></span>
             <span class="wave" aria-hidden="true">
-              {#each bars as h, i (i)}<i style:height="{h}px"></i>{/each}
+              {#each bars as h, i (i)}<i style:height="{h}px" style:opacity={0.45 + (0.55 * (h - MIN)) / (MAX - MIN)}></i>{/each}
             </span>
             {#if partial}
               <span class="tail"><span>{partial}</span></span>
@@ -154,12 +154,12 @@
               <span class="buttons">
                 <span class="button" data-hit="cancel" aria-label="Cancel">
                   <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                    <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="var(--color-text)" stroke-width="1.8" stroke-linecap="round" />
+                    <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="var(--color-foreground)" stroke-width="1.8" stroke-linecap="round" />
                   </svg>
                 </span>
                 <span class="button primary" data-hit="stop" aria-label="Stop and insert">
                   <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                    <path d="M3.5 8.5l3 3 6-7" stroke="var(--color-on-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    <path d="M3.5 8.5l3 3 6-7" stroke="var(--color-primary-foreground)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                   </svg>
                 </span>
               </span>
@@ -168,38 +168,38 @@
             <span class="spin" aria-hidden="true"></span><span class="muted">Transcribing</span>
           {:else if shown.state === "inserted"}
             <svg class="ic" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M3.5 8.5l3 3 6-7" stroke="var(--color-ok)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M3.5 8.5l3 3 6-7" stroke="var(--color-success-foreground)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
             <span>Inserted</span>
           {:else if shown.state === "polishing"}
             <svg class="ic" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M8 2.5l1.3 3.2L12.5 7 9.3 8.3 8 11.5 6.7 8.3 3.5 7l3.2-1.3L8 2.5z" stroke="var(--color-accent)" stroke-width="1.4" stroke-linejoin="round" />
-              <path d="M12.5 11v3M11 12.5h3" stroke="var(--color-accent)" stroke-width="1.4" stroke-linecap="round" />
+              <path d="M8 2.5l1.3 3.2L12.5 7 9.3 8.3 8 11.5 6.7 8.3 3.5 7l3.2-1.3L8 2.5z" stroke="var(--color-primary-text)" stroke-width="1.4" stroke-linejoin="round" />
+              <path d="M12.5 11v3M11 12.5h3" stroke="var(--color-primary-text)" stroke-width="1.4" stroke-linecap="round" />
             </svg>
             <span class="shimmer">Polishing</span>
           {:else if shown.state === "polished"}
             <svg class="ic" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M3.5 8.5l3 3 6-7" stroke="var(--color-accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M3.5 8.5l3 3 6-7" stroke="var(--color-primary-text)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
             <span>Polished</span>
           {:else if shown.state === "notice"}
             <svg class="ic" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <rect x="4" y="3" width="8" height="10.5" rx="1.5" stroke="var(--color-warn)" stroke-width="1.4" />
-              <path d="M6.2 3V2.2h3.6V3" stroke="var(--color-warn)" stroke-width="1.4" stroke-linecap="round" />
-              <path d="M6.5 7h3M6.5 9.5h3" stroke="var(--color-warn)" stroke-width="1.4" stroke-linecap="round" />
+              <rect x="4" y="3" width="8" height="10.5" rx="1.5" stroke="var(--color-warning-foreground)" stroke-width="1.4" />
+              <path d="M6.2 3V2.2h3.6V3" stroke="var(--color-warning-foreground)" stroke-width="1.4" stroke-linecap="round" />
+              <path d="M6.5 7h3M6.5 9.5h3" stroke="var(--color-warning-foreground)" stroke-width="1.4" stroke-linecap="round" />
             </svg>
             <span class="msg">{shown.message}</span>
             {#if shown.hint}<span class="muted">{shown.hint}</span>{/if}
           {:else if shown.state === "error"}
             <svg class="ic" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M8 2.2l6 10.6H2L8 2.2z" stroke="var(--color-danger)" stroke-width="1.4" stroke-linejoin="round" />
-              <path d="M8 6.5v3" stroke="var(--color-danger)" stroke-width="1.5" stroke-linecap="round" />
-              <circle cx="8" cy="11.2" r=".8" fill="var(--color-danger)" />
+              <path d="M8 2.2l6 10.6H2L8 2.2z" stroke="var(--color-destructive-foreground)" stroke-width="1.4" stroke-linejoin="round" />
+              <path d="M8 6.5v3" stroke="var(--color-destructive-foreground)" stroke-width="1.5" stroke-linecap="round" />
+              <circle cx="8" cy="11.2" r=".8" fill="var(--color-destructive-foreground)" />
             </svg>
             <span class="msg">{sentence(shown.message)}</span>
           {:else if shown.state === "cancelled"}
             <svg class="ic" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="var(--color-text-2)" stroke-width="1.6" stroke-linecap="round" />
+              <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="var(--color-muted-foreground)" stroke-width="1.6" stroke-linecap="round" />
             </svg>
             <span class="muted">Cancelled</span>
           {/if}
@@ -252,11 +252,12 @@
     background: var(--color-pill);
     border: 1px solid var(--color-pill-border);
     box-shadow: var(--shadow-pill);
-    color: var(--color-text);
+    color: var(--color-foreground);
     font-family: var(--font-sans);
-    font-size: var(--text-pill);
-    line-height: var(--text-pill--line-height);
-    font-weight: var(--text-pill--font-weight);
+    font-size: 13px;
+    line-height: 18px;
+    font-weight: 500;
+    letter-spacing: -0.005em;
     white-space: nowrap;
     transition:
       width var(--duration-resize) var(--ease-in-out-ui),
@@ -291,7 +292,7 @@
     background: var(--color-pill-track);
   }
   .button.primary {
-    background: var(--color-accent);
+    background: var(--color-primary);
   }
 
   /* Measured for the pill's width, so the width can animate. */
@@ -329,9 +330,9 @@
   .wave i {
     display: block;
     width: 3px;
-    border-radius: 2px;
-    background: var(--color-text);
-    opacity: 0.85;
+    border-radius: 999px;
+    background: var(--color-primary-text);
+    transition: opacity 100ms linear;
   }
 
   /* One line; older words fade off the left edge, the newest stays in view. */
@@ -352,7 +353,7 @@
     text-overflow: ellipsis;
   }
   .muted {
-    color: var(--color-text-2);
+    color: var(--color-muted-foreground);
     flex: none;
   }
   .ic {
@@ -365,7 +366,7 @@
     height: 14px;
     box-sizing: border-box;
     border: 2px solid var(--color-pill-track);
-    border-top-color: var(--color-text);
+    border-top-color: var(--color-foreground);
     border-radius: 50%;
     animation: rot 0.7s linear infinite;
     flex: none;
@@ -377,7 +378,7 @@
   }
 
   .shimmer {
-    background: linear-gradient(90deg, var(--color-text-2) 0%, var(--color-text) 45%, var(--color-text-2) 90%);
+    background: linear-gradient(90deg, var(--color-muted-foreground) 0%, var(--color-foreground) 45%, var(--color-muted-foreground) 90%);
     background-size: 200% 100%;
     background-clip: text;
     color: transparent;
@@ -408,7 +409,7 @@
       animation: none;
     }
     .shimmer {
-      color: var(--color-text-2);
+      color: var(--color-muted-foreground);
     }
   }
   @keyframes fade {

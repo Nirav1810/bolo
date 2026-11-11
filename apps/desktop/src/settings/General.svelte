@@ -1,6 +1,12 @@
 <script lang="ts">
+  import { Keyboard } from "@lucide/svelte";
   import { api, keyFromCode, keyLabel, type Form, type SettingsView } from "../lib/api";
-  import Segmented from "../lib/Segmented.svelte";
+  import Button from "../lib/ui/Button.svelte";
+  import Segmented from "../lib/ui/Segmented.svelte";
+  import SettingsRow from "../lib/ui/SettingsRow.svelte";
+  import SettingsSection from "../lib/ui/SettingsSection.svelte";
+  import Switch from "../lib/ui/Switch.svelte";
+  import Kbd from "../lib/ui/Kbd.svelte";
 
   let { view, update }: { view: SettingsView; update: (change: (f: Form) => void) => Promise<void> } = $props();
 
@@ -46,74 +52,68 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="group">
-  <div class="card">
-    <div class="card-text">
-      <span id="ptt">Push-to-talk key</span>
-      <span class="caption">
-        {#if capturing}
-          Press the key you want, or Esc to keep {keyLabel(view.form.push_to_talk)}.
-        {:else if view.form.push_to_talk === "caps-lock"}
-          Hold to talk, release to insert. A quick tap still toggles Caps Lock. Esc cancels.
-        {:else}
-          Hold to talk, release to insert. Esc cancels.
-        {/if}
-      </span>
-      {#if captureNote}<span class="caption" style="color: var(--bolo-warn)" role="status">{captureNote}</span>{/if}
-    </div>
-    {#if capturing}
-      <button type="button" class="btn" onclick={endCapture}>Cancel</button>
-    {/if}
-    <button type="button" class="btn min-w-32" aria-describedby="ptt" class:primary={capturing} onclick={startCapture}>
-      {capturing ? "Press a key…" : keyLabel(view.form.push_to_talk)}
-    </button>
-  </div>
-  <div class="card">
-    <div class="card-text">
-      <label for="autostart">Start with Windows</label>
-      <span class="caption">Bolo waits in the tray. Off by default.</span>
-    </div>
-    <input
-      id="autostart"
-      class="switch"
-      type="checkbox"
-      checked={view.form.autostart}
-      onchange={(e) => update((f) => (f.autostart = e.currentTarget.checked))}
-    />
-  </div>
-</div>
+<SettingsSection title="Basics">
+  <SettingsRow title="Push-to-talk key" titleId="ptt">
+    {#snippet description()}
+      {#if capturing}
+        Press the key you want, or <Kbd>Esc</Kbd> to keep {keyLabel(view.form.push_to_talk)}.
+      {:else if view.form.push_to_talk === "caps-lock"}
+        Hold to talk, release to insert. A quick tap still toggles Caps Lock. <Kbd>Esc</Kbd> cancels.
+      {:else}
+        Hold to talk, release to insert. <Kbd>Esc</Kbd> cancels.
+      {/if}
+    {/snippet}
+    {#snippet status()}
+      {#if captureNote}<span class="text-warning-foreground" role="status">{captureNote}</span>{/if}
+    {/snippet}
+    {#snippet control()}
+      {#if capturing}
+        <Button variant="ghost-muted" size="sm" onclick={endCapture}>Cancel</Button>
+      {/if}
+      <Button
+        variant={capturing ? "primary" : "outline"}
+        class="min-w-32 justify-between"
+        aria-describedby="ptt"
+        onclick={startCapture}
+      >
+        <Keyboard aria-hidden="true" />
+        <span class="flex-1 text-center">{capturing ? "Press a key…" : keyLabel(view.form.push_to_talk)}</span>
+      </Button>
+    {/snippet}
+  </SettingsRow>
+  <SettingsRow title="Start with Windows" labelFor="autostart" description="Bolo waits in the tray, ready for your key.">
+    {#snippet control()}
+      <Switch id="autostart" checked={view.form.autostart} onchange={(on) => update((f) => (f.autostart = on))} />
+    {/snippet}
+  </SettingsRow>
+</SettingsSection>
 
-<h2 class="section">Language</h2>
-<div class="group">
-  <div class="card">
-    <div class="card-text">
-      <span>Language mode</span>
-      <span class="caption">Auto listens for English and Hinglish together and keeps the better one.</span>
-    </div>
-    <Segmented
-      label="Language mode"
-      value={view.form.language}
-      options={[
-        ["auto", "Auto"],
-        ["english", "English"],
-        ["hinglish", "Hinglish"],
-      ]}
-      onchange={(v) => update((f) => (f.language = v as Form["language"]))}
-    />
-  </div>
-  <div class="card">
-    <div class="card-text">
-      <span>Hinglish script</span>
-      <span class="caption">How Hindi words are written.</span>
-    </div>
-    <Segmented
-      label="Hinglish script"
-      value={view.form.script}
-      options={[
-        ["roman", "Roman"],
-        ["devanagari", "देवनागरी"],
-      ]}
-      onchange={(v) => update((f) => (f.script = v as Form["script"]))}
-    />
-  </div>
-</div>
+<SettingsSection title="Language">
+  <SettingsRow title="Language mode" description="Auto listens for English and Hinglish together and keeps the better one.">
+    {#snippet control()}
+      <Segmented
+        label="Language mode"
+        value={view.form.language}
+        options={[
+          ["auto", "Auto"],
+          ["english", "English"],
+          ["hinglish", "Hinglish"],
+        ]}
+        onchange={(v) => update((f) => (f.language = v as Form["language"]))}
+      />
+    {/snippet}
+  </SettingsRow>
+  <SettingsRow title="Hinglish script" description="How Hindi words are written.">
+    {#snippet control()}
+      <Segmented
+        label="Hinglish script"
+        value={view.form.script}
+        options={[
+          ["roman", "Roman"],
+          ["devanagari", "देवनागरी"],
+        ]}
+        onchange={(v) => update((f) => (f.script = v as Form["script"]))}
+      />
+    {/snippet}
+  </SettingsRow>
+</SettingsSection>

@@ -1,4 +1,11 @@
 <script lang="ts">
+  import { Cloud, Cpu, Download, KeyRound, Trash2, X, TriangleAlert, ArrowUp, Plus } from "@lucide/svelte";
+  import Alert from "../lib/ui/Alert.svelte";
+  import Badge from "../lib/ui/Badge.svelte";
+  import Button from "../lib/ui/Button.svelte";
+  import ConfirmButton from "../lib/ui/ConfirmButton.svelte";
+  import SettingsRow from "../lib/ui/SettingsRow.svelte";
+  import SettingsSection from "../lib/ui/SettingsSection.svelte";
   import {
     PROVIDER_NAMES,
     api,
@@ -115,124 +122,159 @@
   }
 </script>
 
-<h2 class="section mt-0">In use</h2>
-<p class="caption -mt-1 mb-2">Bolo uses the first engine and falls back to the next if it fails.</p>
-<div class="group">
-  {#each chain as spec, i (spec)}
-    <div class="card compact" class:selected={i === 0}>
-      <div class="card-text">
-        <span class="flex items-center gap-2">
-          {engineName(spec, view)}
-          <span class="tag" class:ok={i === 0}>{i === 0 ? "Primary" : `Fallback ${i}`}</span>
-        </span>
-        <span class="caption mono">{spec}</span>
-        {#if needsKey(spec)}
-          <span class="caption" style="color: var(--bolo-warn)">⚠ Needs a {PROVIDER_NAMES[providerOf(spec) ?? ""]} key below.</span>
-        {:else if spec.startsWith("local:") && !view.models.find((m) => m.spec === spec)?.installed}
-          <span class="caption" style="color: var(--bolo-warn)">⚠ Not downloaded yet.</span>
-        {/if}
-      </div>
-      {#if i > 0}<button type="button" class="btn" onclick={() => makePrimary(spec)}>Make primary</button>{/if}
-      {#if chain.length > 1}<button type="button" class="btn" onclick={() => removeFromChain(spec)}>Remove</button>{/if}
-    </div>
-  {/each}
-</div>
+{#snippet tile(Icon: typeof Cpu)}
+  <div class="grid size-8 place-items-center rounded-lg border border-border/70 bg-muted">
+    <Icon class="size-4 text-muted-foreground" aria-hidden="true" />
+  </div>
+{/snippet}
 
-<h2 class="section">On this PC</h2>
-<p class="caption -mt-1 mb-2">Private and offline. Your audio never leaves the PC.</p>
-{#if modelError}<p class="note danger mb-2" role="alert"><span class="icon" aria-hidden="true">⚠</span>{modelError}</p>{/if}
-<div class="group">
+<SettingsSection title="Engine chain" description="Bolo uses the first engine and falls back to the next if it fails.">
+  {#each chain as spec, i (spec)}
+    {@const local = spec.startsWith("local:")}
+    <SettingsRow title={engineName(spec, view)}>
+      {#snippet leading()}{@render tile(local ? Cpu : Cloud)}{/snippet}
+      {#snippet badges()}
+        <Badge variant={i === 0 ? "primary" : "secondary"}>{i === 0 ? "Primary" : `Fallback ${i}`}</Badge>
+      {/snippet}
+      {#snippet description()}<span class="mono text-2xs">{spec}</span>{/snippet}
+      {#snippet status()}
+        {#if needsKey(spec)}
+          <span class="inline-flex items-center gap-1 text-warning-foreground"
+            ><TriangleAlert class="size-3.5" aria-hidden="true" />Needs a {PROVIDER_NAMES[providerOf(spec) ?? ""]} key below.</span
+          >
+        {:else if local && !view.models.find((m) => m.spec === spec)?.installed}
+          <span class="inline-flex items-center gap-1 text-warning-foreground"
+            ><TriangleAlert class="size-3.5" aria-hidden="true" />Not downloaded yet.</span
+          >
+        {/if}
+      {/snippet}
+      {#snippet control()}
+        {#if i > 0}
+          <Button variant="outline" size="sm" onclick={() => makePrimary(spec)}><ArrowUp aria-hidden="true" />Make primary</Button>
+        {/if}
+        {#if chain.length > 1}
+          <Button
+            variant="ghost-destructive"
+            size="icon-sm"
+            aria-label="Remove {engineName(spec, view)}"
+            title="Remove"
+            onclick={() => removeFromChain(spec)}
+          >
+            <X aria-hidden="true" />
+          </Button>
+        {/if}
+      {/snippet}
+    </SettingsRow>
+  {/each}
+</SettingsSection>
+
+<SettingsSection title="On this PC" description="Private and offline. Your audio never leaves the PC.">
   {#each view.models as m (m.id)}
     {@const d = downloads[m.id]}
-    <div class="card">
-      <div class="card-text">
-        <span class="flex items-center gap-2">
-          {m.name}
-          {#if m.recommended}<span class="tag accent">Recommended</span>{/if}
-          {#if m.installed}<span class="tag ok">Downloaded</span>{/if}
-        </span>
-        <span class="caption">
-          {m.hinglish ? "English and Hinglish" : m.languages.length > 1 ? "English and European languages" : "English only"}
-          · {megabytes(m.download_bytes)} download{m.disk_bytes ? `, ${megabytes(m.disk_bytes)} on disk` : ""}
-        </span>
+    {@const inUse = chain.includes(m.spec)}
+    <SettingsRow title={m.name}>
+      {#snippet leading()}{@render tile(Cpu)}{/snippet}
+      {#snippet badges()}
+        {#if m.recommended}<Badge variant="primary">Recommended</Badge>{/if}
+        {#if inUse}<Badge variant="success">In use</Badge>{:else if m.installed}<Badge variant="secondary">Downloaded</Badge>{/if}
+      {/snippet}
+      {#snippet description()}
+        {m.hinglish ? "English and Hinglish" : m.languages.length > 1 ? "English and European languages" : "English only"}
+        · {megabytes(m.download_bytes)}{m.disk_bytes ? `, ${megabytes(m.disk_bytes)} on disk` : ""}
+      {/snippet}
+      {#snippet control()}
         {#if d && d.phase !== "failed"}
-          <div class="progress mt-1.5" role="progressbar" aria-valuenow={percent(d)} aria-valuemin="0" aria-valuemax="100" aria-label="Downloading {m.name}">
+          <Button variant="ghost-muted" size="sm" onclick={() => api.cancelDownload(m.id)}>Cancel</Button>
+        {:else if !m.installed}
+          <Button variant="outline" size="sm" onclick={() => download(m.id)}><Download aria-hidden="true" />{d ? "Retry" : "Download"}</Button>
+        {:else if !inUse}
+          <Button variant="outline" size="sm" onclick={() => makePrimary(m.spec)}>Use</Button>
+          <ConfirmButton label="Delete {m.name}" onconfirm={() => remove(m.id)}><Trash2 aria-hidden="true" /></ConfirmButton>
+        {/if}
+      {/snippet}
+      {#if d && d.phase !== "failed"}
+        <div class="ml-11 flex flex-col gap-1.5">
+          <div
+            class="progress"
+            role="progressbar"
+            aria-valuenow={percent(d)}
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-label="Downloading {m.name}"
+          >
             <div style:width="{d.phase === 'downloading' ? percent(d) : 100}%"></div>
           </div>
-          <span class="caption">
-            {d.phase === "downloading" ? `${megabytes(d.downloaded)} of ${megabytes(d.total || m.download_bytes)}` : d.phase === "verifying" ? "Checking the download…" : "Unpacking…"}
-            · Resumes if you close this window.
+          <span class="text-2xs text-muted-foreground tabular-nums">
+            {d.phase === "downloading"
+              ? `${megabytes(d.downloaded)} of ${megabytes(d.total || m.download_bytes)}`
+              : d.phase === "verifying"
+                ? "Checking the download…"
+                : "Unpacking…"}
+            · Resumes if you close this window
           </span>
-        {/if}
-      </div>
-      {#if d && d.phase !== "failed"}
-        <button type="button" class="btn" onclick={() => api.cancelDownload(m.id)}>Cancel</button>
-      {:else if !m.installed}
-        <button type="button" class="btn" onclick={() => download(m.id)}>{d ? "Retry" : "Download"}</button>
-      {:else if !chain.includes(m.spec)}
-        <button type="button" class="btn" onclick={() => makePrimary(m.spec)}>Use</button>
-        <button type="button" class="btn danger" onclick={() => remove(m.id)}>Delete</button>
-      {/if}
-    </div>
-  {/each}
-</div>
-
-<h2 class="section">Cloud</h2>
-<p class="caption -mt-1 mb-2">Your audio is sent to the provider. Each needs its own key.</p>
-<div class="group">
-  {#each view.cloud as c (c.spec)}
-    {#if !chain.includes(c.spec)}
-      <div class="card compact">
-        <div class="card-text">
-          <span>{c.name}</span>
-          <span class="caption">{view.keys[c.provider] ? "Key saved." : `Needs a ${PROVIDER_NAMES[c.provider]} key.`}</span>
         </div>
-        <button type="button" class="btn" disabled={!view.keys[c.provider]} onclick={() => makePrimary(c.spec)}>Use as primary</button>
-        <button type="button" class="btn" disabled={!view.keys[c.provider]} onclick={() => addFallback(c.spec)}>Add as fallback</button>
-      </div>
-    {/if}
+      {/if}
+    </SettingsRow>
   {/each}
-</div>
+</SettingsSection>
+{#if modelError}<Alert variant="error" class="-mt-5">{modelError}</Alert>{/if}
 
-<h2 class="section">API keys</h2>
-<p class="caption -mt-1 mb-2">Stored in Windows Credential Manager under “bolo”. Never written to a file.</p>
-{#if !view.keystore}
-  <p class="note warn mb-2"><span class="icon" aria-hidden="true">⚠</span>Windows Credential Manager couldn't be opened, so keys can't be saved.</p>
-{/if}
-{#if keyError}<p class="note danger mb-2" role="alert"><span class="icon" aria-hidden="true">⚠</span>{keyError}</p>{/if}
-<div class="group">
+<SettingsSection title="Cloud" description="Your audio is sent to the provider. Each needs its own key.">
+  {#each view.cloud.filter((c) => !chain.includes(c.spec)) as c (c.spec)}
+    {@const ready = !!view.keys[c.provider]}
+    <SettingsRow title={c.name} description={ready ? "Key saved." : `Needs a ${PROVIDER_NAMES[c.provider]} key.`}>
+      {#snippet leading()}{@render tile(Cloud)}{/snippet}
+      {#snippet control()}
+        <Button variant="ghost" size="sm" disabled={!ready} onclick={() => addFallback(c.spec)}><Plus aria-hidden="true" />Fallback</Button>
+        <Button variant="outline" size="sm" disabled={!ready} onclick={() => makePrimary(c.spec)}>Use as primary</Button>
+      {/snippet}
+    </SettingsRow>
+  {:else}
+    <p class="px-4 py-3 text-xs text-muted-foreground">Every cloud engine is already in the chain.</p>
+  {/each}
+</SettingsSection>
+
+<SettingsSection title="API keys" description="Stored in Windows Credential Manager under “bolo”. Never written to a file.">
   {#each Object.keys(PROVIDER_NAMES) as p (p)}
     {@const hint = view.keys[p]}
-    <div class="card">
-      <div class="card-text">
-        <label for="key-{p}">{PROVIDER_NAMES[p]}</label>
-        {#if hint !== null && hint !== undefined && !replacing[p]}
-          <span class="caption mono">•••••••••••• {hint}</span>
+    {@const saved = hint !== null && hint !== undefined && !replacing[p]}
+    <SettingsRow title={PROVIDER_NAMES[p]} labelFor={saved ? undefined : `key-${p}`}>
+      {#snippet leading()}{@render tile(KeyRound)}{/snippet}
+      {#snippet badges()}{#if saved}<Badge variant="success">Saved</Badge>{/if}{/snippet}
+      {#snippet description()}
+        {#if saved}<span class="mono text-2xs">•••• •••• {hint}</span>{:else}{p === "anthropic"
+            ? "For polish."
+            : "Optional, for its cloud engine."}{/if}
+      {/snippet}
+      {#snippet status()}{#if tested[p]}<span class="text-muted-foreground" role="status">{tested[p]}</span>{/if}{/snippet}
+      {#snippet control()}
+        {#if saved}
+          <Button variant="ghost" size="sm" onclick={() => test(p)}>Test</Button>
+          <Button variant="outline" size="sm" onclick={() => (replacing[p] = true)}>Replace</Button>
+          <ConfirmButton label="Remove the {PROVIDER_NAMES[p]} key" confirm="Remove?" onconfirm={() => saveKey(p, "")}>
+            <Trash2 aria-hidden="true" />
+          </ConfirmButton>
         {:else}
-          <span class="caption">{p === "anthropic" ? "For polish." : "Optional."}</span>
+          <input
+            id="key-{p}"
+            class="input mono h-7! w-48! text-xs!"
+            type="password"
+            placeholder="Paste key…"
+            autocomplete="off"
+            spellcheck="false"
+            disabled={!view.keystore}
+            bind:value={keyInput[p]}
+            onkeydown={(e) => e.key === "Enter" && keyInput[p]?.trim() && saveKey(p, keyInput[p])}
+          />
+          {#if replacing[p]}<Button variant="ghost-muted" size="sm" onclick={() => (replacing[p] = false)}>Cancel</Button>{/if}
+          <Button variant="ghost" size="sm" disabled={!keyInput[p]?.trim()} onclick={() => test(p)}>Test</Button>
+          <Button variant="primary" size="sm" disabled={!keyInput[p]?.trim()} onclick={() => saveKey(p, keyInput[p])}>Save</Button>
         {/if}
-        {#if tested[p]}<span class="caption" role="status">{tested[p]}</span>{/if}
-      </div>
-      {#if hint !== null && hint !== undefined && !replacing[p]}
-        <span class="tag ok">Saved</span>
-        <button type="button" class="btn" onclick={() => test(p)}>Test</button>
-        <button type="button" class="btn" onclick={() => (replacing[p] = true)}>Replace</button>
-        <button type="button" class="btn danger" onclick={() => saveKey(p, "")}>Remove</button>
-      {:else}
-        <input
-          id="key-{p}"
-          class="input w-56"
-          type="password"
-          placeholder="Paste key"
-          autocomplete="off"
-          disabled={!view.keystore}
-          bind:value={keyInput[p]}
-          onkeydown={(e) => e.key === "Enter" && keyInput[p]?.trim() && saveKey(p, keyInput[p])}
-        />
-        <button type="button" class="btn" disabled={!keyInput[p]?.trim()} onclick={() => test(p)}>Test</button>
-        <button type="button" class="btn primary" disabled={!keyInput[p]?.trim()} onclick={() => saveKey(p, keyInput[p])}>Save</button>
-        {#if replacing[p]}<button type="button" class="btn" onclick={() => (replacing[p] = false)}>Cancel</button>{/if}
-      {/if}
-    </div>
+      {/snippet}
+    </SettingsRow>
   {/each}
-</div>
+</SettingsSection>
+{#if !view.keystore}
+  <Alert variant="warning" class="-mt-5" title="Keys can’t be saved">Windows Credential Manager couldn’t be opened.</Alert>
+{/if}
+{#if keyError}<Alert variant="error" class="-mt-5">{keyError}</Alert>{/if}

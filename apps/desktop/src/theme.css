@@ -1,149 +1,184 @@
 /*
- * Bolo design tokens (M3 ticket 04, approved 2026-11-11).
+ * Bolo design tokens (UI overhaul, modelled on T3 Code's design language; supersedes
+ * the Windows 11 look from M3 ticket 04).
  *
- * Raw values live in `--bolo-*` custom properties, switched by the Windows light/dark
- * setting through `prefers-color-scheme`. `@theme inline` exposes them to Tailwind, so
- * `bg-surface`, `text-text-2`, `rounded-control`, `ease-out-ui`, `duration-base` and so
- * on follow the theme with no `dark:` variants.
+ * Raw values are semantic custom properties (`--background`, `--card`, `--primary`, ...)
+ * switched by the Windows light/dark setting through `prefers-color-scheme`. `@theme
+ * inline` exposes them to Tailwind, so `bg-card`, `text-muted-foreground`,
+ * `border-border/60` and so on follow the theme with no `dark:` variants.
  *
  * Rules that go with the tokens:
  * - `live` (red) means only "the mic is recording": the pill dot and the tray icon.
- * - State never relies on colour alone; warn/danger/ok always come with an icon.
+ * - State never relies on colour alone; warning/error/success always come with an icon.
  * - No ease-in. Exits are faster than enters. Reduced motion keeps fades, drops movement.
  */
 
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
 :root {
   color-scheme: light dark;
+  --radius: 0.5rem;
 
-  --bolo-bg: #f3f3f3;
-  --bolo-surface: #fbfbfb;
-  --bolo-card: #ffffff;
-  --bolo-subtle: #f0f0f2;
-  --bolo-hover: rgb(0 0 0 / 0.04);
-  --bolo-border: #e3e3e6;
-  --bolo-control: #ffffff;
-  --bolo-control-border: #d6d6db;
-  --bolo-text: #1b1b1f;
-  --bolo-text-2: #5c5c66;
-  --bolo-accent: #2f5bea;
-  --bolo-on-accent: #ffffff;
-  --bolo-accent-soft: #e8eefe;
-  --bolo-live: #d93036;
-  --bolo-ok: #187a42;
-  --bolo-warn: #a15c00;
+  --background: oklch(99.2% 0 0);
+  --foreground: #18181b;
+  --card: #ffffff;
+  --popover: #ffffff;
+  --primary: oklch(0.488 0.217 264);
+  --primary-foreground: #ffffff;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #27272a;
+  --muted: #fafafa;
+  --muted-foreground: #71717a;
+  --accent: #f4f4f5;
+  --border: #e4e4e7;
+  --input: #d4d4d8;
+  --ring: oklch(0.488 0.217 264);
+  /* Primary as text or a thin mark on the background (icons, waveform, badges). */
+  --primary-text: oklch(0.488 0.217 264);
+
+  --success: #10b981;
+  --success-foreground: #047857;
+  --warning: #f59e0b;
+  --warning-foreground: #b45309;
+  --info: #3b82f6;
+  --info-foreground: #1d4ed8;
+  --destructive: #ef4444;
+  --destructive-foreground: #b91c1c;
+  --live: #e5484d;
   /* The Nightly build marker (ADR-0019): its own hue, never a state colour. */
-  --bolo-nightly: #7a3fd1;
-  --bolo-nightly-soft: #f1e9fd;
-  --bolo-danger: #c42b1c;
+  --nightly: #7c3aed;
+  --nightly-foreground: #6d28d9;
 
-  --bolo-pill-bg: rgb(251 251 251 / 0.94);
-  --bolo-pill-border: rgb(0 0 0 / 0.09);
-  --bolo-pill-track: rgb(0 0 0 / 0.12);
-  --bolo-pill-shadow: 0 10px 28px rgb(0 0 0 / 0.16), 0 1px 3px rgb(0 0 0 / 0.1);
-  --bolo-window-shadow: 0 24px 64px rgb(0 0 0 / 0.22), 0 2px 6px rgb(0 0 0 / 0.12);
+  --sidebar: #fafafa;
+  --sidebar-foreground: #18181b;
+  --sidebar-muted-foreground: #71717a;
+  --sidebar-row-hover: #f4f4f5;
+  --sidebar-row-selected: #ffffff;
+  --sidebar-border: #e4e4e7;
+
+  --scrollbar-thumb: rgb(0 0 0 / 14%);
+  --scrollbar-thumb-hover: rgb(0 0 0 / 24%);
+
+  --pill-bg: rgb(255 255 255 / 0.94);
+  --pill-border: rgb(0 0 0 / 0.08);
+  --pill-track: rgb(0 0 0 / 0.08);
+  --pill-shadow: 0 12px 32px -8px rgb(0 0 0 / 0.22), 0 1px 3px rgb(0 0 0 / 0.08);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bolo-bg: #1c1c1f;
-    --bolo-surface: #202024;
-    --bolo-card: #2b2b30;
-    --bolo-subtle: #313137;
-    --bolo-hover: rgb(255 255 255 / 0.05);
-    --bolo-border: #3a3a41;
-    --bolo-control: #2f2f35;
-    --bolo-control-border: #45454d;
-    --bolo-text: #f2f2f4;
-    --bolo-text-2: #b4b4be;
-    --bolo-accent: #7c9bff;
-    --bolo-on-accent: #0b1230;
-    --bolo-accent-soft: #2a3256;
-    --bolo-live: #ff5a5f;
-    --bolo-ok: #4cc38a;
-    --bolo-warn: #f0b246;
-    --bolo-nightly: #c4a5ff;
-    --bolo-nightly-soft: #33284a;
-    --bolo-danger: #ff6b5e;
+    --background: #000000;
+    --foreground: #f5f5f5;
+    --card: #0d0d0d;
+    --popover: #111111;
+    --primary: oklch(0.571 0.21 264);
+    --primary-foreground: #ffffff;
+    --secondary: rgb(255 255 255 / 6%);
+    --secondary-foreground: #f5f5f5;
+    --muted: rgb(255 255 255 / 3%);
+    --muted-foreground: #a3a3a3;
+    --accent: rgb(255 255 255 / 6%);
+    --border: rgb(255 255 255 / 9%);
+    --input: rgb(255 255 255 / 13%);
+    --ring: oklch(0.62 0.19 264);
+    --primary-text: oklch(0.76 0.13 264);
 
-    --bolo-pill-bg: rgb(36 36 40 / 0.92);
-    --bolo-pill-border: rgb(255 255 255 / 0.1);
-    --bolo-pill-track: rgb(255 255 255 / 0.18);
-    --bolo-pill-shadow: 0 10px 28px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.4);
-    --bolo-window-shadow: 0 24px 64px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.4);
+    --success-foreground: #34d399;
+    --warning-foreground: #fbbf24;
+    --info-foreground: #60a5fa;
+    --destructive-foreground: #f87171;
+    --live: #ff5a5f;
+    --nightly: #a78bfa;
+    --nightly-foreground: #c4b5fd;
+
+    --sidebar: #0d0d0d;
+    --sidebar-foreground: #f5f5f5;
+    --sidebar-muted-foreground: #a3a3a3;
+    --sidebar-row-hover: rgb(255 255 255 / 6%);
+    --sidebar-row-selected: rgb(255 255 255 / 9%);
+    --sidebar-border: rgb(255 255 255 / 8%);
+
+    --scrollbar-thumb: rgb(255 255 255 / 10%);
+    --scrollbar-thumb-hover: rgb(255 255 255 / 18%);
+
+    --pill-bg: rgb(17 17 17 / 0.94);
+    --pill-border: rgb(255 255 255 / 0.1);
+    --pill-track: rgb(255 255 255 / 0.12);
+    --pill-shadow: 0 12px 32px -8px rgb(0 0 0 / 0.7), 0 1px 3px rgb(0 0 0 / 0.5);
   }
 }
 
 @theme inline {
-  /* Colour */
-  --color-bg: var(--bolo-bg);
-  --color-surface: var(--bolo-surface);
-  --color-card: var(--bolo-card);
-  --color-subtle: var(--bolo-subtle);
-  --color-hover: var(--bolo-hover);
-  --color-border: var(--bolo-border);
-  --color-control: var(--bolo-control);
-  --color-control-border: var(--bolo-control-border);
-  --color-text: var(--bolo-text);
-  --color-text-2: var(--bolo-text-2);
-  --color-accent: var(--bolo-accent);
-  --color-on-accent: var(--bolo-on-accent);
-  --color-accent-soft: var(--bolo-accent-soft);
-  --color-live: var(--bolo-live);
-  --color-ok: var(--bolo-ok);
-  --color-warn: var(--bolo-warn);
-  --color-nightly: var(--bolo-nightly);
-  --color-nightly-soft: var(--bolo-nightly-soft);
-  --color-danger: var(--bolo-danger);
-  --color-pill: var(--bolo-pill-bg);
-  --color-pill-border: var(--bolo-pill-border);
-  --color-pill-track: var(--bolo-pill-track);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-popover: var(--popover);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-text: var(--primary-text);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-live: var(--live);
+  --color-nightly: var(--nightly);
+  --color-nightly-foreground: var(--nightly-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted-foreground: var(--sidebar-muted-foreground);
+  --color-sidebar-row-hover: var(--sidebar-row-hover);
+  --color-sidebar-row-selected: var(--sidebar-row-selected);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-pill: var(--pill-bg);
+  --color-pill-border: var(--pill-border);
+  --color-pill-track: var(--pill-track);
 
-  /* Shadow */
-  --shadow-pill: var(--bolo-pill-shadow);
-  --shadow-window: var(--bolo-window-shadow);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+
+  --shadow-pill: var(--pill-shadow);
 }
 
 @theme {
-  /* Type: the Windows 11 ramp. Windows ships the font; Inter is only a preview fallback. */
-  --font-sans: "Segoe UI Variable Text", "Segoe UI", Inter, system-ui, sans-serif;
-  --font-display: "Segoe UI Variable Display", "Segoe UI", Inter, system-ui, sans-serif;
+  /* Inter, bundled (as T3 Code does); Segoe UI behind it, Nirmala UI for Devanagari. */
+  --font-sans: "Inter Variable", "Segoe UI Variable Text", "Segoe UI", "Nirmala UI", system-ui, sans-serif;
   --font-mono: "Cascadia Mono", ui-monospace, Consolas, monospace;
-  --text-title: 28px;
-  --text-title--line-height: 36px;
-  --text-title--font-weight: 600;
-  --text-subtitle: 20px;
-  --text-subtitle--line-height: 28px;
-  --text-subtitle--font-weight: 600;
-  --text-body: 14px;
-  --text-body--line-height: 20px;
-  --text-pill: 13px;
-  --text-pill--line-height: 18px;
-  --text-pill--font-weight: 500;
-  --text-caption: 12px;
-  --text-caption--line-height: 16px;
 
-  /* Radius */
-  --radius-control: 4px;
-  --radius-card: 8px;
-  --radius-dialog: 12px;
+  /* Two steps below text-xs for dense metadata: 11 px and 10 px. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
 
-  /* Spacing: Tailwind's default 4 px step (`p-2` = 8 px). Controls are 32 px (`h-8`). */
-  --spacing: 4px;
-
-  /* Motion */
+  /* Motion. */
   --ease-out-ui: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out-ui: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   --default-transition-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+  --default-transition-duration: 150ms;
 }
 
-/* Durations, used as `duration-(--duration-base)` and by the pill's timers. */
+/* Durations, used by the pill's CSS and timers. */
 :root {
   --duration-fast: 120ms; /* press, hover */
   --duration-base: 180ms; /* pill in, state crossfade */
   --duration-exit: 140ms; /* pill out */
   --duration-resize: 220ms; /* pill width */
 
-  /* Pill geometry and timing (ticket 08). */
+  /* Pill geometry and timing (M3 ticket 08). */
   --pill-height: 40px;
   --pill-max-width: 520px;
   --pill-offset: 24px; /* above the monitor's work area */
@@ -153,11 +188,40 @@
 }
 
 @layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "cv11", "ss01";
+  }
   body {
-    background: var(--color-bg);
-    color: var(--color-text);
+    background: var(--background);
+    color: var(--foreground);
     font-family: var(--font-sans);
     font-size: 14px;
     line-height: 20px;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--primary) 24%, transparent);
+  }
+  /* Thin overlay-style scrollbars, like T3 Code's. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+  button,
+  [role="button"],
+  label[for] {
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  @media (pointer: fine) {
+    html {
+      overscroll-behavior: none;
+    }
   }
 }
