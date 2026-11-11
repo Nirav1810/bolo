@@ -207,6 +207,15 @@ pub enum Swapped {
     Failed(DesktopError),
 }
 
+/// What happens to the text on the clipboard when the paste keys can't be sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OnFailure {
+    /// An insert: the user can still paste the dictation themselves.
+    LeaveText,
+    /// A swap: the instant text is already in the app, so the user's clipboard comes back.
+    RestoreNow,
+}
+
 /// The user's clipboard while Bolo's text sits on it.
 #[derive(Debug)]
 struct Saved {
@@ -219,7 +228,7 @@ struct Saved {
 #[derive(Debug)]
 struct Pending {
     id: u64,
-    window: isize,
+    window: Option<isize>,
     at: Instant,
     text: String,
 }
@@ -300,9 +309,9 @@ impl Inserter {
         if text.trim().is_empty() {
             return Inserted::Empty;
         }
-        let window = self.desktop.foreground().map_or(0, |f: Foreground| f.window);
+        let window = self.desktop.foreground().map(|f: Foreground| f.window);
         let key = st.target.chord.key();
-        if let Err(e) = self.paste(&mut st, &clip, &[key]) {
+        if let Err(e) = self.paste(&mut st, &clip, &[key], OnFailure::LeaveText) {
             return match e {
                 DesktopError::Blocked => Inserted::Blocked,
                 e => Inserted::Failed(e),
@@ -329,10 +338,11 @@ impl Inserter {
         let touched = self.flags.touched();
         self.flags.stop_watching();
         (self.watch_changed)();
-        let window = self.desktop.foreground().map_or(0, |f| f.window);
+        let window = self.desktop.foreground().map(|f| f.window);
         let decision = swap_decision(
             touched,
-            window == pending.window,
+            // With no window in front at either end, there's nothing to say it's the same.
+            window.is_some() && window == pending.window,
             now.saturating_duration_since(pending.at),
             pending.text.contains('\n'),
             st.target.multiline_swap_safe,
@@ -346,15 +356,22 @@ impl Inserter {
         }
         let mut keys = vec![Key::ShiftLeft; caret_units(&pending.text)];
         keys.push(st.target.chord.key());
-        match self.paste(&mut st, &clip, &keys) {
+        match self.paste(&mut st, &clip, &keys, OnFailure::RestoreNow) {
             Ok(()) => Swapped::Swapped,
             Err(DesktopError::Blocked) => Swapped::Skipped(Skip::Blocked),
             Err(e) => Swapped::Failed(e),
         }
     }
 
-    /// Write `clip`, send `keys`, and schedule putting the user's clipboard back.
-    fn paste(self: &Arc<Self>, st: &mut State, clip: &Clipboard, keys: &[Key]) -> Result<(), DesktopError> {
+    /// Write `clip`, send `keys`, and schedule putting the user's clipboard back. If the
+    /// keys can't be sent, `on_failure` says whether the text stays on the clipboard.
+    fn paste(
+        self: &Arc<Self>,
+        st: &mut State,
+        clip: &Clipboard,
+        keys: &[Key],
+        on_failure: OnFailure,
+    ) -> Result<(), DesktopError> {
         // While an earlier paste's text is still ours on the clipboard, what the user had
         // is already saved; don't save Bolo's own text over it.
         let user = match st.saved.take() {
@@ -367,11 +384,25 @@ impl Inserter {
                 }
             },
         };
-        let ours = self.desktop.write_clipboard(clip)?;
         st.generation += 1;
+        let ours = match self.desktop.write_clipboard(clip) {
+            Ok(ours) => ours,
+            Err(e) => {
+                // The write may have got as far as emptying the clipboard.
+                self.put_back(user);
+                return Err(e);
+            }
+        };
         if let Err(e) = self.desktop.send_keys(keys) {
-            // Leave the text on the clipboard so the user can paste it themselves.
-            tracing::warn!(%e, "the paste was not sent; the text is left on the clipboard");
+            match on_failure {
+                OnFailure::LeaveText => {
+                    tracing::warn!(%e, "the paste was not sent; the text is left on the clipboard")
+                }
+                OnFailure::RestoreNow => {
+                    tracing::warn!(%e, "the paste was not sent");
+                    self.put_back(user);
+                }
+            }
             return Err(e);
         }
         if let Some(content) = user {
@@ -381,6 +412,14 @@ impl Inserter {
             self.timer.after(RESTORE_AFTER, Box::new(move || Self::upgrade(&me, |i| i.restore(generation))));
         }
         Ok(())
+    }
+
+    fn put_back(&self, user: Option<Clipboard>) {
+        if let Some(content) = user
+            && let Err(e) = self.desktop.write_clipboard(&content)
+        {
+            tracing::warn!(%e, "could not restore the clipboard");
+        }
     }
 
     fn upgrade(me: &Weak<Self>, f: impl FnOnce(&Self)) {
@@ -773,5 +812,24 @@ mod tests {
         rig.inserted("helo");
         rig.desktop.set_blocked(true);
         assert_eq!(rig.inserter.polished(&output("Hello."), rig.at(900)), Swapped::Skipped(Skip::Blocked));
+        assert_eq!(rig.desktop.text().as_deref(), Some("the user's clipboard"), "put back at once");
+    }
+
+    #[test]
+    fn a_blocked_insert_right_after_another_leaves_its_text() {
+        let rig = Rig::new();
+        rig.inserted("first");
+        rig.desktop.set_blocked(true);
+        assert_eq!(rig.inserter.insert(&output("Second."), rig.at(100)), Inserted::Blocked);
+        rig.timer.fire(RESTORE_AFTER);
+        assert_eq!(rig.desktop.text().as_deref(), Some("Second."), "the first paste's restore is stale");
+    }
+
+    #[test]
+    fn no_window_in_front_is_not_the_same_window() {
+        let rig = Rig::new();
+        *rig.desktop.foreground.lock().unwrap() = None;
+        rig.inserted("helo");
+        assert_eq!(rig.inserter.polished(&output("Hello."), rig.at(900)), Swapped::Skipped(Skip::OtherWindow));
     }
 }

@@ -59,6 +59,9 @@ pub enum DesktopError {
     /// The keys can't reach the window in front, because it runs elevated (UIPI).
     #[error("keys were blocked by the target window")]
     Blocked,
+    /// `SendInput` sent only some of the keys, for another reason.
+    #[error("the keys could not be sent: {0}")]
+    Keys(String),
 }
 
 pub trait Desktop: Send + Sync {
@@ -72,7 +75,7 @@ pub trait Desktop: Send + Sync {
     fn clipboard_sequence(&self) -> u32;
     /// Send the keys to the window in front, tagged with [`crate::keyhook::BOLO_TAG`] so
     /// the keyboard hook ignores them. [`DesktopError::Blocked`] if that window runs at a
-    /// higher integrity level than Bolo, or `SendInput` refused them.
+    /// higher integrity level than Bolo (UIPI drops the keys silently).
     fn send_keys(&self, keys: &[Key]) -> Result<(), DesktopError>;
 }
 
@@ -176,14 +179,15 @@ mod win {
 
     /// The clipboard, opened; closed again on drop. Another app may hold it for a moment,
     /// so opening retries for up to ~100 ms.
-    struct Open;
+    /// Not `Send`: the clipboard is opened by, and must be closed on, one thread.
+    struct Open(std::marker::PhantomData<*const ()>);
 
     impl Open {
         fn new() -> Result<Self, DesktopError> {
             for _ in 0..20 {
                 // SAFETY: no owner window; paired with CloseClipboard in Drop.
                 if unsafe { OpenClipboard(null_mut()) } != 0 {
-                    return Ok(Open);
+                    return Ok(Open(std::marker::PhantomData));
                 }
                 std::thread::sleep(Duration::from_millis(5));
             }
@@ -295,6 +299,8 @@ mod win {
                 set(&open, format, &0u32.to_le_bytes())?;
             }
         }
+        // Windows bumps the sequence number when the clipboard closes, so it's read after.
+        // Another app writing in the microseconds between would pass for Bolo's write.
         drop(open);
         Ok(clipboard_sequence())
     }
@@ -396,7 +402,12 @@ mod win {
         // SAFETY: a valid array of INPUTs, its length and the element size.
         let sent = unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), size_of::<INPUT>() as i32) };
         if sent as usize != inputs.len() {
-            return Err(DesktopError::Blocked);
+            let e = std::io::Error::last_os_error();
+            // Don't leave a modifier held down by a half-sent chord.
+            let release = [key_input(VK_CONTROL, true, false), key_input(VK_SHIFT, true, false)];
+            // SAFETY: as above.
+            unsafe { SendInput(release.len() as u32, release.as_ptr(), size_of::<INPUT>() as i32) };
+            return Err(DesktopError::Keys(format!("{sent} of {} key events sent: {e}", inputs.len())));
         }
         Ok(())
     }
