@@ -14,7 +14,7 @@
 
 ## Outcome
 
-- Keypair made with `tauri signer generate`. The private key and password are at `%USERPROFILE%\.tauriolo-updater.key` (+ `.password`) on the maintainer's machine and in the repo secrets. The public key is in `tauri.conf.json` → `plugins.updater`, which also sets the Beta endpoint and `installMode: quiet`.
+- Keypair made with `tauri signer generate`. The private key and password are at `%USERPROFILE%\.tauri\bolo-updater.key` (+ `.password`) on the maintainer's machine and in the repo secrets. The public key is in `tauri.conf.json` → `plugins.updater`, which also sets the Beta endpoint and `installMode: quiet`.
 - `createUpdaterArtifacts: true`. A local signed build wrote `Bolo_0.3.0_x64-setup.exe.sig`. A build without the key set now fails at the signing step, so local installer builds need the two env vars.
 - `release.py`: `package` copies the `.sig` when there is one; `feed vX --url-base URL [--notes TEXT]` writes `dist/latest.json` (`feed_json` is unit-tested); `is_prerelease` is now true only for old `-beta.N` versions.
 - release.yml signs, writes the feed and uploads `.sig` + `latest.json`.
