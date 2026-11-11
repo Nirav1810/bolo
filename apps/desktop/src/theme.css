@@ -1,0 +1,156 @@
+/*
+ * Bolo design tokens (M3 ticket 04, approved 2026-11-11).
+ *
+ * Raw values live in `--bolo-*` custom properties, switched by the Windows light/dark
+ * setting through `prefers-color-scheme`. `@theme inline` exposes them to Tailwind, so
+ * `bg-surface`, `text-text-2`, `rounded-control`, `ease-out-ui`, `duration-base` and so
+ * on follow the theme with no `dark:` variants.
+ *
+ * Rules that go with the tokens:
+ * - `live` (red) means only "the mic is recording": the pill dot and the tray icon.
+ * - State never relies on colour alone; warn/danger/ok always come with an icon.
+ * - No ease-in. Exits are faster than enters. Reduced motion keeps fades, drops movement.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --bolo-bg: #f3f3f3;
+  --bolo-surface: #fbfbfb;
+  --bolo-card: #ffffff;
+  --bolo-subtle: #f0f0f2;
+  --bolo-hover: rgb(0 0 0 / 0.04);
+  --bolo-border: #e3e3e6;
+  --bolo-control: #ffffff;
+  --bolo-control-border: #d6d6db;
+  --bolo-text: #1b1b1f;
+  --bolo-text-2: #5c5c66;
+  --bolo-accent: #2f5bea;
+  --bolo-on-accent: #ffffff;
+  --bolo-accent-soft: #e8eefe;
+  --bolo-live: #d93036;
+  --bolo-ok: #187a42;
+  --bolo-warn: #a15c00;
+  --bolo-danger: #c42b1c;
+
+  --bolo-pill-bg: rgb(251 251 251 / 0.94);
+  --bolo-pill-border: rgb(0 0 0 / 0.09);
+  --bolo-pill-track: rgb(0 0 0 / 0.12);
+  --bolo-pill-shadow: 0 10px 28px rgb(0 0 0 / 0.16), 0 1px 3px rgb(0 0 0 / 0.1);
+  --bolo-window-shadow: 0 24px 64px rgb(0 0 0 / 0.22), 0 2px 6px rgb(0 0 0 / 0.12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bolo-bg: #1c1c1f;
+    --bolo-surface: #202024;
+    --bolo-card: #2b2b30;
+    --bolo-subtle: #313137;
+    --bolo-hover: rgb(255 255 255 / 0.05);
+    --bolo-border: #3a3a41;
+    --bolo-control: #2f2f35;
+    --bolo-control-border: #45454d;
+    --bolo-text: #f2f2f4;
+    --bolo-text-2: #b4b4be;
+    --bolo-accent: #7c9bff;
+    --bolo-on-accent: #0b1230;
+    --bolo-accent-soft: #2a3256;
+    --bolo-live: #ff5a5f;
+    --bolo-ok: #4cc38a;
+    --bolo-warn: #f0b246;
+    --bolo-danger: #ff6b5e;
+
+    --bolo-pill-bg: rgb(36 36 40 / 0.92);
+    --bolo-pill-border: rgb(255 255 255 / 0.1);
+    --bolo-pill-track: rgb(255 255 255 / 0.18);
+    --bolo-pill-shadow: 0 10px 28px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.4);
+    --bolo-window-shadow: 0 24px 64px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.4);
+  }
+}
+
+@theme inline {
+  /* Colour */
+  --color-bg: var(--bolo-bg);
+  --color-surface: var(--bolo-surface);
+  --color-card: var(--bolo-card);
+  --color-subtle: var(--bolo-subtle);
+  --color-hover: var(--bolo-hover);
+  --color-border: var(--bolo-border);
+  --color-control: var(--bolo-control);
+  --color-control-border: var(--bolo-control-border);
+  --color-text: var(--bolo-text);
+  --color-text-2: var(--bolo-text-2);
+  --color-accent: var(--bolo-accent);
+  --color-on-accent: var(--bolo-on-accent);
+  --color-accent-soft: var(--bolo-accent-soft);
+  --color-live: var(--bolo-live);
+  --color-ok: var(--bolo-ok);
+  --color-warn: var(--bolo-warn);
+  --color-danger: var(--bolo-danger);
+  --color-pill: var(--bolo-pill-bg);
+  --color-pill-border: var(--bolo-pill-border);
+  --color-pill-track: var(--bolo-pill-track);
+
+  /* Shadow */
+  --shadow-pill: var(--bolo-pill-shadow);
+  --shadow-window: var(--bolo-window-shadow);
+}
+
+@theme {
+  /* Type: the Windows 11 ramp. Windows ships the font; Inter is only a preview fallback. */
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", Inter, system-ui, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", Inter, system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", ui-monospace, Consolas, monospace;
+  --text-title: 28px;
+  --text-title--line-height: 36px;
+  --text-title--font-weight: 600;
+  --text-subtitle: 20px;
+  --text-subtitle--line-height: 28px;
+  --text-subtitle--font-weight: 600;
+  --text-body: 14px;
+  --text-body--line-height: 20px;
+  --text-pill: 13px;
+  --text-pill--line-height: 18px;
+  --text-pill--font-weight: 500;
+  --text-caption: 12px;
+  --text-caption--line-height: 16px;
+
+  /* Radius */
+  --radius-control: 4px;
+  --radius-card: 8px;
+  --radius-dialog: 12px;
+
+  /* Spacing: Tailwind's default 4 px step (`p-2` = 8 px). Controls are 32 px (`h-8`). */
+  --spacing: 4px;
+
+  /* Motion */
+  --ease-out-ui: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out-ui: cubic-bezier(0.77, 0, 0.175, 1);
+  --default-transition-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* Durations, used as `duration-(--duration-base)` and by the pill's timers. */
+:root {
+  --duration-fast: 120ms; /* press, hover */
+  --duration-base: 180ms; /* pill in, state crossfade */
+  --duration-exit: 140ms; /* pill out */
+  --duration-resize: 220ms; /* pill width */
+
+  /* Pill geometry and timing (ticket 08). */
+  --pill-height: 40px;
+  --pill-max-width: 520px;
+  --pill-offset: 24px; /* above the monitor's work area */
+  --pill-hide-after: 600ms; /* after insert, or after the swap/skip */
+  --pill-notice-for: 4s; /* notice and error */
+  --pill-processing-after: 250ms; /* show "Transcribing" only past this */
+}
+
+@layer base {
+  body {
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 20px;
+  }
+}
