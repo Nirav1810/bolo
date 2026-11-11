@@ -60,6 +60,7 @@ pub(crate) enum Cmd {
     Cancel,
     Release,
     UpdateConfig(Box<EngineConfig>),
+    SetPolish(Polish),
     Shutdown,
 }
 
@@ -859,6 +860,8 @@ impl Worker {
                     self.stt = None;
                     self.config = *c;
                 }
+                // Only polish changed: the model and connections stay.
+                Ok(Cmd::SetPolish(p)) => self.config.polish = p,
                 Ok(Cmd::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
                 Err(RecvTimeoutError::Timeout) => {}
             }

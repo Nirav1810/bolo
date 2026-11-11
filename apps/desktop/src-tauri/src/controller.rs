@@ -3,7 +3,7 @@
 //!
 //! Dictation logic lives here, in Rust. The webviews render what they're sent and never
 //! decide anything. `on_final` pastes the instant text and `on_polished` swaps in the
-//! polished text through the [`Inserter`]; history (ticket 07) hangs off both.
+//! polished text through the [`Inserter`]; the [`Journal`] records both in history.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -13,6 +13,7 @@ use serde::Serialize;
 
 use crate::hotkey::Flags;
 use crate::insert::{Inserted, Inserter, Swapped};
+use crate::journal::Journal;
 
 /// What the webviews are sent, as the payload of the [`crate::EVENT`] event. Mirrored by
 /// `src/lib/events.ts`.
@@ -101,11 +102,12 @@ pub struct Controller {
     /// Tells the keyboard hook whether a dictation is listening (Esc cancels then).
     flags: Arc<Flags>,
     inserter: Arc<Inserter>,
+    journal: Arc<Journal>,
 }
 
 impl Controller {
-    pub fn new(emit: Arc<dyn Emit>, flags: Arc<Flags>, inserter: Arc<Inserter>) -> Self {
-        Self { emit, flags, inserter }
+    pub fn new(emit: Arc<dyn Emit>, flags: Arc<Flags>, inserter: Arc<Inserter>, journal: Arc<Journal>) -> Self {
+        Self { emit, flags, inserter, journal }
     }
 }
 
@@ -126,16 +128,28 @@ impl EngineEvents for Controller {
             Inserted::Blocked => self.emit.emit(AppEvent::Notice { message: BLOCKED_NOTICE.into() }),
             Inserted::Failed(e) => self.emit.emit(AppEvent::Error { message: format!("could not paste: {e}") }),
         }
+        // After the paste, so history never delays the text.
+        self.journal.finished(&out);
         self.emit.emit(AppEvent::Final { output: out.into() });
     }
 
     fn on_polished(&self, out: FormattedOutput) {
         let llm_ms = out.timings.llm_ms;
-        match self.inserter.polished(&out, Instant::now()) {
-            Swapped::Swapped => tracing::info!(llm_ms, "polish swapped in"),
-            Swapped::Skipped(why) => tracing::info!(llm_ms, skip = why.as_str(), "polish not swapped"),
-            Swapped::Failed(e) => tracing::warn!(llm_ms, %e, "the polish swap failed"),
-        }
+        let swap = match self.inserter.polished(&out, Instant::now()) {
+            Swapped::Swapped => {
+                tracing::info!(llm_ms, "polish swapped in");
+                "swapped"
+            }
+            Swapped::Skipped(why) => {
+                tracing::info!(llm_ms, skip = why.as_str(), "polish not swapped");
+                why.as_str()
+            }
+            Swapped::Failed(e) => {
+                tracing::warn!(llm_ms, %e, "the polish swap failed");
+                "failed"
+            }
+        };
+        self.journal.polished(&out, swap);
         self.emit.emit(AppEvent::Polished { output: out.into() });
     }
 
@@ -192,6 +206,9 @@ mod tests {
     use crate::hotkey::Flags;
     use crate::insert::testing::FakeTimer;
     use crate::insert::{Inserter, RESTORE_AFTER, Target};
+    use crate::journal::Journal;
+    use bolo_core::OutputFormat;
+    use bolo_store::History;
 
     struct Rig {
         rec: Arc<Recorder>,
@@ -199,6 +216,7 @@ mod tests {
         desktop: Arc<FakeDesktop>,
         timer: Arc<FakeTimer>,
         inserter: Arc<Inserter>,
+        journal: Arc<Journal>,
         c: Controller,
     }
 
@@ -208,8 +226,9 @@ mod tests {
         let desktop = Arc::new(FakeDesktop::in_front("notepad.exe", "Untitled - Notepad"));
         let timer = Arc::new(FakeTimer::default());
         let inserter = Inserter::new(desktop.clone(), timer.clone(), flags.clone(), || {});
-        let c = Controller::new(rec.clone(), flags.clone(), inserter.clone());
-        Rig { rec, flags, desktop, timer, inserter, c }
+        let journal = Arc::new(Journal::new(Some(History::open_in_memory().unwrap())));
+        let c = Controller::new(rec.clone(), flags.clone(), inserter.clone(), journal.clone());
+        Rig { rec, flags, desktop, timer, inserter, journal, c }
     }
 
     fn kinds(rec: &Recorder) -> Vec<String> {
@@ -257,6 +276,56 @@ mod tests {
         assert_eq!(ops.last(), Some(&Op::Keys([[Key::ShiftLeft; 4].as_slice(), &[Key::Paste]].concat())));
         r.timer.fire(RESTORE_AFTER);
         assert_eq!(r.desktop.text().as_deref(), Some("mine"));
+    }
+
+    fn history(j: &Journal) -> Vec<(String, Option<String>, Option<String>)> {
+        let rows = j.with_history(|h| h.latest(10).unwrap()).unwrap();
+        rows.into_iter().map(|r| (r.dictation.final_text, r.dictation.polished_text, r.dictation.swap)).collect()
+    }
+
+    #[test]
+    fn each_dictation_is_recorded_with_its_polish_and_swap_outcome() {
+        let r = rig();
+        r.journal.begin("notepad.exe", OutputFormat::Plain);
+        r.inserter.begin(Target::default(), true);
+        r.c.on_final(output("helo"));
+        r.c.on_polished(output("Hello."));
+        r.journal.begin("notepad.exe", OutputFormat::Plain);
+        r.inserter.begin(Target::default(), true);
+        r.c.on_final(output(
+            "one
+two",
+        ));
+        r.c.on_polished(output(
+            "One.
+Two.",
+        ));
+        assert_eq!(
+            history(&r.journal),
+            [
+                (
+                    "one
+two"
+                    .into(),
+                    Some(
+                        "One.
+Two."
+                            .into()
+                    ),
+                    Some("multiline".into())
+                ),
+                ("helo".into(), Some("Hello.".into()), Some("swapped".into())),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_blocked_paste_is_still_recorded() {
+        let r = rig();
+        r.desktop.set_blocked(true);
+        r.journal.begin("notepad.exe", OutputFormat::Plain);
+        r.c.on_final(output("Hello."));
+        assert_eq!(history(&r.journal), [("Hello.".into(), None, None)]);
     }
 
     #[test]

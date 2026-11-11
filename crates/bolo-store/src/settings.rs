@@ -17,7 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bolo_core::{ANTHROPIC, EngineConfig, HinglishScript, LanguageMode, Polish};
+use bolo_core::{ANTHROPIC, ApiKeys, EngineConfig, HinglishScript, LanguageMode, Polish};
 use serde::{Deserialize, Serialize};
 use toml::{Table, Value};
 
@@ -226,11 +226,16 @@ impl Settings {
     /// is stored; the app shows the missing key, the engine just runs without polish.
     /// Polish's `app` is left empty: the app fills it per dictation from the target.
     pub fn engine_config(&self, secrets: &Secrets) -> EngineConfig {
+        self.engine_config_with_keys(secrets.api_keys().clone())
+    }
+
+    /// [`Self::engine_config`] with the keys given directly (say, none, when the
+    /// credential store can't be opened).
+    pub fn engine_config_with_keys(&self, api_keys: ApiKeys) -> EngineConfig {
         let defaults = EngineConfig::default();
         let engines: Vec<String> =
             self.engines.iter().map(|e| e.trim()).filter(|e| !e.is_empty()).map(String::from).collect();
         let dictionary = self.dictionary_terms();
-        let api_keys = secrets.api_keys().clone();
         let polish = if self.polish.enabled && api_keys.get(ANTHROPIC).is_some() {
             let tone = self.polish.tone.trim();
             let tone = if tone.is_empty() { "neutral" } else { tone };
