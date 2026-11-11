@@ -37,7 +37,9 @@ export type AppEvent =
 /// What the overlay pill shows (src-tauri/src/pill.rs, `View`). The state machine and its
 /// timers live in Rust; the pill webview only draws.
 export type PillView =
-  | { state: "hidden" | "listening" | "transcribing" | "inserted" | "polishing" | "polished" | "cancelled" }
+  | { state: "hidden" | "transcribing" | "inserted" | "polishing" | "polished" | "cancelled" }
+  | { state: "idle"; hover: boolean; key: string }
+  | { state: "listening"; hands_free: boolean }
   | { state: "notice"; message: string; hint: string | null }
   | { state: "error"; message: string };
 

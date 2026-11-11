@@ -7,7 +7,7 @@
 //! - [`insert`] pastes the text and swaps in polish (ADR-0018).
 //! - [`journal`] records each dictation in history.
 //! - [`pill`] is the overlay pill's state machine and [`overlay`] the thread and window
-//!   that run it.
+//!   that run it; [`pointer`] is the mouse over it (the idle button, hands-free).
 //! - [`hotkey`] is the push-to-talk state machine and [`keyhook`] the hook that runs it.
 //! - [`config`] lays `BOLO_*` variables over the engine config from settings.
 //!
@@ -24,17 +24,18 @@ pub mod journal;
 pub mod keyhook;
 pub mod overlay;
 pub mod pill;
+pub mod pointer;
 pub mod rules;
 pub mod session;
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use bolo_core::{ANTHROPIC, ApiKeys, BoloError, DictationState, Engine, EngineConfig, Polish};
 use bolo_store::{History, PushToTalkKey, Secrets, Settings};
 use serde::Serialize;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent, Wry};
 
@@ -44,7 +45,7 @@ use hotkey::{Command, Flags};
 use insert::{Inserter, ThreadTimer};
 use journal::Journal;
 use keyhook::{Handler, KeyHook};
-use overlay::Overlay;
+use overlay::{Clicks, HitRegion, Overlay};
 use rules::{AppRules, Plan, PolishPrefs};
 use session::{Session, Toggled};
 
@@ -105,6 +106,8 @@ struct Bolo {
     journal: Arc<Journal>,
     /// Every event goes through the overlay, which drives the pill, to the webviews.
     overlay: Arc<Overlay>,
+    /// Whether the idle button is on (the tray checkbox).
+    idle_button: AtomicBool,
     emit: Arc<dyn Emit>,
     /// Why the config or the engine could not be built at startup, for the debug window.
     startup_error: Mutex<Option<String>>,
@@ -167,6 +170,35 @@ impl Bolo {
                 self.emit.emit(AppEvent::Error { message: e.to_string() });
             }
         }
+    }
+
+    /// A click on the idle button: start a hands-free dictation, unless one is running.
+    fn start_hands_free(&self) {
+        if self.listening() {
+            return;
+        }
+        self.toggle();
+    }
+
+    /// The hands-free Stop button: finish and insert.
+    fn stop_hands_free(&self) {
+        if self.listening() {
+            self.inserter.released(Instant::now());
+            self.toggle();
+        }
+    }
+
+    /// The hands-free Cancel button.
+    fn cancel(&self) {
+        if let Some(e) = lock(&self.engine).as_ref() {
+            e.cancel_dictation();
+            self.inserter.drop_pending();
+            tracing::info!("dictation cancelled from the pill");
+        }
+    }
+
+    fn listening(&self) -> bool {
+        lock(&self.engine).as_ref().is_some_and(|e| e.state() == DictationState::Listening)
     }
 
     /// What the push-to-talk key asks for (on the hook's command thread).
@@ -272,6 +304,69 @@ fn toggle_dictation(bolo: State<'_, Bolo>) {
     bolo.toggle();
 }
 
+/// What the pill shows now, for the pill webview as it loads.
+#[tauri::command]
+fn pill_view(bolo: State<'_, Bolo>) -> pill::View {
+    bolo.overlay.view()
+}
+
+/// The pill webview reports where its clickable parts are.
+#[tauri::command]
+fn pill_regions(bolo: State<'_, Bolo>, regions: Vec<HitRegion>) {
+    bolo.overlay.regions(regions);
+}
+
+/// What the pill's buttons do, run off the overlay's thread (a start can load the model).
+struct PillClicks(AppHandle);
+
+impl PillClicks {
+    fn later(&self, name: &str, f: impl FnOnce(&Bolo) + Send + 'static) {
+        let app = self.0.clone();
+        let spawned =
+            std::thread::Builder::new().name(format!("bolo-pill-{name}")).spawn(move || f(&app.state::<Bolo>()));
+        if let Err(e) = spawned {
+            tracing::warn!(%e, "could not act on a pill click");
+        }
+    }
+}
+
+impl Clicks for PillClicks {
+    fn start(&self) {
+        self.later("start", Bolo::start_hands_free);
+    }
+    fn stop(&self) {
+        self.later("stop", Bolo::stop_hands_free);
+    }
+    fn cancel(&self) {
+        self.later("cancel", Bolo::cancel);
+    }
+    fn save_position(&self, position: f64) {
+        update_settings(|s| s.overlay.position = position);
+    }
+}
+
+/// Change the settings file: read it, change it, write it back.
+fn update_settings(change: impl FnOnce(&mut Settings)) {
+    let saved = Settings::default_path().and_then(|path| {
+        let mut settings = Settings::load(&path)?.settings;
+        change(&mut settings);
+        settings.save(&path)
+    });
+    if let Err(e) = saved {
+        tracing::warn!(%e, "could not save the settings");
+    }
+}
+
+/// The push-to-talk key's name, as the idle hint shows it.
+fn key_name(key: PushToTalkKey) -> String {
+    match key {
+        PushToTalkKey::CapsLock => "Caps Lock".into(),
+        PushToTalkKey::RightCtrl => "Right Ctrl".into(),
+        PushToTalkKey::RightAlt => "Right Alt".into(),
+        other => format!("{other:?}"),
+    }
+}
+
 /// Show the main window on a page: `debug`, `settings` or `history`.
 fn show_window(app: &AppHandle, page: &str) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW) else { return };
@@ -301,11 +396,21 @@ fn init_logging() {
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let toggle = MenuItem::with_id(app, "toggle", "Start dictation", true, None::<&str>)?;
     let pause = MenuItem::with_id(app, "pause", "Pause Bolo", true, None::<&str>)?;
+    let settings = load_settings();
+    let idle_button = CheckMenuItem::with_id(
+        app,
+        "idle-button",
+        "Show button on screen",
+        true,
+        settings.overlay.idle_button,
+        None::<&str>,
+    )?;
     let menu = Menu::with_items(
         app,
         &[
             &toggle,
             &pause,
+            &idle_button,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?,
             &MenuItem::with_id(app, "history", "History…", true, None::<&str>)?,
@@ -323,6 +428,11 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         match event.id.as_ref() {
             "toggle" => bolo.toggle(),
             "pause" => bolo.toggle_paused(app),
+            "idle-button" => {
+                let on = !bolo.idle_button.fetch_xor(true, Ordering::Relaxed);
+                bolo.overlay.set_idle_button(on);
+                update_settings(|s| s.overlay.idle_button = on);
+            }
             "settings" => show_window(app, "settings"),
             "history" => show_window(app, "history"),
             "debug" => show_window(app, "debug"),
@@ -338,9 +448,18 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     .build(app)?;
 
     let webviews: Arc<dyn Emit> = Arc::new(TauriEmit { app: app.handle().clone(), tray: TrayItems { toggle, pause } });
-    let overlay = Overlay::spawn(webviews, pill_window(app));
+    let overlay = Overlay::spawn(
+        webviews,
+        pill_window(app),
+        pointer_hook(),
+        Arc::new(PillClicks(app.handle().clone())),
+        overlay::Config {
+            idle_button: settings.overlay.idle_button,
+            position: settings.overlay.position,
+            key: key_name(settings.push_to_talk),
+        },
+    );
     let emit: Arc<dyn Emit> = overlay.clone();
-    let settings = load_settings();
     let (config, config_error) = engine_config(&settings);
     tracing::info!(engines = ?config.engines, language = ?config.language, models = %config.models_dir.display(), "engine config");
     let prefs = PolishPrefs {
@@ -376,6 +495,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         inserter,
         journal,
         overlay,
+        idle_button: AtomicBool::new(settings.overlay.idle_button),
         emit,
         startup_error: Mutex::new(config_error),
         flags,
@@ -397,7 +517,11 @@ fn pill_window(app: &tauri::App) -> Box<dyn overlay::PillWindow> {
     /// Stands in when the window is missing or can't be set up: no pill.
     struct NoPill;
     impl overlay::PillWindow for NoPill {
-        fn show(&self) {}
+        fn monitor(&self) -> Option<overlay::Monitor> {
+            None
+        }
+        fn show_at(&self, _: pill::Rect) {}
+        fn move_to(&self, _: pill::Rect) {}
         fn hide(&self) {}
     }
     let Some(window) = app.get_webview_window(PILL_WINDOW) else {
@@ -411,6 +535,17 @@ fn pill_window(app: &tauri::App) -> Box<dyn overlay::PillWindow> {
     }
     let _ = window;
     Box::new(NoPill)
+}
+
+/// The mouse hook for the pill's clicks, hover and drag; `None` if it can't start (the
+/// pill then only shows).
+fn pointer_hook() -> Option<(Box<dyn overlay::Pointer>, std::sync::mpsc::Receiver<pointer::Action>)> {
+    #[cfg(windows)]
+    match pointer::win::PointerHook::start() {
+        Ok((hook, actions)) => return Some((Box::new(hook), actions)),
+        Err(e) => tracing::warn!(%e, "could not start the pill's mouse hook"),
+    }
+    None
 }
 
 /// The settings file, or the defaults if it can't be read.
@@ -488,7 +623,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         // First, so a second launch exits before it builds anything.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_window(app, "debug")))
-        .invoke_handler(tauri::generate_handler![status, toggle_dictation])
+        .invoke_handler(tauri::generate_handler![status, toggle_dictation, pill_view, pill_regions])
         .setup(setup)
         .on_window_event(|window, event| {
             // Closing a window hides it; Bolo keeps running in the tray.

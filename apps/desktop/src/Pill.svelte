@@ -2,15 +2,20 @@
   // The overlay pill (M3 ticket 08, design in ticket 04). Rust decides what it shows and
   // when its window appears (src-tauri/src/pill.rs); this only draws the view, the
   // waveform and the partial text, and plays the enter, exit and state changes.
+  //
+  // The window is click-through: Rust's mouse hook does hover, clicks and drags
+  // (src-tauri/src/pointer.rs). So this reports where its clickable parts are.
+  import { invoke } from "@tauri-apps/api/core";
   import { onAppEvent, type AppEvent, type PillView } from "./lib/events";
   import { barHeight, resting, step } from "./lib/waveform";
 
   let view: PillView = $state({ state: "hidden" });
   /** The last view shown, kept on screen while the pill plays its exit. */
-  let shown: PillView = $state({ state: "listening" });
+  let shown = $state<PillView>({ state: "listening", hands_free: false } as PillView);
   let partial = $state("");
   let bars: number[] = $state(resting());
   let contentWidth = $state(0);
+  let pillEl: HTMLElement | undefined = $state();
 
   // Read by the frame loop; not state, so a level alone renders nothing.
   let level = 0;
@@ -65,23 +70,77 @@
 
   $effect(() => {
     const unlisten = onAppEvent(apply);
+    // The view may have gone out before this page loaded (the idle button at startup).
+    invoke<PillView>("pill_view").then((v) => {
+      if (view.state === "hidden") apply({ kind: "pill", view: v });
+    });
     return () => {
       stopFrames();
       unlisten.then((f) => f());
     };
   });
 
+  // Where the clickable parts are, in CSS pixels from the window's top-left, for the
+  // mouse hook. The resting bar gets a bigger target than it looks.
+  type Hit = { region: string; x: number; y: number; w: number; h: number };
+  let reported = "";
+  function report() {
+    if (!pillEl || view.state === "hidden") return;
+    const box = (el: Element, region: string, pad = 0): Hit => {
+      const r = el.getBoundingClientRect();
+      return { region, x: Math.round(r.left - pad), y: Math.round(r.top - pad), w: Math.round(r.width + 2 * pad), h: Math.round(r.height + 2 * pad) };
+    };
+    const regions = [box(pillEl, "pill", bar ? 12 : 0)];
+    for (const el of pillEl.querySelectorAll<HTMLElement>("[data-hit]")) regions.push(box(el, el.dataset.hit ?? "pill"));
+    const json = JSON.stringify(regions);
+    if (json === reported) return;
+    reported = json;
+    invoke("pill_regions", { regions }).catch(() => {});
+  }
+
+  // Re-measure after each change of view and whenever the pill resizes or settles.
+  $effect(() => {
+    void view;
+    requestAnimationFrame(report);
+  });
+  $effect(() => {
+    if (!pillEl) return;
+    const ro = new ResizeObserver(() => report());
+    ro.observe(pillEl);
+    return () => ro.disconnect();
+  });
+
   const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+  /** The idle button at rest: a small bar with no content. */
+  const bar = $derived(shown.state === "idle" && !shown.hover);
+  /** What the content crossfades on: the state, and idle's hover. */
+  const contentKey = $derived(shown.state === "idle" ? `idle-${shown.hover}` : shown.state);
   // Pill padding (14 + 16) and border (2) around the measured content.
-  const width = $derived(contentWidth ? `${contentWidth + 32}px` : undefined);
+  const width = $derived(bar ? "40px" : contentWidth ? `${contentWidth + 32}px` : undefined);
 </script>
 
 <div class="stage">
-  <div class="pw" class:out={view.state === "hidden"}>
-    <div class="pill" style:width role={shown.state === "error" ? "alert" : "status"}>
-      {#key shown.state}
+  <div class="pw" class:out={view.state === "hidden"} ontransitionend={report}>
+    <div
+      class="pill"
+      class:bar
+      class:hover={shown.state === "idle" && shown.hover}
+      style:width
+      bind:this={pillEl}
+      role={shown.state === "error" ? "alert" : "status"}
+      aria-label={bar ? "Bolo is ready" : undefined}
+    >
+      {#key contentKey}
         <div class="content" bind:offsetWidth={contentWidth}>
-          {#if shown.state === "listening"}
+          {#if shown.state === "idle"}
+            {#if shown.hover}
+              <svg class="ic" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <rect x="5.5" y="1.75" width="5" height="8" rx="2.5" stroke="var(--color-text-2)" stroke-width="1.4" />
+                <path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.25" stroke="var(--color-text-2)" stroke-width="1.4" stroke-linecap="round" />
+              </svg>
+              <span class="muted">Click or hold {shown.key} to dictate</span>
+            {/if}
+          {:else if shown.state === "listening"}
             <span class="dot"></span>
             <span class="wave" aria-hidden="true">
               {#each bars as h, i (i)}<i style:height="{h}px"></i>{/each}
@@ -90,6 +149,20 @@
               <span class="tail"><span>{partial}</span></span>
             {:else}
               <span class="muted">Listening…</span>
+            {/if}
+            {#if shown.hands_free}
+              <span class="buttons">
+                <span class="button" data-hit="cancel" aria-label="Cancel">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="var(--color-text)" stroke-width="1.8" stroke-linecap="round" />
+                  </svg>
+                </span>
+                <span class="button primary" data-hit="stop" aria-label="Stop and insert">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M3.5 8.5l3 3 6-7" stroke="var(--color-on-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </span>
+              </span>
             {/if}
           {:else if shown.state === "transcribing"}
             <span class="spin" aria-hidden="true"></span><span class="muted">Transcribing</span>
@@ -185,7 +258,40 @@
     line-height: var(--text-pill--line-height);
     font-weight: var(--text-pill--font-weight);
     white-space: nowrap;
-    transition: width var(--duration-resize) var(--ease-in-out-ui);
+    transition:
+      width var(--duration-resize) var(--ease-in-out-ui),
+      height var(--duration-resize) var(--ease-in-out-ui),
+      padding var(--duration-resize) var(--ease-in-out-ui);
+  }
+
+  /* The idle button at rest: a small bar, quiet until hovered. */
+  .pill.bar {
+    height: 8px;
+    padding: 0;
+    box-shadow: 0 2px 8px rgb(0 0 0 / 0.18);
+    opacity: 0.85;
+  }
+  .pill.hover {
+    padding: 0 16px 0 12px;
+  }
+
+  /* Hands-free: Cancel and Stop. Clicks reach them through Rust's mouse hook. */
+  .buttons {
+    display: flex;
+    gap: 6px;
+    flex: none;
+    margin-left: 2px;
+  }
+  .button {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    background: var(--color-pill-track);
+  }
+  .button.primary {
+    background: var(--color-accent);
   }
 
   /* Measured for the pill's width, so the width can animate. */

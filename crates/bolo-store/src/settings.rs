@@ -90,6 +90,24 @@ impl Default for HistorySettings {
     }
 }
 
+/// The overlay pill's always-on idle button (M3 ticket 15).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OverlaySettings {
+    /// Keep the pill on screen as a small button while Bolo is idle.
+    pub idle_button: bool,
+    /// Where the pill sits along the bottom of the work area: 0 left, 0.5 centre, 1 right.
+    pub position: f64,
+    #[serde(flatten)]
+    pub unknown: Table,
+}
+
+impl Default for OverlaySettings {
+    fn default() -> Self {
+        Self { idle_button: true, position: 0.5, unknown: Table::new() }
+    }
+}
+
 /// Everything in `settings.toml`. Defaults match a fresh install.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -107,6 +125,7 @@ pub struct Settings {
     pub models_dir: Option<PathBuf>,
     pub polish: PolishSettings,
     pub history: HistorySettings,
+    pub overlay: OverlaySettings,
     /// Keys this version doesn't know, written back as they were.
     #[serde(flatten)]
     pub unknown: Table,
@@ -124,6 +143,7 @@ impl Default for Settings {
             models_dir: None,
             polish: PolishSettings::default(),
             history: HistorySettings::default(),
+            overlay: OverlaySettings::default(),
             unknown: Table::new(),
         }
     }
@@ -326,6 +346,8 @@ mod tests {
         s.polish.tone = "casual".into();
         s.polish.apps.insert("slack.exe".into(), false);
         s.history.retention_days = 7;
+        s.overlay.idle_button = false;
+        s.overlay.position = 0.25;
         s
     }
 
@@ -362,7 +384,7 @@ mod tests {
         fs::write(
             &path,
             "version = 1\nfuture_flag = true\nlanguage = \"english\"\n\n[polish]\nenabled = true\nstyle = \"terse\"\n\n\
-             [history]\nkeep_audio = false\n\n[overlay]\nposition = \"top\"\n",
+             [history]\nkeep_audio = false\n\n[sync]\nendpoint = \"top\"\n",
         )
         .unwrap();
         let s = Settings::load(&path).unwrap().settings;
@@ -372,7 +394,7 @@ mod tests {
         assert_eq!(t["future_flag"].as_bool(), Some(true));
         assert_eq!(t["polish"]["style"].as_str(), Some("terse"));
         assert_eq!(t["history"]["keep_audio"].as_bool(), Some(false));
-        assert_eq!(t["overlay"]["position"].as_str(), Some("top"));
+        assert_eq!(t["sync"]["endpoint"].as_str(), Some("top"));
         assert_eq!(Settings::load(&path).unwrap().settings, s);
     }
 
