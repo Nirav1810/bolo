@@ -7,7 +7,7 @@ Open-source, local-first voice dictation for **Windows** and **Android**. Hold a
 - **Private**: no telemetry, no accounts. Audio leaves the device only if you configure a cloud provider.
 - **Lean**: models load only while you dictate and unload when idle.
 
-> **Status: Milestone 2 done: core engine, formatting layer and `bolo` CLI preview.** There is no desktop app or Android keyboard yet. See the [M2 report](docs/M2-REPORT.md), the [M1 report](docs/M1-REPORT.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+> **Status: Milestone 3: the Windows desktop app (preview).** There is no Android keyboard yet. See the [M3 report](docs/M3-REPORT.md), the [M2 report](docs/M2-REPORT.md), the [M1 report](docs/M1-REPORT.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Install the desktop app (Windows x64)
 
@@ -15,6 +15,15 @@ Open-source, local-first voice dictation for **Windows** and **Android**. Hold a
 2. Run it. It installs for your user only, so it needs no admin rights. If WebView2 is missing, the installer downloads it (Windows 11 already has it).
 3. The installer isn't code-signed yet, so **Windows SmartScreen may say "Windows protected your PC"**. Click **More info**, then **Run anyway**. This happens only for unsigned downloads; the `.sha256` file lets you confirm it's the published file.
 4. On first run, Bolo walks you through a mic check and downloads the speech model (about 475 MB, once). It then waits in the tray.
+
+**Using it.** Click where you want the text, **hold Caps Lock**, speak, and let go. The text is pasted at the cursor, and a small pill at the bottom of the screen shows what Bolo hears.
+- A quick tap of Caps Lock (under 150 ms) still toggles capitals, and Shift+Caps Lock is always plain Caps Lock.
+- **Esc** while talking cancels.
+- You can pick another key (Right Ctrl, Right Alt, F13–F24) in Settings.
+- Lists arrive as real lists in Word, Outlook and Gmail, and as Markdown in Slack, Notion and Obsidian. Code editors and terminals get no auto-capitals or trailing period.
+- Your clipboard is restored after each paste, and the pastes stay out of Win+V history.
+
+**Privacy.** With the default local model, audio and text never leave the PC. Audio goes to a provider only if you choose a cloud engine (Deepgram, Groq, Sarvam). Polish, which is off by default, sends the text, never the audio, to Anthropic using your own key; it stays off in code editors and terminals. API keys are kept in Windows Credential Manager. History keeps text only, on this PC, for 30 days, and you can turn it off or clear it. Bolo has no telemetry and no accounts.
 
 To uninstall, use Windows Settings › Apps. The uninstaller asks whether to delete your downloaded models and dictation history. Settings and API keys stay unless you tick "Delete the application data".
 
