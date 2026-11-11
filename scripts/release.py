@@ -19,7 +19,9 @@ Subcommands (a bare version means `prepare`):
   notes vX [--output FILE]
       That version's CHANGELOG.md section: the GitHub Release notes.
   package vX
-      Zip target/release/bolo.exe with the sherpa-onnx DLLs, README and licences.
+      Zip target/release/bolo.exe with the sherpa-onnx DLLs, README and licences, and
+      copy the desktop installer that `npx tauri build` made (apps/desktop). Each gets
+      a .sha256.
   publish vX ASSET...
       Create the GitHub Release; `-beta.` and 0.x versions are prereleases.
 
@@ -384,9 +386,26 @@ def notes(tag_name: str, output: str | None) -> int:
 PACKAGING = ROOT / "packaging" / "windows"
 
 
+def installer_name(version: str) -> str:
+    """The desktop app's NSIS installer, as Tauri names it."""
+    return f"Bolo_{version}_x64-setup.exe"
+
+
+def write_sha256(path: Path) -> str:
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    # Bytes, not write_text: on Windows that writes CRLF, and `sha256sum -c` then reads the
+    # CR as part of the file name.
+    path.with_name(path.name + ".sha256").write_bytes(f"{digest}  {path.name}\n".encode())
+    return digest
+
+
 def package(tag_name: str) -> int:
-    """dist/bolo-vX-windows-x64.zip (one top-level folder) and its .sha256."""
+    """dist/bolo-vX-windows-x64.zip (one top-level folder), dist/Bolo_X_x64-setup.exe,
+    and a .sha256 for each."""
     version = parse_tag(tag_name)
+    installer = ROOT / "target" / "release" / "bundle" / "nsis" / installer_name(version)
+    if not installer.is_file():
+        raise ReleaseError(f"{installer} is missing; run `npm ci && npx tauri build` in apps/desktop")
     exe = ROOT / "target" / "release" / "bolo.exe"
     dlls = sorted((ROOT / ".cache" / "sherpa-lib").glob("*.dll"))
     if not exe.is_file():
@@ -409,11 +428,11 @@ def package(tag_name: str) -> int:
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for name, data in files.items():
             z.writestr(f"{stem}/{name}", data)
-    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    # Bytes, not write_text: on Windows that writes CRLF, and `sha256sum -c` then reads the
-    # CR as part of the file name.
-    (dist / f"{stem}.zip.sha256").write_bytes(f"{digest}  {archive.name}\n".encode())
-    print(f"{archive.relative_to(ROOT)}: {archive.stat().st_size} bytes, sha256 {digest}")
+    copied = dist / installer.name
+    shutil.copyfile(installer, copied)
+    for path in (archive, copied):
+        digest = write_sha256(path)
+        print(f"{path.relative_to(ROOT)}: {path.stat().st_size} bytes, sha256 {digest}")
     return 0
 
 
@@ -450,7 +469,7 @@ def main(argv: list[str]) -> int:
     p = sub.add_parser("notes", help="print a version's changelog section")
     p.add_argument("tag_name")
     p.add_argument("--output")
-    sub.add_parser("package", help="zip the Windows CLI").add_argument("tag_name")
+    sub.add_parser("package", help="zip the Windows CLI and collect the installer").add_argument("tag_name")
     p = sub.add_parser("publish", help="create the GitHub Release")
     p.add_argument("tag_name")
     p.add_argument("assets", nargs="+")
