@@ -2,8 +2,9 @@
   // The usage meter: what each paid cloud request was billed for, as the provider
   // reported it in its answer (Deepgram's audio duration, Claude's token counts),
   // recorded per request by Rust (src-tauri/src/journal.rs). Works with any key.
-  // With an optional usage key, the provider's own report shows too
-  // (src-tauri/src/billing.rs): the whole account, and Deepgram's credit left.
+  // The provider's own report shows too (src-tauri/src/billing.rs): the whole account,
+  // and Deepgram's credit left. It reads with the key on Engines & keys when that key
+  // may; a separate usage key is only offered when it may not.
   import { AudioLines, ExternalLink, Gauge, KeyRound, RefreshCw, RotateCcw, Sparkles } from "@lucide/svelte";
   import type { Component } from "svelte";
   import { api, type ProviderReports, type ProviderUsage, type UsageView } from "../lib/api";
@@ -22,6 +23,18 @@
   let refreshing = $state(false);
   let keyInput: Record<string, string> = $state({});
   let keyNote: Record<string, string> = $state({});
+  /** Usage-key fields the user opened. */
+  let addingKey: Record<string, boolean> = $state({});
+  /** Provider → hint of the key stored on Engines & keys (null: none). */
+  let storedKeys: Record<string, string | null> = $state({});
+
+  async function loadKeys() {
+    try {
+      storedKeys = (await api.settings()).keys;
+    } catch {
+      // Only used for the hints under each card.
+    }
+  }
 
   async function loadReports(refresh: boolean) {
     refreshing = true;
@@ -51,6 +64,7 @@
       await api.saveKey(provider, key);
       keyInput[provider] = "";
       keyNote[provider] = "";
+      addingKey[provider] = false;
       await loadReports(true);
     } catch (e) {
       keyNote[provider] = String(e);
@@ -75,10 +89,14 @@
 
   $effect(() => {
     load();
+    loadKeys();
     loadReports(false);
     // Each paid request lands as a `usage` event: keep the numbers live.
     const off = onAppEvent((e) => e.kind === "usage" && load());
-    const onFocus = () => load();
+    const onFocus = () => {
+      load();
+      loadKeys();
+    };
     addEventListener("focus", onFocus);
     return () => {
       removeEventListener("focus", onFocus);
@@ -107,10 +125,11 @@
   const info = (id: string): ProviderInfo =>
     PROVIDERS[id] ?? { name: id, icon: Gauge, console: "", speech: true };
 
-  /** Deepgram and Claude always show (they're what Bolo pays for); others once used. */
+  /** Every cloud provider Bolo offers shows, used or not; anything else once used. */
+  const CLOUD = ["deepgram", "groq", "sarvam", "anthropic"];
   const rows = $derived.by(() => {
     const got = usage?.[period] ?? [];
-    const out: ProviderUsage[] = ["deepgram", "anthropic"].map(
+    const out: ProviderUsage[] = CLOUD.map(
       (p) =>
         got.find((u) => u.provider === p) ?? {
           provider: p,
@@ -123,7 +142,7 @@
           cost_usd: 0,
         },
     );
-    return out.concat(got.filter((u) => u.provider !== "deepgram" && u.provider !== "anthropic"));
+    return out.concat(got.filter((u) => !CLOUD.includes(u.provider)));
   });
   const total = $derived(rows.reduce((sum, r) => sum + r.cost_usd, 0));
   const empty = $derived(!!usage && usage.all_time.length === 0);
@@ -222,6 +241,8 @@
       </div>
       {#if r.provider === "deepgram" || r.provider === "anthropic"}
         {@render fromProvider(r.provider)}
+      {:else if r.provider === "groq" || r.provider === "sarvam"}
+        {@render noProviderReport(r.provider)}
       {/if}
     </SettingsSection>
   {/each}
@@ -230,8 +251,8 @@
 <div class="flex items-start justify-between gap-4 px-1">
   <p class="max-w-md text-xs text-muted-foreground">
     Counted by Bolo on this PC{since ? ` since ${since}` : ""}, from what each provider reported back for each request:
-    Deepgram’s audio length, Claude’s tokens. Costs are at pay-as-you-go list prices. A usage key adds the provider’s own
-    totals, which include other apps, and Deepgram’s credit left.
+    the audio length for Deepgram, Groq and Sarvam (Groq bills at least 10 s a request), Claude’s tokens. Costs are at pay-as-you-go list prices. A usage key adds the provider’s own
+    totals, which include other apps, and Deepgram’s credit left, read with your keys from Engines & keys.
   </p>
   {#if !empty && usage}
     {#if confirmReset}
@@ -251,6 +272,7 @@
 {#snippet fromProvider(provider: string)}
   {@const id = provider === "deepgram" ? "deepgram-admin" : "anthropic-admin"}
   {@const report = provider === "deepgram" ? reports?.deepgram : reports?.anthropic}
+  {@const source = provider === "deepgram" ? reports?.deepgram_key : reports?.anthropic_key}
   <div class="flex flex-col gap-2 bg-muted/40 px-4 py-3 dark:bg-white/[0.015]">
     {#if report?.state === "ok"}
       <div class="flex items-center justify-between gap-3">
@@ -264,7 +286,9 @@
           <Button variant="ghost-muted" size="icon-xs" title="Refresh" disabled={refreshing} onclick={() => loadReports(true)}>
             <RefreshCw class={refreshing ? "animate-spin" : ""} aria-hidden="true" />
           </Button>
-          <Button variant="ghost-muted" size="xs" onclick={() => removeUsageKey(id)}>Remove key</Button>
+          {#if source === "usage"}
+            <Button variant="ghost-muted" size="xs" onclick={() => removeUsageKey(id)}>Remove usage key</Button>
+          {/if}
         </span>
       </div>
       {#if reports?.deepgram.state === "ok" && provider === "deepgram"}
@@ -294,15 +318,25 @@
       <div class="flex items-center gap-2">
         <KeyRound class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
         <span class="text-xs text-muted-foreground">
-          {#if report?.state === "refused" || report?.state === "failed"}
+          {#if report?.state === "refused" && source === "engine"}
+            Your Deepgram key from Engines &amp; keys can’t read Deepgram’s usage (that needs the Admin or Owner role).
+            The counts above still work.
+          {:else if report?.state === "refused" || report?.state === "failed"}
             {report.message}
           {:else if provider === "deepgram"}
-            Optional: a Deepgram key with the Admin role adds Deepgram’s own totals and your credit left.
+            Add your Deepgram key on Engines &amp; keys to see Deepgram’s own totals and your credit left.
           {:else}
-            Optional: an Anthropic Admin key (organizations only) adds Anthropic’s own report.
+            The counts above come from your Claude key. Anthropic’s own report needs an organization Admin key; an
+            ordinary API key can’t read it.
           {/if}
         </span>
+        {#if !addingKey[id] && source !== "usage"}
+          <Button variant="ghost-muted" size="xs" class="ml-auto shrink-0" onclick={() => (addingKey[id] = true)}>
+            Add {provider === "deepgram" ? "Admin-role" : "Admin"} key
+          </Button>
+        {/if}
       </div>
+      {#if addingKey[id] || source === "usage"}
       <div class="flex items-center gap-1.5">
         <label for="usage-key-{provider}" class="sr-only">{provider === "deepgram" ? "Deepgram" : "Anthropic"} usage key</label>
         <input
@@ -316,11 +350,29 @@
           onkeydown={(e) => e.key === "Enter" && saveUsageKey(id)}
         />
         <Button variant="outline" size="sm" disabled={!keyInput[id]?.trim()} onclick={() => saveUsageKey(id)}>Add</Button>
-        {#if report?.state === "refused" || report?.state === "failed"}
+        {#if source === "usage"}
           <Button variant="ghost-muted" size="sm" onclick={() => removeUsageKey(id)}>Remove</Button>
+        {:else}
+          <Button variant="ghost-muted" size="sm" onclick={() => (addingKey[id] = false)}>Cancel</Button>
         {/if}
       </div>
+      {/if}
       {#if keyNote[id]}<p class="text-2xs text-muted-foreground">{keyNote[id]}</p>{/if}
     {/if}
+  </div>
+{/snippet}
+
+{#snippet noProviderReport(provider: string)}
+  {@const name = info(provider).name}
+  <div class="flex items-center gap-2 bg-muted/40 px-4 py-3 dark:bg-white/[0.015]">
+    <KeyRound class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+    <span class="text-xs text-muted-foreground">
+      {#if storedKeys[provider]}
+        Counted from your {name} key on Engines &amp; keys. {name} has no usage API, so for the account’s own totals open its
+        dashboard.
+      {:else}
+        Add a {name} key on Engines &amp; keys to dictate with {name}; its requests are counted here.
+      {/if}
+    </span>
   </div>
 {/snippet}
