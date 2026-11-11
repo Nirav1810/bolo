@@ -36,8 +36,6 @@ pub enum Key {
     ShiftInsert,
     /// Shift+Left: select one caret unit back (the polish swap).
     ShiftLeft,
-    /// A Caps Lock tap, replayed when push-to-talk was only tapped (ADR-0017).
-    CapsLock,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

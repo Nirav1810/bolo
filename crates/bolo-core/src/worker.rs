@@ -45,6 +45,9 @@ use crate::{
 
 /// Audio kept from just before the hotkey while the mic is warm (seconds).
 const PREROLL_SECS: f32 = 0.3;
+// The desktop app starts a dictation only once push-to-talk has been held for 150 ms
+// (ADR-0017); the pre-roll must cover that with room to spare.
+const _: () = assert!(PREROLL_SECS >= 0.3, "pre-roll must cover the 150 ms push-to-talk hold twice over");
 /// Silence padding around VAD segments so batch models don't clip word edges.
 const SEGMENT_PAD_SECS: f32 = 0.15;
 const LEVEL_INTERVAL: Duration = Duration::from_millis(33);

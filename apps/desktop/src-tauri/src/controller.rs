@@ -10,6 +10,8 @@ use std::sync::Arc;
 use bolo_core::{BoloError, DictationState, EngineEvents, FormattedOutput};
 use serde::Serialize;
 
+use crate::hotkey::Flags;
+
 /// What the webviews are sent, as the payload of the [`crate::EVENT`] event. Mirrored by
 /// `src/lib/events.ts`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -72,11 +74,13 @@ pub trait Emit: Send + Sync {
 /// The engine's event sink. Called on the engine's threads, so it only logs and posts.
 pub struct Controller {
     emit: Arc<dyn Emit>,
+    /// Tells the keyboard hook whether a dictation is listening (Esc cancels then).
+    flags: Arc<Flags>,
 }
 
 impl Controller {
-    pub fn new(emit: Arc<dyn Emit>) -> Self {
-        Self { emit }
+    pub fn new(emit: Arc<dyn Emit>, flags: Arc<Flags>) -> Self {
+        Self { emit, flags }
     }
 }
 
@@ -113,6 +117,7 @@ impl EngineEvents for Controller {
 
     fn on_state(&self, state: DictationState) {
         tracing::debug!(?state, "state");
+        self.flags.set_listening(state == DictationState::Listening);
         self.emit.emit(AppEvent::State { state });
     }
 }
@@ -149,6 +154,7 @@ mod tests {
 
     use super::testing::Recorder;
     use super::{AppEvent, Controller};
+    use crate::hotkey::Flags;
 
     fn output(text: &str) -> FormattedOutput {
         FormattedOutput {
@@ -164,11 +170,14 @@ mod tests {
     #[test]
     fn engine_events_become_app_events_in_order() {
         let rec = Arc::new(Recorder::default());
-        let c = Controller::new(rec.clone());
+        let flags = Arc::new(Flags::default());
+        let c = Controller::new(rec.clone(), flags.clone());
         c.on_state(DictationState::Listening);
+        assert!(flags.listening(), "the hook needs this for Esc");
         c.on_level(0.05);
         c.on_partial("hello".into());
         c.on_state(DictationState::Processing);
+        assert!(!flags.listening());
         c.on_final(output("Hello."));
         c.on_polished(output("Hello!"));
         c.on_error(BoloError::Busy);
