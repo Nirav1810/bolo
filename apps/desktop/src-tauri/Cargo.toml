@@ -20,6 +20,7 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+bolo-audio = { workspace = true }
 bolo-core = { workspace = true }
 bolo-models = { workspace = true }
 bolo-store = { workspace = true }

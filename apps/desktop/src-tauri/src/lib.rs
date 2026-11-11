@@ -11,7 +11,8 @@
 //! - [`hotkey`] is the push-to-talk state machine and [`keyhook`] the hook that runs it.
 //! - [`config`] lays `BOLO_*` variables over the engine config from settings.
 //! - [`form`] is what the settings window edits, [`models`] the local models and their
-//!   downloads, [`keys`] the API key check; [`commands`] are the window's calls.
+//!   downloads, [`keys`] the API key check, [`mic`] onboarding's mic check; [`commands`]
+//!   are the windows' calls.
 //!
 //! The app lives in the tray, runs as a single instance and keeps running when its
 //! windows close. Holding the push-to-talk key (Caps Lock by default, ADR-0017) dictates;
@@ -27,6 +28,7 @@ pub mod insert;
 pub mod journal;
 pub mod keyhook;
 pub mod keys;
+pub mod mic;
 pub mod models;
 pub mod overlay;
 pub mod pill;
@@ -495,7 +497,14 @@ fn init_logging() {
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let toggle = MenuItem::with_id(app, "toggle", "Start dictation", true, None::<&str>)?;
     let pause = MenuItem::with_id(app, "pause", "Pause Bolo", true, None::<&str>)?;
-    let settings = load_settings();
+    let (mut settings, fresh) = load_settings();
+    if fresh {
+        settings.onboarding_step = Some(0);
+        if let Err(e) = Settings::default_path().and_then(|p| settings.save(&p)) {
+            tracing::warn!(%e, "could not save the settings");
+        }
+    }
+    let onboarding = settings.onboarding_step.is_some();
     let idle_button = CheckMenuItem::with_id(
         app,
         "idle-button",
@@ -513,6 +522,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?,
             &MenuItem::with_id(app, "history", "History…", true, None::<&str>)?,
+            &MenuItem::with_id(app, "onboarding", "Set up Bolo…", true, None::<&str>)?,
             &MenuItem::with_id(app, "debug", "Debug window", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "quit", "Quit Bolo", true, None::<&str>)?,
@@ -541,6 +551,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             }
             "settings" => show_window(app, "settings"),
             "history" => show_window(app, "history"),
+            "onboarding" => show_window(app, "onboarding"),
             "debug" => show_window(app, "debug"),
             "quit" => {
                 // Let go of the keyboard, close the mic and unload the model first.
@@ -615,6 +626,10 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
     app.manage(bolo);
     app.state::<Bolo>().install_hook(app.handle());
+    // First run (or onboarding left unfinished): open it.
+    if onboarding {
+        show_window(app.handle(), "onboarding");
+    }
     Ok(())
 }
 
@@ -654,18 +669,19 @@ fn pointer_hook() -> Option<(Box<dyn overlay::Pointer>, std::sync::mpsc::Receive
     None
 }
 
-/// The settings file, or the defaults if it can't be read.
-fn load_settings() -> Settings {
+/// The settings file, or the defaults if it can't be read; and whether there was no
+/// file (Bolo's first run here).
+fn load_settings() -> (Settings, bool) {
     match Settings::default_path().and_then(|p| Settings::load(&p)) {
         Ok(loaded) => {
             if let Some(backup) = &loaded.recovered_from {
                 tracing::warn!(backup = %backup.display(), "the settings file was bad; it was replaced with the defaults");
             }
-            loaded.settings
+            (loaded.settings, loaded.fresh)
         }
         Err(e) => {
             tracing::warn!(%e, "could not read the settings; using the defaults");
-            Settings::default()
+            (Settings::default(), false)
         }
     }
 }
@@ -758,6 +774,8 @@ pub fn run() {
             commands::model_remove,
             commands::open_folder,
             commands::open_link,
+            commands::mic_check,
+            commands::onboarding_save,
         ])
         .setup(setup)
         .on_window_event(|window, event| {

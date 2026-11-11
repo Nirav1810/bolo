@@ -507,6 +507,7 @@ name = "bolo-desktop"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "bolo-audio",
  "bolo-core",
  "bolo-models",
  "bolo-store",
