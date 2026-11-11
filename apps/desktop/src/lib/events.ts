@@ -29,9 +29,17 @@ export type AppEvent =
   | { kind: "level"; rms: number }
   | { kind: "partial"; text: string }
   | { kind: "final"; output: Output }
-  | { kind: "polished"; output: Output }
-  | { kind: "notice"; message: string }
-  | { kind: "error"; message: string };
+  | { kind: "polished"; output: Output; swapped: boolean }
+  | { kind: "notice"; message: string; hint: string | null }
+  | { kind: "error"; message: string }
+  | { kind: "pill"; view: PillView };
+
+/// What the overlay pill shows (src-tauri/src/pill.rs, `View`). The state machine and its
+/// timers live in Rust; the pill webview only draws.
+export type PillView =
+  | { state: "hidden" | "listening" | "transcribing" | "inserted" | "polishing" | "polished" | "cancelled" }
+  | { state: "notice"; message: string; hint: string | null }
+  | { state: "error"; message: string };
 
 export function onAppEvent(handler: (e: AppEvent) => void): Promise<UnlistenFn> {
   return listen<AppEvent>(EVENT, (e) => handler(e.payload));

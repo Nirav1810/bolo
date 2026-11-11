@@ -14,6 +14,7 @@ use serde::Serialize;
 use crate::hotkey::Flags;
 use crate::insert::{Inserted, Inserter, Swapped};
 use crate::journal::Journal;
+use crate::pill::View;
 
 /// What the webviews are sent, as the payload of the [`crate::EVENT`] event. Mirrored by
 /// `src/lib/events.ts`.
@@ -37,19 +38,35 @@ pub enum AppEvent {
     },
     Polished {
         output: Output,
+        /// Whether it replaced the instant text in the app (ADR-0018).
+        swapped: bool,
     },
-    /// Something the user should know that isn't an error, for the pill.
+    /// Something the user should know that isn't an error, for the pill. `hint` is the
+    /// thing to do about it, shown dimmed after the message.
     Notice {
         message: String,
+        hint: Option<String>,
     },
     Error {
         message: String,
     },
+    /// What the overlay pill shows (sent by [`crate::overlay`], to the pill webview).
+    Pill {
+        view: View,
+    },
 }
 
-/// The notice when the window in front runs elevated and won't take Bolo's paste.
-pub const BLOCKED_NOTICE: &str =
-    "This window runs as administrator, so Bolo can't paste into it. Your text is on the clipboard: press Ctrl+V.";
+/// The notice when the window in front runs elevated and won't take Bolo's paste: the
+/// text is left on the clipboard for the user to paste.
+pub const BLOCKED_NOTICE: &str = "Copied. Couldn't paste into an admin window";
+pub const BLOCKED_HINT: &str = "Ctrl+V";
+
+impl AppEvent {
+    /// The notice for a paste the window in front blocked.
+    pub fn blocked() -> Self {
+        Self::Notice { message: BLOCKED_NOTICE.into(), hint: Some(BLOCKED_HINT.into()) }
+    }
+}
 
 /// [`FormattedOutput`] as the webviews see it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -125,7 +142,7 @@ impl EngineEvents for Controller {
         tracing::info!(engine = %out.engine_id, language = ?out.language, ?inserted, "final");
         match inserted {
             Inserted::Pasted | Inserted::Empty => {}
-            Inserted::Blocked => self.emit.emit(AppEvent::Notice { message: BLOCKED_NOTICE.into() }),
+            Inserted::Blocked => self.emit.emit(AppEvent::blocked()),
             Inserted::Failed(e) => self.emit.emit(AppEvent::Error { message: format!("could not paste: {e}") }),
         }
         // After the paste, so history never delays the text.
@@ -135,7 +152,8 @@ impl EngineEvents for Controller {
 
     fn on_polished(&self, out: FormattedOutput) {
         let llm_ms = out.timings.llm_ms;
-        let swap = match self.inserter.polished(&out, Instant::now()) {
+        let swapped = self.inserter.polished(&out, Instant::now());
+        let swap = match &swapped {
             Swapped::Swapped => {
                 tracing::info!(llm_ms, "polish swapped in");
                 "swapped"
@@ -150,7 +168,7 @@ impl EngineEvents for Controller {
             }
         };
         self.journal.polished(&out, swap);
-        self.emit.emit(AppEvent::Polished { output: out.into() });
+        self.emit.emit(AppEvent::Polished { output: out.into(), swapped: swapped == Swapped::Swapped });
     }
 
     fn on_error(&self, err: BoloError) {
@@ -200,7 +218,7 @@ mod tests {
     use serde_json::json;
 
     use super::testing::Recorder;
-    use super::{AppEvent, BLOCKED_NOTICE, Controller};
+    use super::{AppEvent, Controller};
     use crate::desktop::Key;
     use crate::desktop::fake::{FakeDesktop, Op};
     use crate::hotkey::Flags;
@@ -341,12 +359,32 @@ Two."
     }
 
     #[test]
+    fn the_polished_event_says_whether_it_was_swapped_in() {
+        let swapped = |r: &Rig| {
+            r.rec.take().into_iter().find_map(|e| match e {
+                AppEvent::Polished { swapped, .. } => Some(swapped),
+                _ => None,
+            })
+        };
+        let r = rig();
+        r.inserter.begin(Target::default(), true);
+        r.c.on_final(output("helo"));
+        r.c.on_polished(output("Hello."));
+        assert_eq!(swapped(&r), Some(true));
+        r.inserter.begin(Target::default(), true);
+        r.c.on_final(output("helo"));
+        r.desktop.focus("chrome.exe", "Inbox", 7);
+        r.c.on_polished(output("Hello."));
+        assert_eq!(swapped(&r), Some(false), "the user moved to another window");
+    }
+
+    #[test]
     fn a_blocked_paste_sends_a_notice() {
         let r = rig();
         r.desktop.set_blocked(true);
         r.c.on_final(output("Hello."));
         let events = r.rec.take();
-        assert_eq!(events[0], AppEvent::Notice { message: BLOCKED_NOTICE.into() });
+        assert_eq!(events[0], AppEvent::blocked());
         assert!(matches!(events[1], AppEvent::Final { .. }));
         assert_eq!(r.desktop.text().as_deref(), Some("Hello."));
         assert!(r.timer.delays().is_empty());
@@ -362,7 +400,14 @@ Two."
         assert_eq!(to_json(AppEvent::Paused { paused: true }), json!({"kind": "paused", "paused": true}));
         assert_eq!(to_json(AppEvent::Partial { text: "hi".into() }), json!({"kind": "partial", "text": "hi"}));
         assert_eq!(to_json(AppEvent::Error { message: "boom".into() }), json!({"kind": "error", "message": "boom"}));
-        assert_eq!(to_json(AppEvent::Notice { message: "hm".into() }), json!({"kind": "notice", "message": "hm"}));
+        assert_eq!(
+            to_json(AppEvent::Notice { message: "hm".into(), hint: None }),
+            json!({"kind": "notice", "message": "hm", "hint": null})
+        );
+        assert_eq!(
+            to_json(AppEvent::Pill { view: crate::pill::View::Polishing }),
+            json!({"kind": "pill", "view": {"state": "polishing"}})
+        );
         let fin = to_json(AppEvent::Final { output: output("Hi.").into() });
         assert_eq!(fin["kind"], "final");
         assert_eq!(fin["output"]["plain"], "Hi.");

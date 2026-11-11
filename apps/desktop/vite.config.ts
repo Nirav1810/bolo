@@ -7,5 +7,11 @@ export default defineConfig({
   plugins: [svelte(), tailwindcss()],
   clearScreen: false,
   server: { port: 1420, strictPort: true },
-  build: { target: "es2022", outDir: "dist", emptyOutDir: true },
+  build: {
+    target: "es2022",
+    outDir: "dist",
+    emptyOutDir: true,
+    // The main window and the overlay pill are separate pages.
+    rollupOptions: { input: { main: "index.html", pill: "pill.html" } },
+  },
 });

@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "The Bolo windows listen to controller events and call the app's own commands.",
-  "windows": ["main"],
+  "windows": ["main", "pill"],
   "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
 }
