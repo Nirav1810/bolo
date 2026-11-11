@@ -51,6 +51,20 @@ pub fn virtual_key(key: PushToTalkKey) -> (u16, bool) {
 #[cfg(windows)]
 pub use win::KeyHook;
 
+/// Tell the hook thread `thread_id` ([`KeyHook::thread_id`]) that [`Flags::watching`]
+/// changed, so it adds or removes the mouse hook. It only posts a message, so it's safe
+/// from any thread and takes no lock; 0 (no hook) does nothing.
+///
+/// [`Flags::watching`]: crate::hotkey::Flags::watching
+pub fn watch_changed(thread_id: u32) {
+    #[cfg(windows)]
+    if thread_id != 0 {
+        win::post_watch(thread_id);
+    }
+    #[cfg(not(windows))]
+    let _ = thread_id;
+}
+
 #[cfg(not(windows))]
 pub struct KeyHook;
 
@@ -63,7 +77,9 @@ impl KeyHook {
     ) -> std::io::Result<Self> {
         Err(std::io::Error::other("push-to-talk needs Windows"))
     }
-    pub fn watch_changed(&self) {}
+    pub fn thread_id(&self) -> u32 {
+        0
+    }
 }
 
 #[cfg(windows)]
@@ -144,12 +160,15 @@ mod win {
             }
         }
 
-        /// Tell the hook thread that [`Flags::watching`] changed, so it adds or removes the
-        /// mouse hook.
-        pub fn watch_changed(&self) {
-            // SAFETY: posting to a thread whose queue exists (created before `install` returns).
-            unsafe { PostThreadMessageW(self.thread_id, WM_WATCH, 0, 0) };
+        /// The hook thread, for [`super::watch_changed`].
+        pub fn thread_id(&self) -> u32 {
+            self.thread_id
         }
+    }
+
+    pub(super) fn post_watch(thread_id: u32) {
+        // SAFETY: posting a message; a thread that has exited just makes it fail.
+        unsafe { PostThreadMessageW(thread_id, WM_WATCH, 0, 0) };
     }
 
     impl Drop for KeyHook {

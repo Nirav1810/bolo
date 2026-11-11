@@ -30,6 +30,7 @@ export type AppEvent =
   | { kind: "partial"; text: string }
   | { kind: "final"; output: Output }
   | { kind: "polished"; output: Output }
+  | { kind: "notice"; message: string }
   | { kind: "error"; message: string };
 
 export function onAppEvent(handler: (e: AppEvent) => void): Promise<UnlistenFn> {
