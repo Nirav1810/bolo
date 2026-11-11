@@ -14,7 +14,7 @@ use crate::desktop::Clipboard;
 use crate::form::{CLOUD_ENGINES, Form};
 use crate::keys::{self, Tested};
 use crate::models::{self, DownloadEvent, ModelView};
-use crate::{Bolo, key_name, lock, updates};
+use crate::{Bolo, billing, key_name, lock, updates};
 
 /// Download progress goes out on this event, as [`DownloadEvent`]s.
 pub const DOWNLOAD_EVENT: &str = "bolo://download";
@@ -141,6 +141,7 @@ pub fn settings_save(app: AppHandle, bolo: State<'_, Bolo>, form: Form) -> Resul
 /// Store `provider`'s key (blank deletes it). Its hint.
 #[tauri::command]
 pub fn key_save(bolo: State<'_, Bolo>, provider: String, key: String) -> Result<Option<String>, String> {
+    billing::forget();
     bolo.save_key(&provider, &key)
 }
 
@@ -239,6 +240,22 @@ pub fn usage_summary(bolo: State<'_, Bolo>, today_start_ms: i64) -> Result<Usage
         })
         .unwrap_or_else(|| Ok(UsageView::default()))
         .map_err(|e| e.to_string())
+}
+
+/// The providers' own usage reports, for the usage keys stored (see [`crate::billing`]).
+#[tauri::command]
+pub async fn usage_reports(app: AppHandle, refresh: bool) -> billing::ProviderReports {
+    let keys = {
+        let bolo = app.state::<Bolo>();
+        let secrets = lock(&bolo.secrets);
+        let get = |p: &str| secrets.as_ref().and_then(|s| s.api_keys().get(p).map(str::to_owned));
+        billing::Keys {
+            deepgram_admin: get(billing::DEEPGRAM_ADMIN),
+            anthropic_admin: get(billing::ANTHROPIC_ADMIN),
+            anthropic: get(bolo_core::ANTHROPIC),
+        }
+    };
+    billing::reports(keys, bolo_store::history::now_ms(), refresh).await
 }
 
 #[tauri::command]

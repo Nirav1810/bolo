@@ -90,6 +90,13 @@ pub(crate) fn usd_per_hour(opts: &SttOptions, streaming: bool) -> f64 {
 #[derive(Deserialize)]
 struct DgResponse {
     results: DgResults,
+    #[serde(default)]
+    metadata: Option<DgMetadata>,
+}
+#[derive(Deserialize)]
+struct DgMetadata {
+    /// Seconds of audio Deepgram processed: what it bills.
+    duration: Option<f64>,
 }
 #[derive(Deserialize)]
 struct DgResults {
@@ -131,15 +138,16 @@ impl SttEngine for DeepgramEngine {
             .await
             .map_err(map_reqwest)?;
         let body: DgResponse = check_status(resp).await?.json().await.map_err(map_reqwest)?;
+        let price = usd_per_hour(opts, false);
+        // Deepgram's own count of the audio, falling back to ours.
+        let billed = match body.metadata.as_ref().and_then(|m| m.duration) {
+            Some(secs) => Billed { audio_secs: secs, cost_usd: secs / 3600.0 * price },
+            None => Billed::audio(audio.len(), price),
+        };
         let channel = body.results.channels.into_iter().next();
         let language = channel.as_ref().and_then(|c| c.detected_language.clone());
         let text = channel.and_then(|c| c.alternatives.into_iter().next()).map(|a| a.transcript).unwrap_or_default();
-        Ok(Transcript {
-            text: text.trim().to_owned(),
-            engine_id: self.id.clone(),
-            language,
-            billed: Billed::audio(audio.len(), usd_per_hour(opts, false)),
-        })
+        Ok(Transcript { text: text.trim().to_owned(), engine_id: self.id.clone(), language, billed })
     }
 }
 
@@ -152,6 +160,7 @@ mod tests {
         let json = r#"{"metadata":{"duration":2.5},"results":{"channels":[{"alternatives":[{"transcript":"hello world","confidence":0.99}]}]}}"#;
         let r: DgResponse = serde_json::from_str(json).unwrap();
         assert_eq!(r.results.channels[0].alternatives[0].transcript, "hello world");
+        assert_eq!(r.metadata.and_then(|m| m.duration), Some(2.5), "the billed duration is Deepgram's");
     }
 
     #[test]

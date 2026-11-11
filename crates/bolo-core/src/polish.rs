@@ -46,8 +46,12 @@ pub trait LlmClient: Send + Sync {
     async fn polish(&self, req: &CleanupRequest<'_>, timeout: Duration) -> Result<String, LlmError>;
 }
 
+/// How long a polish request may run on in the background after the engine stopped
+/// waiting for it, so the tokens it was billed for still reach the usage meter.
+const METERED_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Claude via the Messages API (`bolo_format::llm`). Reports each answered call's
-/// tokens to the host's usage meter.
+/// tokens, as Anthropic counted them, to the host's usage meter.
 pub(crate) struct AnthropicClient {
     http: reqwest::Client,
     key: String,
@@ -56,17 +60,66 @@ pub(crate) struct AnthropicClient {
 
 #[async_trait]
 impl LlmClient for AnthropicClient {
-    async fn polish(&self, req: &CleanupRequest<'_>, timeout: Duration) -> Result<String, LlmError> {
-        let r = llm::cleanup(&self.http, &self.key, req, timeout).await?;
-        self.meter.on_usage(Usage::Polish {
-            model: llm::MODEL.into(),
-            input_tokens: r.input_tokens,
-            output_tokens: r.output_tokens,
-            cache_read_tokens: r.cache_read_tokens,
-            cache_write_tokens: r.cache_write_tokens,
-            cost_usd: r.cost_usd(),
+    /// The engine stops waiting at its deadline, but the request runs on in its own task
+    /// (up to [`METERED_TIMEOUT`]): Anthropic bills an answer that came too late, so its
+    /// usage is still recorded. `_timeout` is therefore not applied to the request.
+    async fn polish(&self, req: &CleanupRequest<'_>, _timeout: Duration) -> Result<String, LlmError> {
+        let (http, key, meter) = (self.http.clone(), self.key.clone(), self.meter.clone());
+        let owned = Owned::of(req);
+        let call = tokio::spawn(async move {
+            let req = owned.request();
+            llm::cleanup_metered(&http, &key, &req, METERED_TIMEOUT, |r| meter.on_usage(usage(r))).await
         });
-        Ok(r.text)
+        match call.await {
+            Ok(r) => r.map(|r| r.text),
+            Err(e) => Err(LlmError::Network(e.to_string())),
+        }
+    }
+}
+
+/// A [`CleanupRequest`] that can move into a task.
+struct Owned {
+    transcript: String,
+    script: llm::Script,
+    tone: String,
+    app: String,
+    dictionary: Vec<String>,
+    context: Option<String>,
+}
+
+impl Owned {
+    fn of(r: &CleanupRequest<'_>) -> Self {
+        Self {
+            transcript: r.transcript.to_owned(),
+            script: r.script,
+            tone: r.tone.to_owned(),
+            app: r.app.to_owned(),
+            dictionary: r.dictionary.to_vec(),
+            context: r.context.map(str::to_owned),
+        }
+    }
+
+    fn request(&self) -> CleanupRequest<'_> {
+        CleanupRequest {
+            transcript: &self.transcript,
+            script: self.script,
+            tone: &self.tone,
+            app: &self.app,
+            dictionary: &self.dictionary,
+            context: self.context.as_deref(),
+        }
+    }
+}
+
+/// The usage meter's record of one answered call.
+fn usage(r: &llm::CleanupResult) -> Usage {
+    Usage::Polish {
+        model: llm::MODEL.into(),
+        input_tokens: r.input_tokens,
+        output_tokens: r.output_tokens,
+        cache_read_tokens: r.cache_read_tokens,
+        cache_write_tokens: r.cache_write_tokens,
+        cost_usd: r.cost_usd(),
     }
 }
 

@@ -25,6 +25,8 @@ bolo-core = { workspace = true }
 bolo-models = { workspace = true }
 bolo-store = { workspace = true }
 bolo-stt = { workspace = true }
+bolo-format = { workspace = true }
+reqwest = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

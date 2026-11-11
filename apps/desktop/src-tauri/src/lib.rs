@@ -20,6 +20,7 @@
 //! windows close. Holding the push-to-talk key (Caps Lock by default, ADR-0017) dictates;
 //! the tray can start and stop one too. The text is pasted into the app in front.
 
+mod billing;
 mod commands;
 pub mod config;
 pub mod controller;
@@ -882,6 +883,7 @@ pub fn run() {
             commands::history_clear,
             commands::usage_summary,
             commands::usage_reset,
+            commands::usage_reports,
             commands::copy_text,
             commands::model_download,
             commands::model_cancel,

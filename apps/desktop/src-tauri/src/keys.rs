@@ -25,6 +25,15 @@ pub fn probe(provider: &str, key: &str) -> Option<Probe> {
             url: "https://api.deepgram.com/v1/projects",
             headers: vec![("authorization", format!("Token {key}"))],
         },
+        // Usage keys: a request only a key that may read usage passes.
+        "anthropic-admin" => Probe {
+            url: "https://api.anthropic.com/v1/organizations/api_keys?limit=1",
+            headers: vec![("x-api-key", key), ("anthropic-version", "2023-06-01".into())],
+        },
+        "deepgram-admin" => Probe {
+            url: "https://api.deepgram.com/v1/projects",
+            headers: vec![("authorization", format!("Token {key}"))],
+        },
         "groq" => Probe {
             url: "https://api.groq.com/openai/v1/models",
             headers: vec![("authorization", format!("Bearer {key}"))],

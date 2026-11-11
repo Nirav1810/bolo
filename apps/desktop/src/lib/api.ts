@@ -116,6 +116,33 @@ export interface ProviderUsage {
   cost_usd: number;
 }
 
+/** The providers' own usage reports (src-tauri/src/billing.rs). Days are UTC days. */
+export type Report<T> =
+  | { state: "no-key" }
+  | { state: "ok"; report: T }
+  | { state: "refused" | "failed"; message: string };
+export interface Periods<T> {
+  today: T;
+  last_30_days: T;
+  all_time: T;
+}
+export interface DeepgramReport {
+  project: string;
+  periods: Periods<{ hours: number; requests: number; usd: number | null }>;
+  balance: number | null;
+  balance_units: string | null;
+}
+export interface AnthropicReport {
+  key_name: string | null;
+  periods: Periods<{ input_tokens: number; cache_read_tokens: number; cache_write_tokens: number; output_tokens: number }>;
+  account_usd: Periods<number>;
+}
+export interface ProviderReports {
+  deepgram: Report<DeepgramReport>;
+  anthropic: Report<AnthropicReport>;
+  fetched_ms: number;
+}
+
 /** The usage meter (src-tauri/src/commands.rs, `UsageView`). */
 export interface UsageView {
   today: ProviderUsage[];
@@ -180,6 +207,8 @@ export const api = {
   usage: (todayStartMs: number) =>
     invoke<UsageView>("usage_summary", { todayStartMs }),
   resetUsage: () => invoke<void>("usage_reset"),
+  usageReports: (refresh: boolean) =>
+    invoke<ProviderReports>("usage_reports", { refresh }),
   copy: (text: string) => invoke<void>("copy_text", { text }),
   download: (id: string) => invoke<void>("model_download", { id }),
   cancelDownload: (id: string) => invoke<void>("model_cancel", { id }),

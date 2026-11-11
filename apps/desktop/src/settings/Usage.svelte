@@ -1,15 +1,15 @@
 <script lang="ts">
-  // The usage meter: what Bolo itself sent to the paid cloud APIs (Deepgram's audio,
-  // Claude's tokens), counted per request in the history database by Rust
-  // (src-tauri/src/journal.rs). Providers bill by exactly these numbers; the costs are
-  // estimates at list price, so the provider's own dashboard stays the bill.
-  import { AudioLines, ExternalLink, Gauge, RotateCcw, Sparkles } from "@lucide/svelte";
+  // The usage meter: what each paid cloud request was billed for, as the provider
+  // reported it in its answer (Deepgram's audio duration, Claude's token counts),
+  // recorded per request by Rust (src-tauri/src/journal.rs). Works with any key.
+  // With an optional usage key, the provider's own report shows too
+  // (src-tauri/src/billing.rs): the whole account, and Deepgram's credit left.
+  import { AudioLines, ExternalLink, Gauge, KeyRound, RefreshCw, RotateCcw, Sparkles } from "@lucide/svelte";
   import type { Component } from "svelte";
-  import { api, type ProviderUsage, type UsageView } from "../lib/api";
+  import { api, type ProviderReports, type ProviderUsage, type UsageView } from "../lib/api";
   import { onAppEvent } from "../lib/events";
   import Alert from "../lib/ui/Alert.svelte";
   import Button from "../lib/ui/Button.svelte";
-  import Empty from "../lib/ui/Empty.svelte";
   import Segmented from "../lib/ui/Segmented.svelte";
   import SettingsSection from "../lib/ui/SettingsSection.svelte";
 
@@ -18,6 +18,49 @@
   let usage = $state<UsageView | null>(null);
   let error = $state("");
   let confirmReset = $state(false);
+  let reports = $state<ProviderReports | null>(null);
+  let refreshing = $state(false);
+  let keyInput: Record<string, string> = $state({});
+  let keyNote: Record<string, string> = $state({});
+
+  async function loadReports(refresh: boolean) {
+    refreshing = true;
+    try {
+      reports = await api.usageReports(refresh);
+    } catch {
+      // The meter still works; the reports are an extra.
+    }
+    refreshing = false;
+  }
+
+  /** Save a usage key, after checking the provider takes it. */
+  async function saveUsageKey(provider: string) {
+    const key = keyInput[provider]?.trim();
+    if (!key) return;
+    keyNote[provider] = "Checking…";
+    const t = await api.testKey(provider, key);
+    if (t.result === "refused") {
+      keyNote[provider] = "The provider refused this key.";
+      return;
+    }
+    if (t.result === "failed") {
+      keyNote[provider] = t.message;
+      return;
+    }
+    try {
+      await api.saveKey(provider, key);
+      keyInput[provider] = "";
+      keyNote[provider] = "";
+      await loadReports(true);
+    } catch (e) {
+      keyNote[provider] = String(e);
+    }
+  }
+
+  async function removeUsageKey(provider: string) {
+    await api.saveKey(provider, "");
+    await loadReports(true);
+  }
 
   async function load() {
     const midnight = new Date();
@@ -32,6 +75,7 @@
 
   $effect(() => {
     load();
+    loadReports(false);
     // Each paid request lands as a `usage` event: keep the numbers live.
     const off = onAppEvent((e) => e.kind === "usage" && load());
     const onFocus = () => load();
@@ -56,7 +100,7 @@
   }
   const PROVIDERS: Record<string, ProviderInfo> = {
     deepgram: { name: "Deepgram", icon: AudioLines, console: "https://console.deepgram.com/", speech: true },
-    anthropic: { name: "Claude", icon: Sparkles, console: "https://console.anthropic.com/settings/usage", speech: false },
+    anthropic: { name: "Claude", icon: Sparkles, console: "https://platform.claude.com/usage", speech: false },
     groq: { name: "Groq", icon: AudioLines, console: "https://console.groq.com/dashboard/usage", speech: true },
     sarvam: { name: "Sarvam", icon: AudioLines, console: "https://dashboard.sarvam.ai/", speech: true },
   };
@@ -83,6 +127,7 @@
   });
   const total = $derived(rows.reduce((sum, r) => sum + r.cost_usd, 0));
   const empty = $derived(!!usage && usage.all_time.length === 0);
+  const hours = (h: number) => duration(h * 3600);
 
   function money(usd: number): string {
     if (usd === 0) return "$0.00";
@@ -134,14 +179,6 @@
   <div class="flex flex-col gap-2.5" aria-hidden="true">
     {#each [0, 1] as i (i)}<div class="h-28 animate-pulse rounded-xl bg-muted"></div>{/each}
   </div>
-{:else if empty}
-  <div class="rounded-xl border border-dashed border-border">
-    <Empty
-      icon={Gauge}
-      title="No cloud usage yet"
-      hint="Dictations with Deepgram, and polish with Claude, are counted here as they happen. Local engines are free and don’t show up."
-    />
-  </div>
 {:else}
   {#each rows as r (r.provider)}
     {@const p = info(r.provider)}
@@ -183,14 +220,18 @@
           <span class="truncate text-2xs text-muted-foreground">{r.requests ? `${money(r.cost_usd / r.requests)} each` : "at list price"}</span>
         </div>
       </div>
+      {#if r.provider === "deepgram" || r.provider === "anthropic"}
+        {@render fromProvider(r.provider)}
+      {/if}
     </SettingsSection>
   {/each}
 {/if}
 
 <div class="flex items-start justify-between gap-4 px-1">
   <p class="max-w-md text-xs text-muted-foreground">
-    Counted by Bolo on this PC{since ? ` since ${since}` : ""}, from what each request sent. Costs are estimates at pay-as-you-go
-    list prices; free credit, promotions and requests from other apps only show in the provider’s dashboard.
+    Counted by Bolo on this PC{since ? ` since ${since}` : ""}, from what each provider reported back for each request:
+    Deepgram’s audio length, Claude’s tokens. Costs are at pay-as-you-go list prices. A usage key adds the provider’s own
+    totals, which include other apps, and Deepgram’s credit left.
   </p>
   {#if !empty && usage}
     {#if confirmReset}
@@ -206,3 +247,80 @@
   {/if}
 </div>
 
+
+{#snippet fromProvider(provider: string)}
+  {@const id = provider === "deepgram" ? "deepgram-admin" : "anthropic-admin"}
+  {@const report = provider === "deepgram" ? reports?.deepgram : reports?.anthropic}
+  <div class="flex flex-col gap-2 bg-muted/40 px-4 py-3 dark:bg-white/[0.015]">
+    {#if report?.state === "ok"}
+      <div class="flex items-center justify-between gap-3">
+        <span class="text-xs font-medium text-foreground">
+          From {provider === "deepgram" ? "Deepgram" : "Anthropic"}
+          <span class="font-normal text-muted-foreground">
+            · {period === "today" ? "today (UTC)" : period === "last_30_days" ? "last 30 days" : provider === "anthropic" ? "last 12 months" : "all time"}
+          </span>
+        </span>
+        <span class="flex items-center gap-1">
+          <Button variant="ghost-muted" size="icon-xs" title="Refresh" disabled={refreshing} onclick={() => loadReports(true)}>
+            <RefreshCw class={refreshing ? "animate-spin" : ""} aria-hidden="true" />
+          </Button>
+          <Button variant="ghost-muted" size="xs" onclick={() => removeUsageKey(id)}>Remove key</Button>
+        </span>
+      </div>
+      {#if reports?.deepgram.state === "ok" && provider === "deepgram"}
+        {@const d = reports.deepgram.report}
+        {@const f = d.periods[period]}
+        <p class="text-[13px] text-foreground tabular-nums">
+          {hours(f.hours)} of audio · {count(Math.round(f.requests))} requests{f.usd !== null ? ` · ${money(f.usd)} charged` : ""}
+          {#if d.balance !== null}
+            · <span class="font-medium">{money(d.balance)} credit left</span>
+          {/if}
+        </p>
+        <p class="text-2xs text-muted-foreground">The whole “{d.project}” project: every app and key in it.</p>
+      {:else if reports?.anthropic.state === "ok" && provider === "anthropic"}
+        {@const a = reports.anthropic.report}
+        {@const f = a.periods[period]}
+        <p class="text-[13px] text-foreground tabular-nums">
+          {count(f.input_tokens + f.cache_read_tokens + f.cache_write_tokens)} tokens in · {count(f.output_tokens)} out
+          · <span class="font-medium">{money(a.account_usd[period])}</span> charged to the account
+        </p>
+        <p class="text-2xs text-muted-foreground">
+          {a.key_name
+            ? `Tokens for Bolo’s key “${a.key_name}”; the charge is the whole account’s.`
+            : "Bolo’s key wasn’t found in this organization, so the tokens are every key’s."}
+        </p>
+      {/if}
+    {:else}
+      <div class="flex items-center gap-2">
+        <KeyRound class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <span class="text-xs text-muted-foreground">
+          {#if report?.state === "refused" || report?.state === "failed"}
+            {report.message}
+          {:else if provider === "deepgram"}
+            Optional: a Deepgram key with the Admin role adds Deepgram’s own totals and your credit left.
+          {:else}
+            Optional: an Anthropic Admin key (organizations only) adds Anthropic’s own report.
+          {/if}
+        </span>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <label for="usage-key-{provider}" class="sr-only">{provider === "deepgram" ? "Deepgram" : "Anthropic"} usage key</label>
+        <input
+          id="usage-key-{provider}"
+          class="input h-7! flex-1 text-[13px]!"
+          type="password"
+          placeholder={provider === "deepgram" ? "Paste a Deepgram Admin-role key…" : "Paste an sk-ant-admin01-… key…"}
+          autocomplete="off"
+          spellcheck="false"
+          bind:value={keyInput[id]}
+          onkeydown={(e) => e.key === "Enter" && saveUsageKey(id)}
+        />
+        <Button variant="outline" size="sm" disabled={!keyInput[id]?.trim()} onclick={() => saveUsageKey(id)}>Add</Button>
+        {#if report?.state === "refused" || report?.state === "failed"}
+          <Button variant="ghost-muted" size="sm" onclick={() => removeUsageKey(id)}>Remove</Button>
+        {/if}
+      </div>
+      {#if keyNote[id]}<p class="text-2xs text-muted-foreground">{keyNote[id]}</p>{/if}
+    {/if}
+  </div>
+{/snippet}

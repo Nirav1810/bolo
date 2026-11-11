@@ -14,8 +14,9 @@ use crate::{Result, StoreError};
 /// The credential service name.
 pub const SERVICE: &str = "bolo";
 
-/// The providers Bolo stores keys for.
-pub const PROVIDERS: [&str; 4] = ["deepgram", "groq", "sarvam", ANTHROPIC];
+/// The providers Bolo stores keys for. The `-admin` ones are optional usage keys, which
+/// only read the provider's usage reports (the desktop app's `billing`).
+pub const PROVIDERS: [&str; 6] = ["deepgram", "groq", "sarvam", ANTHROPIC, "deepgram-admin", "anthropic-admin"];
 
 pub struct Secrets {
     store: Arc<CredentialStore>,
