@@ -430,3 +430,19 @@ These are from `--speed 50 --polish` (40 polish calls, 0 failed, $0.0012). Real-
 **Re-measured (2026-11-11):**
 - `bolo run --engines deepgram:nova-3`, from the cached `multi` outputs: hinglish/09's Telugu output now comes out as "Karike le noon bred andi parsabji lehaal." instead of Telugu script. Deepgram misheard most of the words, so its WER stays at 100%, but its CER drops from 100% to 42%. Hinglish CER drops from 13.0% to 10.7%. Every other number is unchanged: WER en 7.6%, fmt WER en 4.3%, WER hinglish 23.2%, fmt WER hinglish 21.2%.
 - `bolo replay -e deepgram --speed 50`, live `multi`: no Brahmic or Urdu script appeared in any of the 40 outputs. This time hinglish/09 came back in Latin script ("Rose, bread, ande aur sabzi lehana."). WER en was 17.9% and WER hinglish 33.0%, but these aren't comparable with the real-time batch figures (7.6% / 22.8%, §8). Several outputs lose their first words at 50× ("Tak bhej dena…" for "Report Friday tak bhej dena…"). That looks like a replay artifact of the batch engine at high speed, not a script problem. It's left for follow-up.
+
+## 20. `bolo run`'s Nemotron finish-only latency (M3 ticket 13)
+
+M2 measured `bolo run --engines local:nemotron-stream` at 285–295 ms finish-only p50, against 158 ms in M1 (§9, §18). To find out whether a code change caused it, three builds ran back to back, one at a time, on 2026-11-11 on the same machine and the same 40 clips (`--runs 3`, median per clip):
+
+| build | commit | p50 / p95 ms | WER en | WER hinglish |
+|---|---|---|---|---|
+| M1 release `v0.1.0` | `c8276d0` | 226 / 255 | 8.0% | 31.2% |
+| M2 ticket 01 (decoder threads, tail pad) | `465954d` | 228 / 349 | 8.0% | 31.2% |
+| M2 final | `e087099` | 235 / 381 | 10.3%* | 31.2% |
+
+\* The M2 build scores the rules-formatted text (§12 onwards); its raw WER is unchanged.
+
+**Finding: no code change caused it. The machine is slower.** The M1 binary itself reads 226 ms today, not 158 ms. The three builds sit within 9 ms of each other, inside run-to-run noise. The 285–295 ms read in M2 came from a busier or throttled machine that day (the same day's `bolo replay` also read slower; see §18). This laptop's `bolo run` timings drift by tens of milliseconds with what else runs on it, so compare builds only in back-to-back runs like these. Machine load was not controlled: other apps were open during these runs too.
+
+No fix is needed. The user-facing clock, `bolo replay`'s release → text, is unaffected by this question.
