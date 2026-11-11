@@ -7,8 +7,9 @@
 //! the same letter sits at the same offset from the start of its 128-codepoint block. So
 //! a letter maps onto Devanagari by that offset, when the Devanagari codepoint at the
 //! offset is one the romanizer reads. Letters that sit at an offset with no or a
-//! different Devanagari meaning (Dravidian short e and o, Tamil ழ, Malayalam chillu
-//! letters, Bengali ৎ, Gurmukhi tippi and addak) come from a small explicit table.
+//! different Devanagari meaning (Dravidian short e and o, Tamil ழ, Telugu ౘ, Malayalam
+//! chillu letters, Bengali ৎ, Gurmukhi tippi and addak) come from a small explicit
+//! table. Decomposed vowel signs (Tamil ெ + ா for ொ) are folded back into one sign.
 //!
 //! Every character in the eight blocks comes out as Devanagari or a digit, or is dropped.
 //! None survive, so Roman-script output never mixes scripts.
@@ -42,19 +43,21 @@ pub fn has_brahmic(text: &str) -> bool {
 
 /// What one source character becomes.
 enum Mapped {
-    /// Devanagari text to emit (one or more characters).
+    /// Devanagari text to emit.
     Text(&'static str),
-    /// A single Devanagari character.
+    /// One Devanagari character.
     Char(char),
     /// Gurmukhi addak: double the next consonant.
     Geminate,
-    /// Nothing (length marks, signs with no reading).
+    /// Telugu / Kannada length mark: lengthen the vowel sign before it (ి + ౕ = ी).
+    Lengthen,
+    /// Nothing (signs with no reading).
     Drop,
 }
 
 /// Letters whose offset lands on the wrong (or no) Devanagari letter.
 fn explicit(c: char) -> Option<Mapped> {
-    use Mapped::{Drop, Geminate, Text};
+    use Mapped::{Geminate, Lengthen, Text};
     Some(match c {
         // Bengali / Assamese
         'ৎ' => Text("त्"),
@@ -73,31 +76,40 @@ fn explicit(c: char) -> Option<Mapped> {
         'ஒ' | 'ఒ' | 'ಒ' | 'ഒ' => Text("ओ"),
         'ெ' | 'ె' | 'ೆ' | 'െ' => Text("े"),
         'ொ' | 'ొ' | 'ೊ' | 'ൊ' => Text("ो"),
-        // Dravidian r, l, n variants with no plain Devanagari letter at the offset
-        'ற' | 'ఱ' | 'റ' => Text("र"),
+        // Dravidian r, l, n and other letters with no plain Devanagari letter at the
+        // offset
+        'ற' | 'ఱ' | 'ಱ' | 'റ' | 'ౚ' => Text("र"),
         'ழ' | 'ఴ' | 'ೞ' | 'ഴ' => Text("ळ"),
         'ன' | 'ഩ' => Text("न"),
         'ഺ' => Text("ट"),
-        // Malayalam chillu letters: a consonant with no vowel
+        'ౘ' => Text("च"),
+        'ౙ' => Text("ज"),
+        // consonants with no vowel: nakaara pollu and the Malayalam chillu letters
+        'ౝ' | 'ೝ' | 'ൻ' => Text("न्"),
         'ൺ' => Text("ण्"),
-        'ൻ' => Text("न्"),
         'ർ' => Text("र्"),
         'ൽ' => Text("ल्"),
-        'ൾ' => Text("ळ्"),
+        'ൾ' | 'ൖ' => Text("ळ्"),
         'ൿ' => Text("क्"),
         'ൔ' => Text("म्"),
         'ൕ' => Text("य्"),
-        'ൖ' => Text("ळ्"),
         // Malayalam dot reph: r before the next consonant
         'ൎ' => Text("र्"),
-        // Malayalam au length mark written alone after a consonant
-        'ൗ' => Text("ौ"),
-        // ai / au length marks that follow a short-e sign: the precomposed forms are
-        // what engines emit, so the stray mark is dropped
-        'ౕ' | 'ౖ' | 'ೕ' | 'ೖ' | 'ୖ' | 'ୗ' | 'ௗ' => Drop,
+        // Malayalam vertical-bar and circular viramas
+        '\u{0D3B}' | '\u{0D3C}' => Text("्"),
+        // Length marks. Precomposed vowel signs decompose into a short-e sign plus one
+        // of these; `push_sign` folds them back together (ె + ౖ = ै, ெ + ௗ = ौ).
+        'ౖ' | 'ೖ' | 'ୖ' => Text("ै"),
+        'ௗ' | 'ୗ' | 'ৗ' | 'ൗ' => Text("ौ"),
+        'ౕ' | 'ೕ' => Lengthen,
         _ => return None,
     })
 }
+
+/// Blocks whose letters at the Devanagari nukta-letter offsets (U+0958..U+095F) are the
+/// same nukta letters (ড়, ਖ਼, ଡ଼). In the other scripts those offsets hold different
+/// letters or fraction signs.
+const NUKTA_LETTER_BLOCKS: [u32; 3] = [0x0980, 0x0A00, 0x0B00];
 
 /// Map one character from a Brahmic block. `None` means it isn't in one.
 fn map_char(c: char) -> Option<Mapped> {
@@ -105,8 +117,31 @@ fn map_char(c: char) -> Option<Mapped> {
     if let Some(m) = explicit(c) {
         return Some(m);
     }
-    let dev = char::from_u32(c as u32 - block + DEVANAGARI).filter(|&d| crate::translit::romanizes(d));
+    let offset = c as u32 - block;
+    let same_letter = match offset {
+        0x01..=0x57 | 0x64..=0x6F => true,
+        0x58..=0x5F => NUKTA_LETTER_BLOCKS.contains(&block),
+        _ => false,
+    };
+    let dev = char::from_u32(DEVANAGARI + offset).filter(|&d| same_letter && crate::translit::romanizes(d));
     Some(dev.map_or(Mapped::Drop, Mapped::Char))
+}
+
+/// Push a mapped character, folding a decomposed vowel sign into the one before it:
+/// े + ा = ो (Tamil ெ + ா, Bengali ে + া), े + ै = ै, े + ौ = ौ, े + ू = ो (Kannada).
+fn push_sign(out: &mut String, d: char) {
+    let folded = match (out.chars().last(), d) {
+        (Some('े'), 'ा' | 'ू') => Some('ो'),
+        (Some('े'), 'ै' | 'ौ') => Some(d),
+        _ => None,
+    };
+    match folded {
+        Some(f) => {
+            out.pop();
+            out.push(f);
+        }
+        None => out.push(d),
+    }
 }
 
 /// Map every Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada and Malayalam
@@ -117,32 +152,41 @@ pub fn brahmic_to_devanagari(text: &str) -> String {
     }
     let mut out = String::with_capacity(text.len());
     let mut geminate = false;
+    let mut buf = [0u8; 4];
     for c in text.chars() {
-        let Some(m) = map_char(c) else {
-            geminate = false;
-            out.push(c);
-            continue;
+        let mapped = match map_char(c) {
+            None => {
+                geminate = false;
+                out.push(c);
+                continue;
+            }
+            Some(Mapped::Geminate) => {
+                geminate = true;
+                continue;
+            }
+            Some(Mapped::Drop) => continue,
+            Some(Mapped::Lengthen) => {
+                let long = match out.chars().last() {
+                    Some('ि') => 'ी',
+                    Some('ु') => 'ू',
+                    _ => continue,
+                };
+                out.pop();
+                out.push(long);
+                continue;
+            }
+            Some(Mapped::Text(s)) => s,
+            Some(Mapped::Char(d)) => &*d.encode_utf8(&mut buf),
         };
-        match m {
-            Mapped::Geminate => geminate = true,
-            Mapped::Drop => {}
-            Mapped::Text(s) => {
-                // An addak before a multi-char mapping: double its first letter.
-                if std::mem::take(&mut geminate) && s.starts_with(|f: char| crate::translit::is_consonant(f)) {
-                    let first = s.chars().next().unwrap_or_default();
-                    out.push(first);
-                    out.push(VIRAMA);
-                }
-                out.push_str(s);
-            }
-            Mapped::Char(d) => {
-                if std::mem::take(&mut geminate) && crate::translit::is_consonant(d) {
-                    out.push(d);
-                    out.push(VIRAMA);
-                }
-                out.push(d);
-            }
+        let mut chars = mapped.chars();
+        let Some(first) = chars.next() else { continue };
+        // An addak doubles the consonant after it.
+        if std::mem::take(&mut geminate) && crate::translit::is_consonant(first) {
+            out.push(first);
+            out.push(VIRAMA);
         }
+        push_sign(&mut out, first);
+        out.extend(chars);
     }
     out
 }
@@ -188,5 +232,31 @@ mod tests {
         assert_eq!(brahmic_to_devanagari("അവൻ"), "अवन्");
         // Bengali khanda ta
         assert_eq!(brahmic_to_devanagari("হঠাৎ"), "हठात्");
+        // Telugu letters at the nukta-letter offsets are not nukta letters
+        assert_eq!(brahmic_to_devanagari("ౘౙౚ"), "चजर");
+        assert_eq!(brahmic_to_devanagari("ౝ ೝ"), "न् न्");
+        // Malayalam fraction signs at the same offsets are dropped, not read as letters
+        assert_eq!(brahmic_to_devanagari("ക\u{0D58}\u{0D5E}"), "क");
+        // Kannada ಱ
+        assert_eq!(brahmic_to_devanagari("ಱ"), "र");
+    }
+
+    #[test]
+    fn decomposed_vowel_signs_fold_back() {
+        // Tamil ொ = ெ + ா, ௌ = ெ + ௗ
+        assert_eq!(brahmic_to_devanagari("க\u{0BC6}\u{0BBE}"), "को");
+        assert_eq!(brahmic_to_devanagari("க\u{0BC6}\u{0BD7}"), "कौ");
+        // Telugu ై = ె + ౖ
+        assert_eq!(brahmic_to_devanagari("క\u{0C46}\u{0C56}"), "कै");
+        // Kannada ೀ = ಿ + ೕ, ೋ = ೆ + ೂ + ೕ
+        assert_eq!(brahmic_to_devanagari("ಕ\u{0CBF}\u{0CD5}"), "की");
+        assert_eq!(brahmic_to_devanagari("ಕ\u{0CC6}\u{0CC2}\u{0CD5}"), "को");
+        // Bengali ো = ে + া, Oriya ୈ = େ + ୖ
+        assert_eq!(brahmic_to_devanagari("ক\u{09C7}\u{09BE}"), "को");
+        assert_eq!(brahmic_to_devanagari("କ\u{0B47}\u{0B56}"), "कै");
+        // Malayalam ൌ written as ൗ alone after a consonant
+        assert_eq!(brahmic_to_devanagari("ക\u{0D57}"), "कौ");
+        // precomposed forms are unchanged
+        assert_eq!(brahmic_to_devanagari("కై கொ"), "कै को");
     }
 }

@@ -3,7 +3,7 @@
 //! out as the same Roman Hinglish as its Devanagari spelling, and Roman-script output
 //! never contains a Brahmic or Arabic-script character.
 
-use bolo_format::brahmic::has_brahmic;
+use bolo_format::brahmic::{brahmic_to_devanagari, has_brahmic};
 use bolo_format::loanwords::to_roman_hinglish;
 use bolo_format::translit::needs_romanizing;
 use bolo_format::urdu::has_urdu;
@@ -84,5 +84,11 @@ proptest! {
         let roman = to_roman_hinglish(&text);
         prop_assert!(!has_brahmic(&roman), "{text:?} -> {roman:?}");
         prop_assert!(!has_urdu(&roman), "{text:?} -> {roman:?}");
+    }
+
+    #[test]
+    fn devanagari_map_leaves_no_brahmic_script(text in mixed_text()) {
+        let dev = brahmic_to_devanagari(&text);
+        prop_assert!(!has_brahmic(&dev), "{text:?} -> {dev:?}");
     }
 }
