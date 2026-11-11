@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use bolo_core::OutputFormat;
-use bolo_store::{History, PROVIDERS, Settings};
+use bolo_store::{History, PROVIDERS, Settings, UpdateChannel};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -14,7 +14,7 @@ use crate::desktop::Clipboard;
 use crate::form::{CLOUD_ENGINES, Form};
 use crate::keys::{self, Tested};
 use crate::models::{self, DownloadEvent, ModelView};
-use crate::{Bolo, key_name, lock};
+use crate::{Bolo, key_name, lock, updates};
 
 /// Download progress goes out on this event, as [`DownloadEvent`]s.
 pub const DOWNLOAD_EVENT: &str = "bolo://download";
@@ -312,4 +312,39 @@ pub async fn mic_check(app: AppHandle) -> Result<crate::mic::MicCheck, String> {
 #[tauri::command]
 pub fn onboarding_save(app: AppHandle, bolo: State<'_, Bolo>, step: Option<u32>) -> Result<(), String> {
     bolo.change_settings(&app, |s| Settings { onboarding_step: step, ..s.clone() })
+}
+
+/// The About page's update section (ADR-0019).
+#[tauri::command]
+pub fn update_view(bolo: State<'_, Bolo>) -> updates::View {
+    updates::View {
+        version: updates::VERSION.into(),
+        badge: updates::badge(updates::VERSION),
+        channel: bolo.channel(),
+        status: bolo.updates.status(),
+    }
+}
+
+/// Check now; the result arrives as an `update` event.
+#[tauri::command]
+pub fn update_check(app: AppHandle, bolo: State<'_, Bolo>) {
+    bolo.check_for_update(&app, true);
+}
+
+/// Download and install the available update; Bolo restarts.
+#[tauri::command]
+pub fn update_install(app: AppHandle, bolo: State<'_, Bolo>) {
+    bolo.install_update(&app);
+}
+
+/// Follow another channel, and check it at once.
+#[tauri::command]
+pub fn update_channel(app: AppHandle, bolo: State<'_, Bolo>, channel: UpdateChannel) -> Result<updates::View, String> {
+    bolo.change_settings(&app, |s| {
+        let mut s = s.clone();
+        s.updates.channel = Some(channel);
+        s
+    })?;
+    bolo.check_for_update(&app, true);
+    Ok(update_view(bolo))
 }

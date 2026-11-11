@@ -13,6 +13,7 @@
 //! - [`form`] is what the settings window edits, [`models`] the local models and their
 //!   downloads, [`keys`] the API key check, [`mic`] onboarding's mic check; [`commands`]
 //!   are the windows' calls.
+//! - [`updates`] is the self-updater and its Beta/Nightly channels (ADR-0019).
 //!
 //! The app lives in the tray, runs as a single instance and keeps running when its
 //! windows close. Holding the push-to-talk key (Caps Lock by default, ADR-0017) dictates;
@@ -35,6 +36,7 @@ pub mod pill;
 pub mod pointer;
 pub mod rules;
 pub mod session;
+pub mod updates;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -42,7 +44,7 @@ use std::time::{Duration, Instant};
 
 use bolo_core::{ANTHROPIC, ApiKeys, BoloError, DictationState, Engine, EngineConfig, Polish};
 use bolo_models::Manifest;
-use bolo_store::{History, PushToTalkKey, Secrets, Settings};
+use bolo_store::{History, PushToTalkKey, Secrets, Settings, UpdateChannel};
 use serde::Serialize;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -59,6 +61,7 @@ use keyhook::{Handler, KeyHook};
 use overlay::{Clicks, HitRegion, Overlay};
 use rules::{AppRules, Plan, PolishPrefs};
 use session::{Session, Toggled};
+use updates::Updates;
 
 /// The one Tauri event every [`AppEvent`] is sent on.
 pub const EVENT: &str = "bolo://event";
@@ -138,6 +141,8 @@ struct Bolo {
     hook: Mutex<Option<KeyHook>>,
     /// The hook's thread id (0 for none), read without the `hook` lock by the inserter.
     hook_thread: Arc<AtomicU32>,
+    /// The self-updater's state (ADR-0019).
+    updates: Arc<Updates>,
 }
 
 impl Bolo {
@@ -291,6 +296,42 @@ impl Bolo {
         self.hook_thread.store(0, Ordering::Release);
         let hook = lock(&self.hook).take();
         drop(hook);
+    }
+
+    /// Let go of the keyboard, close the mic and unload the model: before Quit, and before
+    /// an update's installer replaces the exe.
+    fn shut_down(&self) {
+        self.remove_hook();
+        drop(lock(&self.engine).take());
+    }
+
+    /// The update channel: the user's pick, else the build's own.
+    fn channel(&self) -> UpdateChannel {
+        lock(&self.settings).updates.channel.unwrap_or_else(|| updates::build_channel(updates::VERSION))
+    }
+
+    /// Look for an update on a thread of its own.
+    fn check_for_update(&self, app: &AppHandle, manual: bool) {
+        let (app, channel) = (app.clone(), self.channel());
+        let spawned = std::thread::Builder::new().name("bolo-update-check".into()).spawn(move || {
+            let exit_app = app.clone();
+            let before_exit: updates::BeforeExit = Arc::new(move || exit_app.state::<Bolo>().shut_down());
+            updates::check(&app, &app.state::<Bolo>().updates, channel, manual, before_exit);
+        });
+        if let Err(e) = spawned {
+            tracing::warn!(%e, "could not start an update check");
+        }
+    }
+
+    /// Install the update the last check found, on a thread of its own.
+    fn install_update(&self, app: &AppHandle) {
+        let app = app.clone();
+        let spawned = std::thread::Builder::new()
+            .name("bolo-update-install".into())
+            .spawn(move || updates::install(&app, &app.state::<Bolo>().updates));
+        if let Err(e) = spawned {
+            tracing::warn!(%e, "could not start the update");
+        }
     }
 
     fn toggle_paused(&self, app: &AppHandle) {
@@ -528,7 +569,12 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             &MenuItem::with_id(app, "quit", "Quit Bolo", true, None::<&str>)?,
         ],
     )?;
-    let mut tray = TrayIconBuilder::with_id("bolo").tooltip("Bolo").menu(&menu).show_menu_on_left_click(true);
+    // Shown at the top of the menu only while an update is available.
+    let update_item = MenuItem::with_id(app, "update", "Update Bolo", true, None::<&str>)?;
+    let mut tray = TrayIconBuilder::with_id("bolo")
+        .tooltip(updates::title(updates::VERSION))
+        .menu(&menu)
+        .show_menu_on_left_click(true);
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
@@ -553,10 +599,9 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             "history" => show_window(app, "history"),
             "onboarding" => show_window(app, "onboarding"),
             "debug" => show_window(app, "debug"),
+            "update" => bolo.install_update(app),
             "quit" => {
-                // Let go of the keyboard, close the mic and unload the model first.
-                bolo.remove_hook();
-                drop(lock(&bolo.engine).take());
+                bolo.shut_down();
                 app.exit(0);
             }
             _ => {}
@@ -577,6 +622,21 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         },
     );
     let emit: Arc<dyn Emit> = overlay.clone();
+    let updates = Arc::new(Updates::new(emit.clone(), move |version| {
+        let shown = menu.get("update").is_some();
+        match version {
+            Some(v) => {
+                let _ = update_item.set_text(format!("Restart to update to {v}"));
+                if !shown && let Err(e) = menu.insert(&update_item, 0) {
+                    tracing::warn!(%e, "could not add the update item to the tray");
+                }
+            }
+            None if shown => {
+                let _ = menu.remove(&update_item);
+            }
+            None => {}
+        }
+    }));
     let secrets =
         Secrets::os().inspect_err(|e| tracing::warn!(%e, "could not open the credential store; no API keys")).ok();
     let keys = secrets.as_ref().map(|s| s.api_keys().clone()).unwrap_or_default();
@@ -619,6 +679,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         push_to_talk: Mutex::new(push_to_talk),
         hook: Mutex::new(None),
         hook_thread,
+        updates,
     };
     if let Err(e) = bolo.engine() {
         tracing::error!(%e, "the engine could not start; it will be retried on the next dictation");
@@ -626,6 +687,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
     app.manage(bolo);
     app.state::<Bolo>().install_hook(app.handle());
+    keep_checking_for_updates(app.handle().clone());
     // First run (or onboarding left unfinished): open it.
     if onboarding {
         show_window(app.handle(), "onboarding");
@@ -747,6 +809,20 @@ fn keep_pruning(journal: Arc<Journal>, retention_days: Arc<AtomicU32>) {
     }
 }
 
+/// Check for an update shortly after launch, then every few hours (ADR-0019).
+fn keep_checking_for_updates(app: AppHandle) {
+    let spawned = std::thread::Builder::new().name("bolo-update-schedule".into()).spawn(move || {
+        std::thread::sleep(updates::FIRST_CHECK_AFTER);
+        loop {
+            app.state::<Bolo>().check_for_update(&app, false);
+            std::thread::sleep(updates::CHECK_EVERY);
+        }
+    });
+    if let Err(e) = spawned {
+        tracing::warn!(%e, "could not schedule update checks");
+    }
+}
+
 /// Run the app until the user quits from the tray.
 pub fn run() {
     init_logging();
@@ -755,6 +831,7 @@ pub fn run() {
         // First, so a second launch exits before it builds anything.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_window(app, "settings")))
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             status,
             toggle_dictation,
@@ -776,6 +853,10 @@ pub fn run() {
             commands::open_link,
             commands::mic_check,
             commands::onboarding_save,
+            commands::update_view,
+            commands::update_check,
+            commands::update_install,
+            commands::update_channel,
         ])
         .setup(setup)
         .on_window_event(|window, event| {
