@@ -178,6 +178,13 @@
   --duration-exit: 140ms; /* pill out */
   --duration-resize: 220ms; /* pill width */
 
+  /* Springs for the pill (damped spring sampled into linear()): `pop` overshoots about
+     12% for things that appear, `settle` about 3% for the pill changing size. */
+  --ease-spring-pop: linear(0, 0.054, 0.188, 0.362, 0.545, 0.715, 0.86, 0.973, 1.052, 1.1, 1.123, 1.125, 1.114, 1.095, 1.073, 1.05, 1.029, 1.012, 1, 0.991, 0.986, 0.984, 0.984, 0.986, 0.989, 0.992, 0.995, 0.997, 0.999, 1, 1.001, 1.002, 1);
+  --ease-spring-settle: linear(0, 0.029, 0.103, 0.202, 0.314, 0.427, 0.536, 0.635, 0.723, 0.798, 0.859, 0.909, 0.948, 0.977, 0.998, 1.012, 1.021, 1.026, 1.028, 1.028, 1.026, 1.024, 1.021, 1.017, 1.014, 1.011, 1.009, 1.006, 1.005, 1.003, 1.002, 1.001, 1);
+  --duration-pop: 520ms;
+  --duration-settle: 480ms;
+
   /* Pill geometry and timing (M3 ticket 08). */
   --pill-height: 40px;
   --pill-max-width: 520px;

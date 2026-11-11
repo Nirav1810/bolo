@@ -34,6 +34,7 @@ export type AppEvent =
   | { kind: "notice"; message: string; hint: string | null }
   | { kind: "error"; message: string }
   | { kind: "pill"; view: PillView }
+  | { kind: "hover"; region: "pill" | "stop" | "cancel" | null }
   | { kind: "update"; status: UpdateStatus };
 
 /// What the overlay pill shows (src-tauri/src/pill.rs, `View`). The state machine and its
