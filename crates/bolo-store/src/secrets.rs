@@ -58,6 +58,14 @@ impl Secrets {
         self.keys.get(provider).is_some()
     }
 
+    /// What the settings window shows for a stored key: its last four characters (all of
+    /// a key that short is hidden). `None` when there's no key.
+    pub fn hint(&self, provider: &str) -> Option<String> {
+        let key = self.keys.get(provider)?;
+        let chars: Vec<char> = key.chars().collect();
+        Some(if chars.len() <= 8 { String::new() } else { chars[chars.len() - 4..].iter().collect() })
+    }
+
     /// Stores `key` for `provider`, trimmed. A blank key deletes the entry.
     pub fn set(&mut self, provider: &str, key: &str) -> Result<()> {
         if !PROVIDERS.contains(&provider) {
@@ -103,6 +111,16 @@ mod tests {
         assert_eq!(again.api_keys().get("deepgram"), Some("dg-456"));
         assert_eq!(again.api_keys().get("groq"), None);
         assert_eq!(store.build(SERVICE, "deepgram", None).unwrap().get_password().unwrap(), "dg-456");
+    }
+
+    #[test]
+    fn the_hint_is_the_last_four_characters_of_a_long_key() {
+        let mut s = Secrets::with_store(store()).unwrap();
+        assert_eq!(s.hint("groq"), None);
+        s.set("groq", "gsk_abcdefgh1234").unwrap();
+        assert_eq!(s.hint("groq").as_deref(), Some("1234"));
+        s.set("sarvam", "short").unwrap();
+        assert_eq!(s.hint("sarvam").as_deref(), Some(""));
     }
 
     #[test]

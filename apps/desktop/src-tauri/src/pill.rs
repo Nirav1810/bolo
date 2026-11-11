@@ -95,6 +95,8 @@ pub enum Input {
     Hover(bool),
     /// The next dictation was started with a click, not the key.
     HandsFree,
+    /// The push-to-talk key changed in settings; this is its name for the idle hint.
+    Key(String),
 }
 
 /// What the overlay does, in order.
@@ -239,6 +241,12 @@ impl Pill {
                 }
             }
             Input::HandsFree => self.hands_free = true,
+            Input::Key(key) => {
+                self.key = key;
+                if matches!(self.view, View::Idle { .. }) {
+                    self.set(View::Hidden, None, now, &mut fx);
+                }
+            }
         }
         fx
     }
@@ -599,6 +607,16 @@ mod tests {
         r.on(Input::Idle(true));
         assert_eq!(r.on(Input::Hover(true)), [render(idle(true))]);
         assert_eq!(r.on(Input::Hover(false)), [render(idle(false))]);
+    }
+
+    #[test]
+    fn a_new_key_shows_in_the_idle_hint() {
+        let mut r = Rig::new();
+        r.on(Input::Idle(true));
+        assert_eq!(
+            r.on(Input::Key("Right Ctrl".into())),
+            [render(View::Idle { hover: false, key: "Right Ctrl".into() })]
+        );
     }
 
     #[test]

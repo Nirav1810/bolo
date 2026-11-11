@@ -1,0 +1,168 @@
+// The settings window's calls into Rust (src-tauri/src/commands.rs) and their types.
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+
+export type PushToTalkKey =
+  | "caps-lock"
+  | "right-ctrl"
+  | "right-alt"
+  | "f13"
+  | "f14"
+  | "f15"
+  | "f16"
+  | "f17"
+  | "f18"
+  | "f19"
+  | "f20"
+  | "f21"
+  | "f22"
+  | "f23"
+  | "f24";
+export type LanguageMode = "auto" | "english" | "hinglish";
+export type Script = "roman" | "devanagari";
+export type Format = "plain" | "markdown" | "html";
+
+/** What the settings window edits (src-tauri/src/form.rs, `Form`). */
+export interface Form {
+  push_to_talk: PushToTalkKey;
+  autostart: boolean;
+  language: LanguageMode;
+  script: Script;
+  engines: string[];
+  dictionary: string[];
+  polish: boolean;
+  tone: string;
+  polish_apps: Record<string, boolean>;
+  history: boolean;
+  retention_days: number;
+}
+
+export interface ModelView {
+  id: string;
+  name: string;
+  spec: string;
+  languages: string[];
+  download_bytes: number;
+  disk_bytes: number | null;
+  installed: boolean;
+  recommended: boolean;
+  hinglish: boolean;
+}
+
+export interface AppRow {
+  name: string;
+  exes: string[];
+  format: Format;
+  code_mode: boolean;
+  polish: boolean | null;
+}
+
+export interface CloudEngine {
+  spec: string;
+  name: string;
+  provider: string;
+}
+
+export interface SettingsView {
+  form: Form;
+  keys: Record<string, string | null>;
+  keystore: boolean;
+  key_name: string;
+  models: ModelView[];
+  downloading: string[];
+  cloud: CloudEngine[];
+  apps: AppRow[];
+  version: string;
+  paths: { settings: string; models: string; history: string };
+  ram_mb: number;
+}
+
+export type Tested =
+  | { result: "ok" }
+  | { result: "refused" }
+  | { result: "untestable" }
+  | { result: "failed"; message: string };
+
+export interface HistoryItem {
+  id: number;
+  at_ms: number;
+  app: string;
+  language: string;
+  engine: string;
+  final_text: string;
+  polished_text: string | null;
+  swap: string | null;
+}
+
+export interface DownloadEvent {
+  id: string;
+  phase: "downloading" | "verifying" | "unpacking" | "done" | "failed" | "cancelled";
+  downloaded: number;
+  total: number;
+  error: string | null;
+}
+
+export const api = {
+  settings: () => invoke<SettingsView>("settings_get"),
+  save: (form: Form) => invoke<SettingsView>("settings_save", { form }),
+  saveKey: (provider: string, key: string) => invoke<string | null>("key_save", { provider, key }),
+  testKey: (provider: string, key?: string) => invoke<Tested>("key_test", { provider, key: key ?? null }),
+  capture: (capturing: boolean) => invoke<void>("ptt_capture", { capturing }),
+  history: (query: string) => invoke<HistoryItem[]>("history_search", { query }),
+  deleteRow: (id: number) => invoke<void>("history_delete", { id }),
+  clearHistory: () => invoke<void>("history_clear"),
+  copy: (text: string) => invoke<void>("copy_text", { text }),
+  download: (id: string) => invoke<void>("model_download", { id }),
+  cancelDownload: (id: string) => invoke<void>("model_cancel", { id }),
+  removeModel: (id: string) => invoke<void>("model_remove", { id }),
+  openFolder: (which: "settings" | "models" | "logs") => invoke<void>("open_folder", { which }),
+  openLink: (url: string) => invoke<void>("open_link", { url }),
+};
+
+export function onDownload(handler: (e: DownloadEvent) => void): Promise<UnlistenFn> {
+  return listen<DownloadEvent>("bolo://download", (e) => handler(e.payload));
+}
+
+/** The push-to-talk key a key press names, from `KeyboardEvent.code`. */
+export function keyFromCode(code: string): PushToTalkKey | null {
+  if (code === "CapsLock") return "caps-lock";
+  if (code === "ControlRight") return "right-ctrl";
+  if (code === "AltRight") return "right-alt";
+  const f = /^F(1[3-9]|2[0-4])$/.exec(code);
+  return f ? (`f${f[1]}` as PushToTalkKey) : null;
+}
+
+export function keyLabel(key: PushToTalkKey): string {
+  switch (key) {
+    case "caps-lock":
+      return "Caps Lock";
+    case "right-ctrl":
+      return "Right Ctrl";
+    case "right-alt":
+      return "Right Alt";
+    default:
+      return key.toUpperCase();
+  }
+}
+
+export function megabytes(bytes: number): string {
+  const mb = bytes / 1e6;
+  return mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${Math.round(mb)} MB`;
+}
+
+/** An engine spec's name: "local:nemotron-stream" → the model's name, "deepgram" → "Deepgram". */
+export function engineName(spec: string, view: SettingsView): string {
+  const model = view.models.find((m) => m.spec === spec);
+  if (model) return model.name;
+  const kind = spec.split(":")[0];
+  const cloud = view.cloud.find((c) => c.spec === spec || c.spec === kind);
+  if (cloud) return cloud.name;
+  return spec.startsWith("local:") ? spec.slice(6) : spec;
+}
+
+export const PROVIDER_NAMES: Record<string, string> = {
+  anthropic: "Anthropic",
+  deepgram: "Deepgram",
+  groq: "Groq",
+  sarvam: "Sarvam",
+};

@@ -1,0 +1,266 @@
+/*
+ * Controls for the settings and onboarding windows, from the approved mockups (ticket
+ * 04): Windows 11 setting cards, switches, segmented buttons, chips. Colours come from
+ * the tokens in theme.css, so light and dark follow Windows.
+ */
+
+@layer components {
+  .card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-height: 64px;
+    padding: 12px 16px;
+    background: var(--bolo-card);
+    border: 1px solid var(--bolo-border);
+    border-radius: 4px;
+  }
+  .card.compact {
+    min-height: 52px;
+  }
+  .card.selected {
+    border-color: var(--bolo-accent);
+  }
+  .card-text {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .caption {
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--bolo-text-2);
+  }
+  .group {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .section {
+    margin: 16px 0 6px;
+    font-weight: 600;
+  }
+
+  .btn {
+    height: 32px;
+    padding: 0 14px;
+    border-radius: 4px;
+    border: 1px solid var(--bolo-control-border);
+    background: var(--bolo-control);
+    color: var(--bolo-text);
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      transform 120ms cubic-bezier(0.23, 1, 0.32, 1),
+      background-color 120ms ease;
+  }
+  .btn:hover:not(:disabled) {
+    background: var(--bolo-subtle);
+  }
+  .btn:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .btn.primary {
+    background: var(--bolo-accent);
+    border-color: var(--bolo-accent);
+    color: var(--bolo-on-accent);
+  }
+  .btn.danger {
+    color: var(--bolo-danger);
+  }
+  .link {
+    color: var(--bolo-accent);
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+  }
+  .link:hover {
+    text-decoration: underline;
+  }
+
+  .input {
+    height: 32px;
+    padding: 0 10px;
+    border-radius: 4px;
+    border: 1px solid var(--bolo-control-border);
+    border-bottom: 2px solid var(--bolo-text-2);
+    background: var(--bolo-control);
+    color: var(--bolo-text);
+  }
+  .input:focus {
+    border-bottom-color: var(--bolo-accent);
+    outline: none;
+  }
+  .select {
+    height: 32px;
+    min-width: 120px;
+    padding: 0 8px;
+    border-radius: 4px;
+    border: 1px solid var(--bolo-control-border);
+    background: var(--bolo-control);
+    color: var(--bolo-text);
+  }
+
+  .switch {
+    appearance: none;
+    position: relative;
+    flex: none;
+    width: 40px;
+    height: 20px;
+    margin: 0;
+    border-radius: 999px;
+    border: 1px solid var(--bolo-text-2);
+    background: transparent;
+    cursor: pointer;
+    transition: background-color 120ms ease;
+  }
+  .switch::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    background: var(--bolo-text-2);
+    transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  .switch:checked {
+    background: var(--bolo-accent);
+    border-color: var(--bolo-accent);
+  }
+  .switch:checked::after {
+    transform: translateX(20px);
+    background: var(--bolo-on-accent);
+  }
+  .switch:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  .segmented {
+    display: inline-flex;
+    flex: none;
+    overflow: hidden;
+    border: 1px solid var(--bolo-control-border);
+    border-radius: 4px;
+  }
+  .segmented button {
+    height: 30px;
+    padding: 0 14px;
+    border: 0;
+    background: var(--bolo-control);
+    color: var(--bolo-text);
+    cursor: pointer;
+  }
+  .segmented button + button {
+    border-left: 1px solid var(--bolo-control-border);
+  }
+  .segmented button[aria-pressed="true"] {
+    background: var(--bolo-accent-soft);
+    font-weight: 600;
+  }
+
+  .tag {
+    flex: none;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--bolo-subtle);
+    color: var(--bolo-text-2);
+    font-size: 12px;
+    line-height: 16px;
+    white-space: nowrap;
+  }
+  .tag.ok {
+    color: var(--bolo-ok);
+  }
+  .tag.accent {
+    color: var(--bolo-accent);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 6px 0 10px;
+    border-radius: 999px;
+    background: var(--bolo-subtle);
+    border: 1px solid var(--bolo-border);
+    font-size: 13px;
+  }
+  .chip button {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--bolo-text-2);
+    cursor: pointer;
+  }
+  .chip button:hover {
+    background: var(--bolo-hover);
+  }
+
+  .note {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 10px 12px;
+    border-radius: 4px;
+    border: 1px solid var(--bolo-border);
+    background: var(--bolo-card);
+    font-size: 13px;
+  }
+  .note.warn .icon {
+    color: var(--bolo-warn);
+  }
+  .note.danger .icon {
+    color: var(--bolo-danger);
+  }
+  .progress {
+    height: 4px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--bolo-subtle);
+  }
+  .progress > div {
+    height: 100%;
+    background: var(--bolo-accent);
+    transition: width 180ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  .mono {
+    font-family: "Cascadia Mono", ui-monospace, Consolas, monospace;
+    font-size: 12px;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  :where(.btn, .link, .input, .select, .switch, .segmented button, .chip button, .nav):focus-visible {
+    outline: 2px solid var(--bolo-accent);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn,
+  .switch::after,
+  .progress > div {
+    transition: none;
+  }
+}
