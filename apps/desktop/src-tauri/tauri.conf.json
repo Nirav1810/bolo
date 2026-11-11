@@ -41,8 +41,16 @@
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost"
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYzNzUwRDNGNjBGQ0NCNEEKUldSS3kveGdQdzExWThDMld4RGVKNjhXQkVQd04vZ1Jkd0tkTmo4clFZUWVwNEVPMnBGUjlRRlEK",
+      "endpoints": ["https://github.com/Nirav1810/bolo/releases/latest/download/latest.json"],
+      "windows": { "installMode": "quiet" }
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["nsis"],
     "publisher": "Bolo contributors",
     "copyright": "MIT OR Apache-2.0",

@@ -22,8 +22,16 @@ Subcommands (a bare version means `prepare`):
       Zip target/release/bolo.exe with the sherpa-onnx DLLs, README and licences, and
       copy the desktop installer that `npx tauri build` made (apps/desktop). Each gets
       a .sha256.
+  feed vX --url-base URL
+      Write dist/latest.json, the updater feed (ADR-0019): the installer's URL under
+      URL, its minisign signature (the .sig `tauri build` wrote) and the changelog notes.
+  nightly-version --run N
+      Print the next nightly's version: next minor after the newest release, plus
+      `-nightly.<UTC YYYYMMDD>.N`.
+  set-version X.Y.Z-nightly.D.N
+      Write a nightly version into Cargo.toml and Cargo.lock for one CI build; not committed.
   publish vX ASSET...
-      Create the GitHub Release; `-beta.` and 0.x versions are prereleases.
+      Create the GitHub Release as Latest; only `-beta.` versions are prereleases.
 
 Needs git, plus git-cliff (`pip install git-cliff`) for prepare and gh for prepare/publish.
 """
@@ -31,6 +39,7 @@ Needs git, plus git-cliff (`pip install git-cliff`) for prepare and gh for prepa
 from __future__ import annotations
 
 import argparse
+import datetime
 import difflib
 import hashlib
 import json
@@ -49,6 +58,8 @@ MAIN = "main"
 # Explicit, so origin/main is updated even in a tag-only CI checkout.
 MAIN_REFSPEC = f"+refs/heads/{MAIN}:refs/remotes/origin/{MAIN}"
 VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-beta\.([1-9]\d*))?$")
+# A nightly build's version (ADR-0019): never committed, never a release tag.
+NIGHTLY_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-nightly\.(\d{8})\.([1-9]\d*)$")
 # Files a release PR changes. M5 adds the Android Gradle file: bump it in plan() and check
 # it in manifest_errors(). The desktop app has no version of its own to bump: Tauri takes
 # the bolo-desktop crate's, which is the workspace's (see DESKTOP_MANIFESTS).
@@ -76,10 +87,22 @@ def version_key(version: str) -> tuple[int, int, int, int, int]:
 
 
 def parse_tag(tag: str) -> str:
+    """The version in a `vX.Y.Z[-beta.N]` tag, or in a nightly's `vX.Y.Z-nightly.D.N` name."""
     if not tag.startswith("v"):
         raise ReleaseError(f"release tags start with v: {tag!r}")
-    version_key(tag[1:])
+    if not NIGHTLY_RE.match(tag[1:]):
+        version_key(tag[1:])
     return tag[1:]
+
+
+def nightly_version(tags: list[str], date: datetime.date, run_number: int) -> str:
+    """The next minor after the newest release, plus `-nightly.YYYYMMDD.N`: it sorts below
+    the release that will ship the same work, so that release overtakes it (ADR-0019)."""
+    stables = [version_key(t[1:]) for t in release_tags(tags) if not is_beta(t)]
+    major, minor = (stables[-1][0], stables[-1][1] + 1) if stables else (0, 1)
+    if run_number < 1:
+        raise ReleaseError(f"run number must be positive: {run_number}")
+    return f"{major}.{minor}.0-nightly.{date:%Y%m%d}.{run_number}"
 
 
 def is_beta(version: str) -> bool:
@@ -87,8 +110,9 @@ def is_beta(version: str) -> bool:
 
 
 def is_prerelease(version: str) -> bool:
-    """Betas are prereleases; so is every 0.x release while the CLI preview is unsigned."""
-    return is_beta(version) or version.startswith("0.")
+    """Only old-style `-beta.N` versions. 0.x releases publish as Latest so the Beta feed
+    `/releases/latest/download/latest.json` resolves; the app's badge says Beta (ADR-0019)."""
+    return is_beta(version)
 
 
 def release_tags(tags: list[str]) -> list[str]:
@@ -430,9 +454,53 @@ def package(tag_name: str) -> int:
             z.writestr(f"{stem}/{name}", data)
     copied = dist / installer.name
     shutil.copyfile(installer, copied)
+    signature = installer.with_name(installer.name + ".sig")
+    if signature.is_file():  # updater artifact, written when the signing key is set
+        shutil.copyfile(signature, dist / signature.name)
     for path in (archive, copied):
         digest = write_sha256(path)
         print(f"{path.relative_to(ROOT)}: {path.stat().st_size} bytes, sha256 {digest}")
+    return 0
+
+
+def feed_json(version: str, notes: str, signature: str, url: str, pub_date: datetime.datetime) -> dict:
+    """Tauri's static updater feed for one Windows x64 installer."""
+    return {
+        "version": version,
+        "notes": notes,
+        "pub_date": pub_date.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "platforms": {"windows-x86_64": {"signature": signature.strip(), "url": url}},
+    }
+
+
+def feed(tag_name: str, url_base: str, notes_text: str | None = None) -> int:
+    """dist/latest.json for the installer (and its .sig) that `package` put in dist/."""
+    version = parse_tag(tag_name)
+    dist = ROOT / "dist"
+    name = installer_name(version)
+    sig = dist / (name + ".sig")
+    if not sig.is_file():
+        raise ReleaseError(f"{sig} is missing; build with TAURI_SIGNING_PRIVATE_KEY set, then `package`")
+    if notes_text is None:
+        notes_text = changelog_section((ROOT / "CHANGELOG.md").read_text("utf-8"), version)
+    doc = feed_json(version, notes_text, sig.read_text("utf-8"), f"{url_base.rstrip('/')}/{name}",
+                    datetime.datetime.now(datetime.timezone.utc))
+    out = dist / "latest.json"
+    out.write_bytes((json.dumps(doc, indent=2) + "\n").encode("utf-8"))
+    print(f"{out.relative_to(ROOT)}: {version} -> {doc['platforms']['windows-x86_64']['url']}")
+    return 0
+
+
+def set_version(version: str) -> int:
+    """Write a nightly version into Cargo.toml and Cargo.lock for one CI build. The change
+    is never committed: the nightly workflow builds from a throwaway checkout."""
+    if not NIGHTLY_RE.match(version):
+        raise ReleaseError(f"not a nightly version: {version!r} (releases go through `prepare`)")
+    for name, bump in (("Cargo.toml", lambda t: bump_cargo_toml(t, version)),
+                       ("Cargo.lock", lambda t: bump_lock(t, member_names(ROOT), version))):
+        path = ROOT / name
+        path.write_bytes(bump(path.read_text("utf-8")).encode("utf-8"))
+    print(f"version set to {version} (not committed)")
     return 0
 
 
@@ -470,6 +538,13 @@ def main(argv: list[str]) -> int:
     p.add_argument("tag_name")
     p.add_argument("--output")
     sub.add_parser("package", help="zip the Windows CLI and collect the installer").add_argument("tag_name")
+    p = sub.add_parser("feed", help="write dist/latest.json, the updater feed")
+    p.add_argument("tag_name")
+    p.add_argument("--url-base", required=True, help="where the installer is downloaded from")
+    p.add_argument("--notes", help="notes text instead of the CHANGELOG.md section (nightlies)")
+    p = sub.add_parser("nightly-version", help="print the version for a nightly build")
+    p.add_argument("--run", type=int, required=True, help="the CI run number")
+    sub.add_parser("set-version", help="write a nightly version into the manifests").add_argument("version")
     p = sub.add_parser("publish", help="create the GitHub Release")
     p.add_argument("tag_name")
     p.add_argument("assets", nargs="+")
@@ -486,6 +561,13 @@ def main(argv: list[str]) -> int:
                 return notes(a.tag_name, a.output)
             case "package":
                 return package(a.tag_name)
+            case "feed":
+                return feed(a.tag_name, a.url_base, a.notes)
+            case "nightly-version":
+                print(nightly_version(git_tags(), datetime.datetime.now(datetime.timezone.utc).date(), a.run))
+                return 0
+            case "set-version":
+                return set_version(a.version)
             case "publish":
                 return publish(a.tag_name, a.assets)
     except ReleaseError as e:

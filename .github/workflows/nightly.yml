@@ -1,0 +1,115 @@
+name: nightly
+
+# Every push to `main` publishes a signed desktop installer to the rolling `nightly`
+# prerelease (ADR-0019). Its version, the next minor plus `-nightly.<YYYYMMDD>.<run>`, is
+# written into the manifests for this build only. The app's Nightly channel reads
+# releases/download/nightly/latest.json.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - ".scratch/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push supersedes a build still running; the feed only ever moves forward.
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    permissions:
+      contents: write # move the nightly tag and replace the release's assets
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Pick the nightly version
+        id: version
+        run: |
+          version=$(python -I scripts/release.py nightly-version --run "$GITHUB_RUN_NUMBER")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          python -I scripts/release.py set-version "$version"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: "Fetch verified sherpa-onnx prebuilt libs (ADR-008)"
+        run: python -I scripts/fetch-sherpa-libs.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Build the signed desktop installer
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npx tauri build --bundles nsis
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Collect the installer, its signature and checksum
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          setup="Bolo_${VERSION}_x64-setup.exe"
+          cp "target/release/bundle/nsis/$setup" "target/release/bundle/nsis/$setup.sig" dist/
+          python -I -c "import hashlib,sys; p=sys.argv[1]; open(p+'.sha256','wb').write(f'{hashlib.sha256(open(p,\"rb\").read()).hexdigest()}  {p.split(\"/\")[-1]}\n'.encode())" "dist/$setup"
+          cat "dist/$setup.sha256"
+      - name: Smoke-test the installer
+        shell: pwsh
+        run: |
+          $setup = (Get-Item dist\Bolo_*_x64-setup.exe).FullName
+          $dir = Join-Path $env:RUNNER_TEMP bolo-install
+          Start-Process $setup -ArgumentList "/S", "/D=$dir" -Wait
+          foreach ($f in "bolo-desktop.exe", "onnxruntime.dll", "sherpa-onnx-c-api.dll", "uninstall.exe") {
+            if (-not (Test-Path (Join-Path $dir $f))) { Get-ChildItem $dir; throw "the installer left out $f" }
+          }
+          Start-Process (Join-Path $dir "uninstall.exe") -ArgumentList "/S" -Wait
+          Write-Output "ok: installed and uninstalled"
+      - name: Write the updater feed
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          last=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-nightly*' 2>/dev/null || true)
+          notes="Nightly build of ${GITHUB_SHA::7}: $(git log -1 --format=%s)"
+          if [ -n "$last" ]; then
+            notes="$notes"$'\n\n'"Changes since $last: https://github.com/${GITHUB_REPOSITORY}/compare/$last...${GITHUB_SHA::7}"
+          fi
+          printf '%s\n' "$notes" > dist/notes.md
+          python -I scripts/release.py feed "v$VERSION" --notes "$notes" \
+            --url-base "https://github.com/${GITHUB_REPOSITORY}/releases/download/nightly"
+      - name: Publish to the rolling nightly release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git tag -f nightly "$GITHUB_SHA"
+          git push -f origin refs/tags/nightly
+          title="Bolo Nightly $VERSION"
+          if gh release view nightly > /dev/null 2>&1; then
+            gh release edit nightly --title "$title" --notes-file dist/notes.md --prerelease
+          else
+            gh release create nightly --verify-tag --prerelease --title "$title" --notes-file dist/notes.md
+          fi
+          # Upload first (latest.json last, so the feed never names a missing installer),
+          # then drop the previous build's assets.
+          keep=(dist/Bolo_*_x64-setup.exe dist/Bolo_*_x64-setup.exe.sig dist/Bolo_*_x64-setup.exe.sha256)
+          gh release upload nightly --clobber "${keep[@]}"
+          gh release upload nightly --clobber dist/latest.json
+          for asset in $(gh release view nightly --json assets -q '.assets[].name'); do
+            [ -f "dist/$asset" ] || gh release delete-asset nightly "$asset" --yes
+          done

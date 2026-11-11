@@ -5,6 +5,7 @@ missing git-cliff fails the test instead of skipping it.
 """
 
 import io
+import json
 import os
 import tempfile
 import tomllib
@@ -57,9 +58,10 @@ class Versions(unittest.TestCase):
         ordered = ["0.1.0-beta.1", "0.1.0-beta.2", "0.1.0-beta.10", "0.1.0", "0.1.1-beta.1", "0.1.1", "0.2.0"]
         self.assertEqual(sorted(reversed(ordered), key=release.version_key), ordered)
 
-    def test_prerelease_means_beta_or_pre_1_0(self):
+    def test_only_old_style_betas_are_prereleases(self):
         self.assertTrue(release.is_prerelease("1.0.0-beta.1"))
-        self.assertTrue(release.is_prerelease("0.1.0"))  # unsigned CLI preview (ADR-0013)
+        # 0.x publishes as Latest so the Beta feed resolves; the app's badge says Beta (ADR-0019).
+        self.assertFalse(release.is_prerelease("0.4.0"))
         self.assertFalse(release.is_prerelease("1.0.0"))
 
     def test_new_version_must_be_untagged_and_newer(self):
@@ -208,6 +210,85 @@ class Package(unittest.TestCase):
             self.assertEqual(setup.read_bytes(), b"MZ setup")
             sums = (tmp / "dist" / "Bolo_0.1.0-beta.1_x64-setup.exe.sha256").read_bytes()
             self.assertRegex(sums, rb"^[0-9a-f]{64}  Bolo_0\.1\.0-beta\.1_x64-setup\.exe\n$")
+
+    def test_copies_the_updater_signature_when_tauri_wrote_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "target" / "release").mkdir(parents=True)
+            (tmp / "target" / "release" / "bolo.exe").write_bytes(b"MZ")
+            (tmp / ".cache" / "sherpa-lib").mkdir(parents=True)
+            (tmp / ".cache" / "sherpa-lib" / "onnxruntime.dll").write_bytes(b"x")
+            for name in ("LICENSE-MIT", "LICENSE-APACHE"):
+                (tmp / name).write_bytes((ROOT / name).read_bytes())
+            nsis = tmp / "target" / "release" / "bundle" / "nsis"
+            nsis.mkdir(parents=True)
+            (nsis / "Bolo_0.4.0_x64-setup.exe").write_bytes(b"MZ setup")
+            (nsis / "Bolo_0.4.0_x64-setup.exe.sig").write_bytes(b"c2ln")
+            with mock.patch.object(release, "ROOT", tmp), redirect_stdout(io.StringIO()):
+                release.package("v0.4.0")
+            self.assertEqual((tmp / "dist" / "Bolo_0.4.0_x64-setup.exe.sig").read_bytes(), b"c2ln")
+
+
+class Feed(unittest.TestCase):
+    def test_feed_json_is_tauris_static_format(self):
+        ist = release.datetime.timezone(release.datetime.timedelta(hours=5, minutes=30))
+        when = release.datetime.datetime(2026, 11, 11, 17, 30, tzinfo=ist)
+        doc = release.feed_json("0.4.0", "notes", "c2ln\n", "https://x/Bolo_0.4.0_x64-setup.exe", when)
+        self.assertEqual(doc, {
+            "version": "0.4.0",
+            "notes": "notes",
+            "pub_date": "2026-11-11T12:00:00Z",
+            "platforms": {"windows-x86_64": {"signature": "c2ln", "url": "https://x/Bolo_0.4.0_x64-setup.exe"}},
+        })
+
+    def test_feed_needs_the_signature_and_writes_latest_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "dist").mkdir()
+            (tmp / "CHANGELOG.md").write_text("# Changelog\n\n## [0.4.0] - 2026-11-11\n\n- Updates\n\n## [0.3.0]\n\n- Old\n")
+            with mock.patch.object(release, "ROOT", tmp), redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(ReleaseError, r"\.sig is missing"):
+                    release.feed("v0.4.0", "https://example.test/dl/")
+                (tmp / "dist" / "Bolo_0.4.0_x64-setup.exe.sig").write_text("c2ln")
+                release.feed("v0.4.0", "https://example.test/dl/")
+            doc = json.loads((tmp / "dist" / "latest.json").read_text())
+            self.assertEqual(doc["version"], "0.4.0")
+            self.assertEqual(doc["notes"], "- Updates\n")
+            self.assertEqual(doc["platforms"]["windows-x86_64"]["url"], "https://example.test/dl/Bolo_0.4.0_x64-setup.exe")
+
+
+class Nightly(unittest.TestCase):
+    def test_next_minor_after_the_newest_stable_release(self):
+        day = release.datetime.date(2026, 11, 11)
+        tags = ["v0.1.0-beta.1", "v0.1.0", "v0.3.0", "v0.2.0", "nightly", "v0.4.0-beta.1"]
+        self.assertEqual(release.nightly_version(tags, day, 7), "0.4.0-nightly.20261111.7")
+        self.assertEqual(release.nightly_version([], day, 1), "0.1.0-nightly.20261111.1")
+        with self.assertRaises(ReleaseError):
+            release.nightly_version(tags, day, 0)
+
+    def test_nightly_versions_parse_as_tags_but_are_not_releases(self):
+        self.assertEqual(release.parse_tag("v0.4.0-nightly.20261111.7"), "0.4.0-nightly.20261111.7")
+        self.assertEqual(release.release_tags(["v0.4.0-nightly.20261111.7", "v0.3.0"]), ["v0.3.0"])
+        with self.assertRaises(ReleaseError):
+            release.parse_tag("v0.4.0-nightly.2026111.7")
+
+    def test_set_version_rewrites_the_workspace_and_lock_only_for_nightlies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for name in ("Cargo.toml", "Cargo.lock"):
+                (tmp / name).write_bytes((ROOT / name).read_bytes())
+            members = tomllib.loads((ROOT / "Cargo.toml").read_text("utf-8"))["workspace"]["members"]
+            for m in members:
+                (tmp / m).mkdir(parents=True)
+                (tmp / m / "Cargo.toml").write_bytes((ROOT / m / "Cargo.toml").read_bytes())
+            with mock.patch.object(release, "ROOT", tmp), redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(ReleaseError, "not a nightly"):
+                    release.set_version("0.4.0")
+                release.set_version("0.4.0-nightly.20261111.7")
+            self.assertEqual(release.workspace_version((tmp / "Cargo.toml").read_text("utf-8")), "0.4.0-nightly.20261111.7")
+            lock = (tmp / "Cargo.lock").read_text("utf-8")
+            self.assertIn('name = "bolo-desktop"\nversion = "0.4.0-nightly.20261111.7"', lock)
+            self.assertIn('name = "bolo-core"\nversion = "0.4.0-nightly.20261111.7"', lock)
 
 
 if __name__ == "__main__":
