@@ -40,7 +40,7 @@ use crate::polish::{self, LlmClient, Polish};
 use crate::segment::{PauseDetector, PolishSetup, Polisher, RawText, SEGMENT_AFTER};
 use crate::{
     BoloError, DictationState, EngineConfig, EngineEvents, FormattedOutput, HinglishScript, LanguageMode, OutputFormat,
-    TargetContext, Timings,
+    TargetContext, Timings, Usage,
 };
 
 /// Audio kept from just before the hotkey while the mic is warm (seconds).
@@ -300,7 +300,7 @@ impl Worker {
         let manifest = Manifest::bundled().map_err(|e| BoloError::Config(e.to_string()))?;
         let http = bolo_stt::cloud::http_client().map_err(|e| BoloError::Config(e.to_string()))?;
         // Polish on without a key: fail now rather than at the first dictation.
-        polish::client(&config.polish, &config.api_keys, injected_llm.as_ref(), &http)?;
+        polish::client(&config.polish, &config.api_keys, injected_llm.as_ref(), &http, &events)?;
         Ok(Self {
             config,
             events,
@@ -584,12 +584,18 @@ impl Worker {
                 .block_on(async move {
                     let mut parts = Vec::new();
                     let mut engine_id = String::new();
+                    let mut used = Vec::new();
                     for h in handles {
                         let t = h.text.await.map_err(BoloError::Stt)?;
+                        used.extend(Usage::of_transcript(&t));
                         engine_id = t.engine_id;
                         parts.push(t.text.trim().to_owned());
                     }
-                    Ok((parts, engine_id))
+                    Ok((parts, engine_id, used))
+                })
+                .map(|(parts, engine_id, used)| {
+                    used.into_iter().for_each(|u| self.events.on_usage(u));
+                    (parts, engine_id)
                 })
                 .map(|(parts, engine_id)| (join_nonempty(&parts), engine_id, self.config.language, parts, None))
         };
@@ -681,6 +687,12 @@ impl Worker {
         passes.iter().for_each(Pass::request_finish);
         let finished: Vec<(Language, Result<Transcript, SttError>)> =
             passes.into_iter().map(|p| (p.language, p.wait_finished())).collect();
+        // Every pass that finished was paid for, chosen or not.
+        for (_, r) in &finished {
+            if let Some(u) = r.as_ref().ok().and_then(Usage::of_transcript) {
+                self.events.on_usage(u);
+            }
+        }
         let choice = match finished.as_slice() {
             [(only, _)] => *only,
             _ => {
@@ -707,7 +719,7 @@ impl Worker {
     }
 
     fn polish_client(&self) -> Result<Option<Arc<dyn LlmClient>>, BoloError> {
-        polish::client(&self.config.polish, &self.config.api_keys, self.injected_llm.as_ref(), &self.http)
+        polish::client(&self.config.polish, &self.config.api_keys, self.injected_llm.as_ref(), &self.http, &self.events)
     }
 
     /// A polisher for a dictation into `target`, or none when polish is off or can't

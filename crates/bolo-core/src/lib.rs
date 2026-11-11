@@ -174,6 +174,38 @@ pub trait EngineEvents: Send + Sync {
     fn on_polished(&self, out: FormattedOutput);
     fn on_error(&self, err: BoloError);
     fn on_state(&self, state: DictationState);
+    /// A paid cloud request finished: for the host's usage meter. Once per request that
+    /// returned a result; a request dropped at a deadline or cancelled isn't reported.
+    fn on_usage(&self, _usage: Usage) {}
+}
+
+/// One paid cloud request, as [`EngineEvents::on_usage`] reports it. Costs are
+/// estimates at the provider's pay-as-you-go list price.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Usage {
+    /// A cloud speech engine transcribed `audio_secs` of audio.
+    Speech { engine_id: String, audio_secs: f64, cost_usd: f64 },
+    /// Claude polished a dictation, or one segment of a long one.
+    Polish {
+        model: String,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_read_tokens: u64,
+        cache_write_tokens: u64,
+        cost_usd: f64,
+    },
+}
+
+impl Usage {
+    /// The speech usage of `t`, or `None` for a local engine.
+    pub fn of_transcript(t: &bolo_stt::Transcript) -> Option<Self> {
+        (!t.billed.is_zero()).then(|| Usage::Speech {
+            engine_id: t.engine_id.clone(),
+            audio_secs: t.billed.audio_secs,
+            cost_usd: t.billed.cost_usd,
+        })
+    }
 }
 
 /// Provider → API key. Never printed, never serialized into settings.

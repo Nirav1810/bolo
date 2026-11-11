@@ -12,16 +12,18 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use bolo_core::{
     AudioSource, BoloError, DictationState, Engine, EngineConfig, EngineEvents, FormattedOutput, Language,
-    LanguageMode, LlmClient, Polish, TargetContext, WavSource,
+    LanguageMode, LlmClient, Polish, TargetContext, Usage, WavSource,
 };
 use bolo_format::llm::{CleanupRequest, LlmError};
-use bolo_stt::{SttEngine, SttOptions, SttStream, Transcript};
+use bolo_stt::{Billed, SttEngine, SttOptions, SttStream, Transcript};
 
 pub const ENGINE_ID: &str = "fake";
 /// The fake stream reveals its next scripted partial after every this-many samples (0.1 s).
 const SAMPLES_PER_PARTIAL: usize = 1600;
 /// How long to wait for the engine thread before failing a test.
 const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
+/// The fake stream "bills" $1 per second of audio it took in, like a cloud engine.
+pub const FAKE_USD_PER_HOUR: f64 = 3600.0;
 /// Length of the replayed waveform.
 pub const AUDIO_SECS: f32 = 0.5;
 
@@ -161,7 +163,9 @@ impl SttStream for FakeStream {
         if let Ok(mut g) = self.finished.lock() {
             g.push((self.language, self.samples));
         }
-        Ok(transcript(self.language, self.script.final_text))
+        let mut t = transcript(self.language, self.script.final_text);
+        t.billed = Billed::audio(self.samples, FAKE_USD_PER_HOUR);
+        Ok(t)
     }
 }
 
@@ -171,7 +175,7 @@ fn transcript(language: Language, text: String) -> Transcript {
         Language::Hi => "hi",
         Language::Auto => "auto",
     };
-    Transcript { text, engine_id: ENGINE_ID.into(), language: Some(code.into()) }
+    Transcript { text, engine_id: ENGINE_ID.into(), language: Some(code.into()), ..Default::default() }
 }
 
 /// What the fake LLM answers, after `delay`.
@@ -263,6 +267,7 @@ pub enum Ev {
     Polished(FormattedOutput),
     Error(String),
     State(DictationState),
+    Usage(Usage),
 }
 
 struct Recorder(Mutex<Sender<Ev>>);
@@ -293,6 +298,9 @@ impl EngineEvents for Recorder {
     }
     fn on_state(&self, state: DictationState) {
         self.send(Ev::State(state));
+    }
+    fn on_usage(&self, usage: Usage) {
+        self.send(Ev::Usage(usage));
     }
 }
 
@@ -449,6 +457,10 @@ pub fn polished(events: &[Ev]) -> Vec<FormattedOutput> {
 
 pub fn partials(events: &[Ev]) -> Vec<String> {
     events.iter().filter_map(|e| if let Ev::Partial(p) = e { Some(p.clone()) } else { None }).collect()
+}
+
+pub fn usage(events: &[Ev]) -> Vec<Usage> {
+    events.iter().filter_map(|e| if let Ev::Usage(u) = e { Some(u.clone()) } else { None }).collect()
 }
 
 pub fn errors(events: &[Ev]) -> Vec<String> {

@@ -521,6 +521,7 @@ dependencies = [
  "tauri-plugin-autostart",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "tempfile",
  "thiserror 2.0.21",
  "toml 1.2.1+spec-1.1.0",
  "tracing",

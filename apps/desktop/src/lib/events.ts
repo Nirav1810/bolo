@@ -35,7 +35,8 @@ export type AppEvent =
   | { kind: "error"; message: string }
   | { kind: "pill"; view: PillView }
   | { kind: "hover"; region: "pill" | "stop" | "cancel" | null }
-  | { kind: "update"; status: UpdateStatus };
+  | { kind: "update"; status: UpdateStatus }
+  | { kind: "usage" };
 
 /// What the overlay pill shows (src-tauri/src/pill.rs, `View`). The state machine and its
 /// timers live in Rust; the pill webview only draws.

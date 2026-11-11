@@ -165,6 +165,11 @@ async fn streams_partials_then_final_after_finalize() {
     .unwrap();
     assert_eq!(t.text, "Hello world. Kal milte hain.");
     assert_eq!(t.engine_id, "deepgram-stream:nova-3");
+    // 3200 samples (0.2 s) of multilingual live audio with keyterms is billed.
+    assert!((t.billed.audio_secs - 0.2).abs() < 1e-9, "{:?}", t.billed);
+    let per_hour = bolo_stt::cloud::deepgram::PRICE_USD_PER_HOUR_STREAM_MULTI
+        + bolo_stt::cloud::deepgram::PRICE_USD_PER_HOUR_KEYTERM;
+    assert!((t.billed.cost_usd - 0.2 / 3600.0 * per_hour).abs() < 1e-12);
 
     let s = seen.lock().unwrap();
     assert_eq!(s.authorization, "Token dg_secret");
@@ -238,7 +243,12 @@ impl SttEngine for Recorder {
     }
     async fn transcribe(&self, audio: &[f32], _: &SttOptions) -> bolo_stt::Result<Transcript> {
         *self.0.lock().unwrap() = audio.len();
-        Ok(Transcript { text: "from fallback".into(), engine_id: "recorder".into(), language: None })
+        Ok(Transcript {
+            text: "from fallback".into(),
+            engine_id: "recorder".into(),
+            language: None,
+            ..Default::default()
+        })
     }
 }
 

@@ -6,8 +6,8 @@
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use bolo_core::{FormattedOutput, LanguageMode, OutputFormat};
-use bolo_store::{Dictation, History};
+use bolo_core::{FormattedOutput, LanguageMode, OutputFormat, Usage};
+use bolo_store::{Dictation, History, UsageEvent, provider_of};
 
 #[derive(Debug, Default)]
 struct Current {
@@ -66,6 +66,44 @@ impl Journal {
         let Some(row) = lock(&self.current).row else { return };
         if let Some(Err(e)) = self.with_history(|h| h.record_polish(row, Some(&out.plain), swap)) {
             tracing::warn!(%e, "could not record the polish in history");
+        }
+    }
+}
+
+impl Journal {
+    /// A paid cloud request finished: add it to the usage meter. Recorded with history
+    /// off too, since it holds no text.
+    pub fn usage(&self, usage: &Usage) {
+        if let Some(Err(e)) = self.with_history(|h| h.record_usage(&usage_event(usage, bolo_store::history::now_ms())))
+        {
+            tracing::warn!(%e, "could not record usage");
+        }
+    }
+}
+
+/// The meter's row for `usage` at `at_ms`.
+pub fn usage_event(usage: &Usage, at_ms: i64) -> UsageEvent {
+    match usage {
+        Usage::Speech { engine_id, audio_secs, cost_usd } => UsageEvent {
+            at_ms,
+            provider: provider_of(engine_id).to_owned(),
+            detail: engine_id.clone(),
+            audio_secs: *audio_secs,
+            cost_usd: *cost_usd,
+            ..Default::default()
+        },
+        Usage::Polish { model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd } => {
+            UsageEvent {
+                at_ms,
+                provider: bolo_core::ANTHROPIC.to_owned(),
+                detail: model.clone(),
+                input_tokens: *input_tokens,
+                output_tokens: *output_tokens,
+                cache_read_tokens: *cache_read_tokens,
+                cache_write_tokens: *cache_write_tokens,
+                cost_usd: *cost_usd,
+                ..Default::default()
+            }
         }
     }
 }
@@ -151,5 +189,27 @@ mod tests {
         j.finished(&output("Hi.", "Hi."));
         j.polished(&output("Hi!", "Hi!"), "swapped");
         assert!(j.with_history(|_| ()).is_none());
+    }
+
+    #[test]
+    fn usage_is_metered_with_history_off() {
+        use bolo_core::Usage;
+        let mut history = History::open_in_memory().unwrap();
+        history.set_enabled(false);
+        let j = Journal::new(Some(history));
+        j.usage(&Usage::Speech { engine_id: "deepgram-stream:nova-3".into(), audio_secs: 3.0, cost_usd: 0.0005 });
+        j.usage(&Usage::Polish {
+            model: "claude-haiku-5-5".into(),
+            input_tokens: 90,
+            output_tokens: 12,
+            cache_read_tokens: 700,
+            cache_write_tokens: 0,
+            cost_usd: 0.00002,
+        });
+        let totals = j.with_history(|h| h.usage_since(0).unwrap()).unwrap();
+        let providers: Vec<_> = totals.iter().map(|p| (p.provider.as_str(), p.requests)).collect();
+        assert_eq!(providers, [("anthropic", 1), ("deepgram", 1)]);
+        assert_eq!((totals[0].input_tokens, totals[0].cache_read_tokens), (90, 700));
+        assert_eq!(totals[1].audio_secs, 3.0);
     }
 }

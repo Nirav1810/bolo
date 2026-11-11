@@ -11,6 +11,7 @@
     Sparkles,
     ArrowUpCircle,
     CircleAlert,
+    Gauge,
   } from "@lucide/svelte";
   import { api, variant, type Form, type SettingsView, type UpdateView } from "../lib/api";
   import { onAppEvent } from "../lib/events";
@@ -21,6 +22,7 @@
   import Dictionary from "./Dictionary.svelte";
   import History from "./History.svelte";
   import About from "./About.svelte";
+  import Usage from "./Usage.svelte";
   import releaseIcon from "../../src-tauri/icons/128x128.png?no-inline";
   import nightlyIcon from "../../src-tauri/icons-nightly/128x128.png?no-inline";
 
@@ -32,13 +34,14 @@
     polish: { label: "Polish", icon: Sparkles, blurb: "Claude tidies each dictation after it lands, then swaps the result in." },
     dictionary: { label: "Dictionary", icon: BookA, blurb: "Names and terms Bolo should spell your way." },
     history: { label: "History", icon: HistoryIcon, blurb: "Your dictations, kept as text on this PC." },
+    usage: { label: "Usage", icon: Gauge, blurb: "How much Deepgram and Claude your dictations used, and what it cost." },
     about: { label: "About", icon: Info, blurb: "Version, updates and where Bolo keeps its files." },
   } as const;
   type Page = keyof typeof PAGES;
 
   const GROUPS: { heading: string; pages: Page[] }[] = [
     { heading: "Dictation", pages: ["general", "engines", "polish", "dictionary"] },
-    { heading: "Activity", pages: ["history"] },
+    { heading: "Activity", pages: ["history", "usage"] },
     { heading: "App", pages: ["about"] },
   ];
 
@@ -202,6 +205,8 @@
             <Dictionary {view} {update} />
           {:else if page === "history"}
             <History {view} {update} />
+          {:else if page === "usage"}
+            <Usage />
           {:else}
             <About {view} bind:updates />
           {/if}

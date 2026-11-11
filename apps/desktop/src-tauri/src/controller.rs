@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use bolo_core::{BoloError, DictationState, EngineEvents, FormattedOutput};
+use bolo_core::{BoloError, DictationState, EngineEvents, FormattedOutput, Usage};
 use serde::Serialize;
 
 use crate::hotkey::Flags;
@@ -63,6 +63,8 @@ pub enum AppEvent {
     Update {
         status: crate::updates::Status,
     },
+    /// A paid cloud request was recorded: the Usage page reloads its totals.
+    Usage,
 }
 
 /// The notice when the window in front runs elevated and won't take Bolo's paste: the
@@ -193,6 +195,12 @@ impl EngineEvents for Controller {
             self.inserter.drop_pending();
         }
         self.emit.emit(AppEvent::State { state });
+    }
+
+    fn on_usage(&self, usage: Usage) {
+        tracing::debug!(?usage, "usage");
+        self.journal.usage(&usage);
+        self.emit.emit(AppEvent::Usage);
     }
 }
 

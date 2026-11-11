@@ -2,6 +2,7 @@
 //! the nightlies ([`crate::variant`]). [`check`] and [`install`] run
 //! `tauri-plugin-updater`; the state above them is pure and tested.
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -43,6 +44,10 @@ pub enum Status {
     },
     /// Downloaded and verified; the installer runs and Bolo restarts.
     Installing,
+    /// This launch is the restart after an update from version `from`.
+    Updated {
+        from: String,
+    },
     /// `manual` is whether the user asked for this check: only then is it shown.
     Error {
         message: String,
@@ -94,6 +99,35 @@ impl View {
             status,
         }
     }
+}
+
+/// Where [`install`] notes the version it is updating from, just before the installer
+/// runs. The installer starts the new Bolo hidden in the tray like any launch, so the new
+/// Bolo reads this ([`take_updated`]) to know it should open its window and say so.
+/// One per app, since Bolo and Bolo Nightly share the data folder.
+pub fn marker_path() -> Option<PathBuf> {
+    let name = match Variant::current() {
+        Variant::Release => "updating-from.txt",
+        Variant::Nightly => "updating-from-nightly.txt",
+    };
+    bolo_models::default_models_root().and_then(|m| m.parent().map(|d| d.join(name)))
+}
+
+/// Note that this app, at version `from`, is about to be replaced.
+pub fn mark_updating(marker: &Path, from: &str) {
+    if let Err(e) = std::fs::write(marker, from) {
+        tracing::warn!(%e, "could not note the update; the new version will start in the tray");
+    }
+}
+
+/// The version this launch updated from, if it follows an update: the marker is there
+/// and names another version (an install that failed leaves the same one). The marker
+/// is removed either way.
+pub fn take_updated(marker: &Path, current: &str) -> Option<String> {
+    let from = std::fs::read_to_string(marker).ok()?;
+    let _ = std::fs::remove_file(marker);
+    let from = from.trim();
+    (!from.is_empty() && from != current).then(|| from.to_owned())
 }
 
 /// Told the available version, or `None`, when that changes.
@@ -216,7 +250,8 @@ pub fn check(app: &AppHandle, updates: &Updates, manual: bool, before_exit: Befo
 }
 
 /// Download and verify the pending update, run its installer quietly and restart Bolo
-/// (the installer relaunches it). Blocking; run it off the main thread.
+/// (the installer relaunches it, and the new Bolo opens About: [`take_updated`]).
+/// Blocking; run it off the main thread.
 pub fn install(app: &AppHandle, updates: &Updates) {
     let Some(update) = lock(&updates.pending).clone() else { return };
     tracing::info!(version = %update.version, "installing update");
@@ -233,7 +268,12 @@ pub fn install(app: &AppHandle, updates: &Updates) {
                 updates.set(Status::Downloading { downloaded, total });
             }
         },
-        || updates.set(Status::Installing),
+        || {
+            if let Some(marker) = marker_path() {
+                mark_updating(&marker, variant::VERSION);
+            }
+            updates.set(Status::Installing);
+        },
     ));
     match done {
         // Not reached on Windows: the plugin exits once the installer starts.
@@ -271,6 +311,20 @@ mod tests {
         assert!(is_newer(&v("0.4.0"), &v("0.5.0-nightly.20261111.1")));
         assert!(!is_newer(&v("0.5.0-nightly.20261111.1"), &v("0.4.0")));
         assert!(!is_newer(&v("0.4.0"), &v("0.4.0")));
+    }
+
+    #[test]
+    fn a_launch_after_an_update_knows_the_old_version_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("updating-from.txt");
+        assert_eq!(take_updated(&marker, "0.4.0"), None, "no marker: an ordinary launch");
+        mark_updating(&marker, "0.4.0-nightly.20261111.9");
+        assert_eq!(take_updated(&marker, "0.4.0-nightly.20261111.10").as_deref(), Some("0.4.0-nightly.20261111.9"));
+        assert_eq!(take_updated(&marker, "0.4.0-nightly.20261111.10"), None, "only the first launch after");
+        // The installer failed and the old version started again: not an update.
+        mark_updating(&marker, "0.4.0");
+        assert_eq!(take_updated(&marker, "0.4.0"), None);
+        assert!(!marker.exists());
     }
 
     #[derive(Default)]

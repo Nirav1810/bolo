@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use bolo_core::OutputFormat;
-use bolo_store::{History, PROVIDERS, Settings};
+use bolo_store::{History, PROVIDERS, ProviderUsage, Settings};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -210,6 +210,40 @@ pub fn history_delete(bolo: State<'_, Bolo>, id: i64) -> Result<(), String> {
 #[tauri::command]
 pub fn history_clear(bolo: State<'_, Bolo>) -> Result<(), String> {
     bolo.journal.with_history(|h| h.clear()).transpose().map(drop).map_err(|e| e.to_string())
+}
+
+/// The usage meter's totals, as the Usage page shows them.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UsageView {
+    /// Since `today_start_ms`, the viewer's local midnight.
+    pub today: Vec<ProviderUsage>,
+    pub last_30_days: Vec<ProviderUsage>,
+    pub all_time: Vec<ProviderUsage>,
+    /// When the meter's oldest request was recorded.
+    pub since_ms: Option<i64>,
+}
+
+const MS_PER_DAY: i64 = 86_400_000;
+
+#[tauri::command]
+pub fn usage_summary(bolo: State<'_, Bolo>, today_start_ms: i64) -> Result<UsageView, String> {
+    let now = bolo_store::history::now_ms();
+    bolo.journal
+        .with_history(|h| -> bolo_store::Result<UsageView> {
+            Ok(UsageView {
+                today: h.usage_since(today_start_ms)?,
+                last_30_days: h.usage_since(now - 30 * MS_PER_DAY)?,
+                all_time: h.usage_since(0)?,
+                since_ms: h.usage_started()?,
+            })
+        })
+        .unwrap_or_else(|| Ok(UsageView::default()))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn usage_reset(bolo: State<'_, Bolo>) -> Result<(), String> {
+    bolo.journal.with_history(|h| h.clear_usage()).transpose().map(drop).map_err(|e| e.to_string())
 }
 
 /// Put `text` on the clipboard (the History page's Copy).

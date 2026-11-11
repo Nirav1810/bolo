@@ -50,6 +50,8 @@
             ? "Checking for updates…"
             : status.state === "up-to-date"
               ? `${product} is up to date`
+              : status.state === "updated"
+                ? `Updated to version ${updates?.version ?? view.version}`
               : status.state === "error" && status.manual
                 ? "Couldn’t check for updates"
                 : "Automatic updates"}
@@ -76,6 +78,8 @@
         Bolo will close and open again in a few seconds.
       {:else if status.state === "error" && status.manual}
         {status.message}
+      {:else if status.state === "updated"}
+        {product} restarted after updating from {status.from}, and is ready: hold your key to dictate.
       {:else}
         Bolo checks when it starts and every 6 hours.
       {/if}

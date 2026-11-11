@@ -104,6 +104,26 @@ export interface HistoryItem {
   swap: string | null;
 }
 
+/** One provider's totals (bolo-store `ProviderUsage`). Costs are estimates at list price. */
+export interface ProviderUsage {
+  provider: string;
+  requests: number;
+  audio_secs: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  cost_usd: number;
+}
+
+/** The usage meter (src-tauri/src/commands.rs, `UsageView`). */
+export interface UsageView {
+  today: ProviderUsage[];
+  last_30_days: ProviderUsage[];
+  all_time: ProviderUsage[];
+  since_ms: number | null;
+}
+
 export interface DownloadEvent {
   id: string;
   phase:
@@ -116,6 +136,7 @@ export interface DownloadEvent {
 /** The self-updater's state (src-tauri/src/updates.rs, `Status`). */
 export type UpdateStatus =
   | { state: "idle" | "checking" | "up-to-date" | "installing" }
+  | { state: "updated"; from: string }
   | { state: "available"; version: string; notes: string | null }
   | { state: "downloading"; downloaded: number; total: number | null }
   | { state: "error"; message: string; manual: boolean };
@@ -156,6 +177,9 @@ export const api = {
     invoke<HistoryItem[]>("history_search", { query }),
   deleteRow: (id: number) => invoke<void>("history_delete", { id }),
   clearHistory: () => invoke<void>("history_clear"),
+  usage: (todayStartMs: number) =>
+    invoke<UsageView>("usage_summary", { todayStartMs }),
+  resetUsage: () => invoke<void>("usage_reset"),
   copy: (text: string) => invoke<void>("copy_text", { text }),
   download: (id: string) => invoke<void>("model_download", { id }),
   cancelDownload: (id: string) => invoke<void>("model_cancel", { id }),

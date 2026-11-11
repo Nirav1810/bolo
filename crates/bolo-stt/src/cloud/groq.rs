@@ -9,7 +9,8 @@ use serde::Deserialize;
 
 use super::{check_status, join_terms, map_reqwest, warm_connection};
 use crate::{
-    ApiKey, HINGLISH_PROMPT_EXAMPLE, HinglishScript, Language, Result, SttEngine, SttError, SttOptions, Transcript,
+    ApiKey, Billed, HINGLISH_PROMPT_EXAMPLE, HinglishScript, Language, Result, SttEngine, SttError, SttOptions,
+    Transcript,
 };
 
 pub const DEFAULT_BASE_URL: &str = "https://api.groq.com/openai/v1";
@@ -113,7 +114,14 @@ impl SttEngine for GroqEngine {
             .await
             .map_err(map_reqwest)?;
         let body: GroqResponse = check_status(resp).await?.json().await.map_err(map_reqwest)?;
-        Ok(Transcript { text: body.text.trim().to_owned(), engine_id: self.id.clone(), language: None })
+        // Groq bills at least 10 s per request.
+        let min = (MIN_BILLED_SECONDS * f64::from(bolo_audio::SAMPLE_RATE)) as usize;
+        Ok(Transcript {
+            text: body.text.trim().to_owned(),
+            engine_id: self.id.clone(),
+            language: None,
+            billed: Billed::audio(audio.len().max(min), PRICE_USD_PER_HOUR),
+        })
     }
 }
 

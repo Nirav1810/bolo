@@ -13,6 +13,7 @@
 pub mod history;
 pub mod secrets;
 pub mod settings;
+pub mod usage;
 
 use std::path::PathBuf;
 
@@ -21,6 +22,7 @@ pub use secrets::{PROVIDERS, SERVICE, Secrets};
 pub use settings::{
     HistorySettings, Loaded, OverlaySettings, PolishSettings, PushToTalkKey, SETTINGS_VERSION, Settings,
 };
+pub use usage::{ProviderUsage, UsageEvent, provider_of};
 
 /// Everything that can go wrong in the store. Messages never contain an API key.
 #[derive(Debug, thiserror::Error)]
