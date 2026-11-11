@@ -9,11 +9,28 @@
 | `bolo-stt` | `SttEngine` trait; local (sherpa-onnx), Groq, Deepgram (batch and live WebSocket), Sarvam; fallback chain with per-engine timeout | ✅ |
 | `bolo-models` | `models/manifest.json` registry; resumable SHA-256-verified downloader (GitHub API fallback); RAM-tier recommendation | ✅ |
 | `bolo-format` | Devanagari and Urdu → Roman transliteration, loanword lexicon, language detector, Layer 1 rules pipeline (`rules`), LLM cleanup request and guard | ✅ |
-| `bolo-store` | Settings TOML, SQLite history, secrets | M3 |
+| `bolo-store` | Versioned settings TOML (migrations, bad-file backup), SQLite history (30-day prune), API keys in the OS credential store | ✅ |
 | `bolo-ffi` | UniFFI → Kotlin | M5 (not a default workspace member) |
 | `bolo` | CLI: `dictate` and `replay` on the engine, plus the benchmark subcommands (`run`, `transcribe`, `download`, …) | ✅ |
 
-Dependency direction: `core → {audio, stt, format}`, `stt → {audio, models}`, `bolo (CLI) → {core, audio, stt, models, format}`. Only `apps/*` contain platform UI code.
+Dependency direction: `core → {audio, stt, format}`, `stt → {audio, models}`, `bolo (CLI) → {core, audio, stt, models, format}`, `store → core`. Only `apps/*` contain platform UI code.
+
+## Windows app (`apps/desktop`, M3)
+
+Tauri v2 hosts one `Engine` in-process; the Svelte webviews only render.
+
+```
+WH_KEYBOARD_LL hook ─► hotkey state machine ─► Start / Stop / Cancel
+   (Caps Lock, ADR-0017)                          │
+foreground exe + title ─► app rules ─► TargetContext + polish plan ─► Engine
+Engine events ─► controller ─► inserter: clipboard paste, restore, polish swap (ADR-0018)
+                             ├► journal: SQLite history
+                             └► overlay: pill state machine ─► pill webview (waveform, partials)
+```
+
+- The decisions are pure and tested without a desktop: the hotkey machine, the swap decision, the app rules, the pill, and the settings form. The Win32 calls sit behind the `Desktop` seam.
+- Settings are saved and applied live. Engine changes go through `update_config`, and per-dictation polish through `set_polish`.
+- The per-user NSIS installer bundles the sherpa-onnx DLLs. Models are downloaded on first run (onboarding), not shipped.
 
 ## Pipeline
 

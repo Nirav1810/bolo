@@ -2,7 +2,14 @@
 
 Tauri v2 + Svelte 5 + Vite + Tailwind. The Rust side (`src-tauri`, crate `bolo-desktop`) hosts one `bolo_core::Engine` in-process. The webviews only render what the Rust app controller sends them.
 
-M3 status: the shell (ticket 01), push-to-talk (ticket 05), and insertion with the polish swap (ticket 06). Bolo sits in the tray. **Hold Caps Lock** to dictate and let go to finish (ADR-0017); a quick tap still toggles Caps Lock, Shift+Caps Lock is plain Caps Lock, and Esc cancels a dictation. **Start dictation** in the tray menu works too, and **Pause Bolo** lets go of the key. The overlay pill and settings come in later M3 tickets (`.scratch/m3-desktop/`).
+Bolo sits in the tray. **Hold Caps Lock** to dictate and let go to finish (ADR-0017). A quick tap still toggles Caps Lock, Shift+Caps Lock is plain Caps Lock, and Esc cancels a dictation.
+
+- **The overlay pill** shows the waveform and the words as they're heard. It never takes focus.
+- **The idle button**, a small bar near the bottom of the screen, starts a hands-free dictation when clicked. The tray can hide it.
+- **The tray menu** has Start dictation, Pause Bolo (lets go of the key), Settings, History, Set up Bolo (onboarding again) and the Debug window.
+- **On first run** (no settings file), onboarding checks the mic, downloads the recommended model and lets you try a dictation.
+
+The whole M3 plan is in `.scratch/m3-desktop/`, and the results are in [docs/M3-REPORT.md](../../docs/M3-REPORT.md).
 
 ## Insertion (ADR-0018)
 
@@ -19,7 +26,17 @@ The text is pasted where the cursor is: Bolo writes it to the clipboard and send
 
   Bolo selects the instant text back with Shift+Left, then pastes over it. The log records each swap, or why it was skipped, as well as the time from key-up to the paste being sent next to the engine's `total_ms`.
 
-The push-to-talk key is `push_to_talk` in `%APPDATA%\Bolo\settings.toml`: `caps-lock` (the default), `right-ctrl`, `right-alt` or `f13` … `f24`. It is read at startup.
+## Settings
+
+The settings window (tray › Settings…) edits `%APPDATA%\Bolo\settings.toml` and applies every change at once:
+- **General:** the push-to-talk key (Caps Lock, Right Ctrl, Right Alt, F13–F24), Start with Windows, language mode and Hinglish script.
+- **Engines and keys:** the engine chain, model downloads, and API keys. Keys live in Windows Credential Manager under `bolo` and never go in the file.
+- **Polish:** on/off, tone, and per-app overrides.
+- **Dictionary.**
+- **History:** search and copy, retention, and the off switch.
+- **About.**
+
+`app_rules.toml` (bundled) maps each app to Plain, Markdown, HTML or code mode.
 
 ## Run it
 
@@ -31,7 +48,7 @@ npx tauri dev          # Vite dev server + a debug build of the app
 
 The sherpa-onnx DLLs must sit next to the exe. Cargo copies them into `target/<profile>` when `sherpa-onnx-sys` builds. Models come from `%LOCALAPPDATA%\Bolo\data\models` (ADR-007); install one with `bolo download nemotron-stream`. The log is `%LOCALAPPDATA%\Bolo\data\logs\desktop.log`.
 
-Until settings land (ticket 02), the engine is configured from environment variables:
+For development, `BOLO_*` environment variables override the settings file:
 
 | Variable | Value |
 |---|---|
@@ -52,6 +69,16 @@ Until settings land (ticket 02), the engine is configured from environment varia
 - `src-tauri/src/hotkey.rs`: the push-to-talk state machine (pure, fake-clock tests).
 - `src-tauri/src/keyhook.rs`: the `WH_KEYBOARD_LL` hook thread that runs it, and the tap replay.
 - `src-tauri/src/config.rs`: the `BOLO_*` variables.
+- `src-tauri/src/rules.rs` and `app_rules.toml`: the target app → format, code mode, polish and paste chord.
+- `src-tauri/src/journal.rs`: history recording.
+- `src-tauri/src/pill.rs`, `overlay.rs` and `pointer.rs`: the overlay pill's state machine, its window thread and the mouse hook for the idle button.
+- `src-tauri/src/form.rs`, `models.rs`, `keys.rs`, `mic.rs` and `commands.rs`: the settings and onboarding windows' backend.
+- `src/settings/`, `src/onboarding/`, `src/Pill.svelte`: the webviews. `src/theme.css` holds the design tokens (ticket 04).
+- `src-tauri/windows/hooks.nsh`: the NSIS uninstaller's additions (models, history, settings, keys).
+
+## Installer
+
+`npx tauri build --bundles nsis` builds `target/release/bundle/nsis/Bolo_<version>_x64-setup.exe`. It is a per-user installer, with the WebView2 bootstrapper and the sherpa-onnx DLLs next to the exe. The release workflow builds it, installs and uninstalls it silently, and publishes it with its `.sha256`.
 
 ## Checks
 
