@@ -423,6 +423,10 @@ proptest! {
     fn commands_drop_only_their_own_words(text in transcript(), lang in language(), ctx in context()) {
         // Spoken with a layout command spliced in, the other words all survive.
         prop_assume!(!has_command(&text));
+        // "... new" + "new paragraph" or "paragraph" + "paragraph ..." is a stutter, and
+        // the stutter pass rightly keeps one copy. That's not what this property is about.
+        let w = words(&text);
+        prop_assume!(w.last().is_none_or(|l| l != "new") && w.first().is_none_or(|f| f != "paragraph"));
         let with_command = format!("{text} new paragraph {text}");
         let out = rules::apply(&with_command, lang, ctx);
         let mut expected = words(&text);
