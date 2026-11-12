@@ -228,6 +228,18 @@ class Package(unittest.TestCase):
                 release.package("v0.4.0")
             self.assertEqual((tmp / "dist" / "Bolo_0.4.0_x64-setup.exe.sig").read_bytes(), b"c2ln")
 
+    def test_sha256_rewrites_the_checksum_of_a_re_signed_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            setup = Path(tmp) / "Bolo_0.4.0_x64-setup.exe"
+            setup.write_bytes(b"MZ signed")
+            (Path(tmp) / "Bolo_0.4.0_x64-setup.exe.sha256").write_bytes(b"stale\n")
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(release.main(["sha256", str(setup)]), 0)
+                self.assertEqual(release.main(["sha256", str(setup) + ".missing"]), 1)
+            digest = release.hashlib.sha256(b"MZ signed").hexdigest()
+            self.assertEqual((Path(tmp) / "Bolo_0.4.0_x64-setup.exe.sha256").read_bytes(),
+                             f"{digest}  Bolo_0.4.0_x64-setup.exe\n".encode())
+
 
 class Feed(unittest.TestCase):
     def test_feed_json_is_tauris_static_format(self):

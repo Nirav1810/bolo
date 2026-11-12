@@ -30,6 +30,12 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write # move the nightly tag and replace the release's assets
+      actions: read # SignPath reads this run's details and the unsigned artifact
+    # Authenticode signing through SignPath (ADR-0021, docs/SIGNING.md) runs only once the
+    # SIGNPATH_API_TOKEN secret and the SIGNPATH_ORGANIZATION_ID variable are set. Until
+    # then the signing steps are skipped and the installer ships unsigned, as before.
+    env:
+      SIGNPATH_SIGNING: ${{ secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
     defaults:
       run:
         shell: bash
@@ -80,6 +86,54 @@ jobs:
           cp "$built.sig" "dist/$setup.sig"
           python -I -c "import hashlib,sys; p=sys.argv[1]; open(p+'.sha256','wb').write(f'{hashlib.sha256(open(p,\"rb\").read()).hexdigest()}  {p.split(\"/\")[-1]}\n'.encode())" "dist/$setup"
           cat "dist/$setup.sha256"
+      # Signing (ADR-0021), as in release.yml but through the separate test-signing policy,
+      # so a nightly never uses the release policy. The .sig and .sha256 are redone over the
+      # signed file.
+      - name: Upload the unsigned installer for signing
+        id: unsigned
+        if: env.SIGNPATH_SIGNING == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: installer-unsigned
+          path: dist/Bolo-Nightly_*_x64-setup.exe
+          if-no-files-found: error
+          retention-days: 1
+      - name: Sign the installer with SignPath (test-signing)
+        if: env.SIGNPATH_SIGNING == 'true'
+        uses: signpath/github-action-submit-signing-request@v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: bolo
+          signing-policy-slug: test-signing
+          artifact-configuration-slug: default
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          # Metadata restrictions in .signpath/artifact-configurations/default.xml.
+          parameters: |
+            productName: "Bolo Nightly"
+            version: "${{ steps.version.outputs.version }}"
+          wait-for-completion: true
+          output-artifact-directory: signed
+      # The test-signing certificate isn't publicly trusted, so this only checks that a
+      # signature is there; release.yml requires a Valid one.
+      - name: Check the signed installer carries a signature
+        if: env.SIGNPATH_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature (Get-Item signed\Bolo-Nightly_*_x64-setup.exe).FullName
+          Write-Output "$($sig.Status): $($sig.SignerCertificate.Subject)"
+          if ($null -eq $sig.SignerCertificate) { throw "the installer came back unsigned: $($sig.StatusMessage)" }
+      - name: Use the signed installer; redo its updater signature and checksum
+        if: env.SIGNPATH_SIGNING == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          setup="Bolo-Nightly_${VERSION}_x64-setup.exe"
+          cp "signed/$setup" "dist/$setup"
+          (cd apps/desktop && npx tauri signer sign --app-version "$VERSION" "../../dist/$setup")
+          python -I scripts/release.py sha256 "dist/$setup"
       - name: Smoke-test the installer
         shell: pwsh
         run: |

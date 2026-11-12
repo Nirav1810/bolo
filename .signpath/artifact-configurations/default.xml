@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath artifact configuration "default" for the Bolo project (ADR-0021, docs/SIGNING.md).
+
+  release.yml and nightly.yml upload the NSIS installer with actions/upload-artifact, which
+  stores it as a zip, so the root is a zip-file holding exactly one setup exe:
+  Bolo_X.Y.Z_x64-setup.exe from a release, Bolo-Nightly_X.Y.Z-nightly.D.N_x64-setup.exe
+  from a nightly. SignPath Authenticode-signs that exe and returns the zip.
+
+  SignPath Foundation requires metadata restrictions: the installer's ProductName and
+  ProductVersion (which Tauri's NSIS template sets to productName and the app version) must
+  match the parameters each workflow passes, "Bolo" or "Bolo Nightly" and the build's version.
+
+  The app exe inside the installer (bolo-desktop.exe) is not signed: SignPath can't open
+  NSIS installers to deep-sign their contents, and SmartScreen judges the downloaded file.
+  Signing it would take a second signing request before NSIS packaging (a follow-up).
+
+  Paste this into the project's "default" artifact configuration in SignPath; the copy here
+  is the reviewed source of truth.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="productName" default-value="Bolo" />
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="*_x64-setup.exe" product-name="${productName}" product-version="${version}">
+      <authenticode-sign/>
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

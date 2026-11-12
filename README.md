@@ -13,7 +13,7 @@ Open-source, local-first voice dictation for **Windows** and **Android**. Hold a
 
 1. Download `Bolo_X.Y.Z_x64-setup.exe` from the [latest release](https://github.com/Nirav1810/bolo/releases). You can check it against the `.sha256` file next to it.
 2. Run it. It installs for your user only, so it needs no admin rights. If WebView2 is missing, the installer downloads it (Windows 11 already has it).
-3. The installer isn't code-signed yet, so **Windows SmartScreen may say "Windows protected your PC"**. Click **More info**, then **Run anyway**. This happens only for unsigned downloads; the `.sha256` file lets you confirm it's the published file.
+3. The installer isn't code-signed yet, so **Windows SmartScreen may say "Windows protected your PC"**. Click **More info**, then **Run anyway**. This happens only for unsigned downloads; the `.sha256` file lets you confirm it's the published file. Code signing through SignPath Foundation is on its way (see [Code signing policy](#code-signing-policy)); once releases are signed, this step goes away.
 4. On first run, Bolo walks you through a mic check and downloads the speech model (about 475 MB, once). It then waits in the tray.
 
 **Using it.** Click where you want the text, **hold Caps Lock**, speak, and let go. The text is pasted at the cursor, and a small pill at the bottom of the screen shows what Bolo hears.
@@ -23,7 +23,7 @@ Open-source, local-first voice dictation for **Windows** and **Android**. Hold a
 - Lists arrive as real lists in Word, Outlook and Gmail, and as Markdown in Slack, Notion and Obsidian. Code editors and terminals get no auto-capitals or trailing period.
 - Your clipboard is restored after each paste, and the pastes stay out of Win+V history.
 
-**Privacy.** With the default local model, audio and text never leave the PC. Audio goes to a provider only if you choose a cloud engine (Deepgram, Groq, Sarvam). Polish, which is off by default, sends the text, never the audio, to Anthropic using your own key; it stays off in code editors and terminals. API keys are kept in Windows Credential Manager. History keeps text only, on this PC, for 30 days, and you can turn it off or clear it. Bolo has no telemetry and no accounts.
+**Privacy.** With the default local model, audio and text never leave the PC. Audio goes to a provider only if you choose a cloud engine (Deepgram, Groq, Sarvam). Polish, which is off by default, sends the text, never the audio, to Anthropic using your own key; it stays off in code editors and terminals. API keys are kept in Windows Credential Manager. History keeps text only, on this PC, for 30 days, and you can turn it off or clear it. Bolo has no telemetry and no accounts. Besides the engines you choose, it only goes online to download a speech model you pick (from its upstream host, SHA-256 verified) and to check GitHub for updates (on launch and every 6 hours; it never installs without your click).
 
 To uninstall, use Windows Settings › Apps. The uninstaller asks whether to delete your downloaded models and dictation history. Settings and API keys stay unless you tick "Delete the application data".
 
@@ -107,6 +107,17 @@ python -I scripts/release.py tag 0.1.0         # tag and push; .github/workflows
 ```
 
 The tag workflow builds `bolo` for Windows x64 and zips it with the sherpa-onnx DLLs, `README.txt` and the licences. It runs the unzipped `bolo --help` with nothing but Windows on `PATH`. It also builds the desktop app's per-user NSIS installer (`npx tauri build` in `apps/desktop`), installs and uninstalls it silently, and then publishes the GitHub Release with that version's `CHANGELOG.md` section as notes. Don't edit `CHANGELOG.md` by hand. Each release PR regenerates it from the commit titles ([cliff.toml](cliff.toml)), and a stable release folds its betas into one section.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org). Signing is being set up, so current releases are still unsigned.
+
+Only installers built by this repository's GitHub Actions workflows from its own source are signed ([release.yml](.github/workflows/release.yml), [nightly.yml](.github/workflows/nightly.yml)). Nightlies use a test certificate, not the SignPath Foundation one. See [docs/SIGNING.md](docs/SIGNING.md).
+
+- Committers and reviewers: [the maintainer](https://github.com/Nirav1810)
+- Approvers: [the maintainer](https://github.com/Nirav1810)
+
+Privacy: Bolo sends nothing to any networked system except what you configure or ask for: audio or text to the cloud engines you choose (Deepgram, Groq, Sarvam, and Anthropic for Polish), each with your own key, the speech models you download, and the update check against this repository's GitHub releases. See **Privacy** under [Install](#install-the-desktop-app-windows-x64).
 
 ## License
 
