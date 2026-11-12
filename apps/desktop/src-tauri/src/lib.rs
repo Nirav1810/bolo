@@ -396,8 +396,16 @@ impl Bolo {
 
     /// Make the running app match `settings` after `changes`.
     fn follow(&self, app: &AppHandle, settings: &Settings, changes: Changes) {
-        if changes.engine || changes.polish {
+        if changes.engine || changes.polish || changes.snippets {
             self.reconfigure(settings, changes.engine);
+        }
+        // A new engine config carries the snippets already; otherwise send them alone,
+        // so the model stays loaded.
+        if changes.snippets && !changes.engine {
+            let snippets = lock(&self.config).snippets.clone();
+            if let Some(e) = lock(&self.engine).as_ref() {
+                e.set_snippets(snippets);
+            }
         }
         if changes.key {
             *lock(&self.push_to_talk) = settings.push_to_talk;

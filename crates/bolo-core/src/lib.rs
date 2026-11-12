@@ -13,6 +13,9 @@
 //! (ADR-0016). Dictations of [`SEGMENT_AFTER`] or longer are polished a segment at a
 //! time while the user speaks, so release only waits for the last one.
 //!
+//! Snippets ([`EngineConfig::snippets`]) are expanded last, in `on_final` and in
+//! `on_polished`; polish sees the triggers as spoken and is told to keep them.
+//!
 //! In the Auto [`LanguageMode`] on an engine with a per-stream language option
 //! (Nemotron), the streaming STT runs twice, forced to English and to Hindi, and one
 //! result is chosen at release (ADR-0014).
@@ -38,6 +41,7 @@ mod segment;
 mod worker;
 
 pub use audio::{AudioFactory, AudioSource, MicSource, WavSource};
+pub use bolo_format::snippets::Snippet;
 pub use bolo_stt::{HinglishScript, Language};
 pub use build::{BuiltStt, build_one, build_stt};
 pub use polish::{ANTHROPIC, LlmClient, POLISH_DEADLINE, Polish};
@@ -162,7 +166,7 @@ pub trait EngineEvents: Send + Sync {
     /// Input level for the waveform UI, ~30 Hz while listening.
     fn on_level(&self, rms: f32);
     fn on_partial(&self, text: String);
-    /// The instant text (Layer 1), as soon as recognition finishes.
+    /// The instant text (Layer 1, then snippets), as soon as recognition finishes.
     fn on_final(&self, out: FormattedOutput);
     /// With [`Polish::On`]: the polished text for the last `on_final`, which it replaces.
     /// Both `plain` and `markdown` hold the polished text, `html` (for an HTML target) is
@@ -240,6 +244,10 @@ pub struct EngineConfig {
     pub language: LanguageMode,
     pub script: HinglishScript,
     pub dictionary: Vec<String>,
+    /// Spoken triggers and the text they expand to, applied last to `on_final` and
+    /// `on_polished` in every rendering. Polish is told to keep the triggers as spoken.
+    #[serde(default)]
+    pub snippets: Vec<Snippet>,
     /// Unload the local model after this many idle seconds (30 desktop, 20 Android).
     pub idle_unload_secs: u32,
     /// Keep the mic open this long after a dictation (ADR-009 hybrid policy). 0 = close
@@ -262,6 +270,7 @@ impl Default for EngineConfig {
             language: LanguageMode::Auto,
             script: HinglishScript::Roman,
             dictionary: Vec::new(),
+            snippets: Vec::new(),
             idle_unload_secs: 30,
             mic_warm_secs: 120,
             models_dir: PathBuf::new(),
@@ -395,6 +404,11 @@ impl Engine {
     /// A polish already running for the last dictation is unaffected.
     pub fn set_polish(&self, polish: Polish) {
         let _ = self.send(Cmd::SetPolish(polish));
+    }
+
+    /// Change the snippets alone, from the next dictation on; the model stays loaded.
+    pub fn set_snippets(&self, snippets: Vec<Snippet>) {
+        let _ = self.send(Cmd::SetSnippets(snippets));
     }
 
     pub fn state(&self) -> DictationState {

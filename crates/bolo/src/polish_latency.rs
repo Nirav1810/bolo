@@ -137,6 +137,7 @@ pub async fn run(opts: &Options<'_>, clips_dir: &Path, models_dir: &Path) -> Res
             tone: "neutral",
             app: "Notes",
             dictionary: &[],
+            triggers: &[],
             context: None,
         };
         let t0 = Instant::now();

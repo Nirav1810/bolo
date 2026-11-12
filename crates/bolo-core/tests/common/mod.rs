@@ -190,6 +190,8 @@ pub struct Reply {
 pub struct Call {
     pub transcript: String,
     pub context: Option<String>,
+    /// Snippet triggers polish was told to keep.
+    pub triggers: Vec<String>,
     /// The target app's name, from [`Polish::On`].
     pub app: String,
     pub at: Instant,
@@ -248,6 +250,7 @@ impl LlmClient for FakeLlm {
             g.push(Call {
                 transcript: req.transcript.to_owned(),
                 context: req.context.map(str::to_owned),
+                triggers: req.triggers.to_vec(),
                 app: req.app.to_owned(),
                 at: Instant::now(),
             });

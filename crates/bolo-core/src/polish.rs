@@ -84,6 +84,7 @@ struct Owned {
     tone: String,
     app: String,
     dictionary: Vec<String>,
+    triggers: Vec<String>,
     context: Option<String>,
 }
 
@@ -95,6 +96,7 @@ impl Owned {
             tone: r.tone.to_owned(),
             app: r.app.to_owned(),
             dictionary: r.dictionary.to_vec(),
+            triggers: r.triggers.to_vec(),
             context: r.context.map(str::to_owned),
         }
     }
@@ -106,6 +108,7 @@ impl Owned {
             tone: &self.tone,
             app: &self.app,
             dictionary: &self.dictionary,
+            triggers: &self.triggers,
             context: self.context.as_deref(),
         }
     }

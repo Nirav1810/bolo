@@ -9,8 +9,8 @@
 //! The Apps tab edits the `[[apps]]` rows one field at a time instead ([`set_app`],
 //! [`reset_app`], [`add_app`]).
 
-use bolo_core::{HinglishScript, LanguageMode, OutputFormat};
-use bolo_store::{AppProfile, PushToTalkKey, Settings};
+use bolo_core::{HinglishScript, LanguageMode, OutputFormat, Snippet};
+use bolo_store::{AppProfile, PushToTalkKey, Settings, SnippetRow};
 use serde::{Deserialize, Serialize};
 
 /// The tones polish knows.
@@ -29,6 +29,8 @@ pub struct Form {
     /// Engine specs, primary first.
     pub engines: Vec<String>,
     pub dictionary: Vec<String>,
+    /// The `[[snippets]]` rows, in order.
+    pub snippets: Vec<Snippet>,
     pub polish: bool,
     pub tone: String,
     pub history: bool,
@@ -44,6 +46,7 @@ impl Form {
             script: s.script,
             engines: s.engines.clone(),
             dictionary: s.dictionary.clone(),
+            snippets: s.snippets.iter().map(|r| Snippet { trigger: r.trigger.clone(), text: r.text.clone() }).collect(),
             polish: s.polish.enabled,
             tone: s.polish.tone.clone(),
             history: s.history.enabled,
@@ -54,6 +57,8 @@ impl Form {
     /// `settings` with this form's values, tidied:
     /// - engines trimmed, blanks and repeats dropped; none at all keeps the old chain;
     /// - dictionary terms trimmed, blanks and case-insensitive repeats dropped;
+    /// - snippet triggers trimmed; rows with a blank trigger or text, or a trigger
+    ///   already used (ignoring case), dropped; the text kept as written;
     /// - an unknown tone becomes `neutral`;
     /// - retention at least one day.
     pub fn apply(self, settings: &Settings) -> Settings {
@@ -67,6 +72,7 @@ impl Form {
             s.engines = engines;
         }
         s.dictionary = dedupe(self.dictionary, str::to_lowercase);
+        s.snippets = snippet_rows(self.snippets, &settings.snippets);
         s.polish.enabled = self.polish;
         let tone = self.tone.trim().to_lowercase();
         s.polish.tone = if TONES.contains(&tone.as_str()) { tone } else { "neutral".into() };
@@ -153,6 +159,27 @@ pub fn add_app(apps: &[AppProfile], exe: &str, listed: bool) -> Vec<AppProfile> 
     apps
 }
 
+/// The form's snippets as `[[snippets]]` rows, tidied (see [`Form::apply`]). A row
+/// whose trigger was already stored keeps the keys this version doesn't know.
+fn snippet_rows(snippets: Vec<Snippet>, old: &[SnippetRow]) -> Vec<SnippetRow> {
+    let mut seen = std::collections::HashSet::new();
+    snippets
+        .into_iter()
+        .filter_map(|s| {
+            let trigger = s.trigger.trim();
+            if trigger.is_empty() || s.text.trim().is_empty() || !seen.insert(trigger.to_lowercase()) {
+                return None;
+            }
+            let unknown = old
+                .iter()
+                .find(|r| r.trigger.trim().eq_ignore_ascii_case(trigger))
+                .map(|r| r.unknown.clone())
+                .unwrap_or_default();
+            Some(SnippetRow { trigger: trigger.to_owned(), text: s.text, unknown })
+        })
+        .collect()
+}
+
 /// Trimmed, without blanks, without repeats by `key` (the first one wins).
 fn dedupe(items: Vec<String>, key: impl Fn(&str) -> String) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
@@ -167,6 +194,8 @@ pub struct Changes {
     pub engine: bool,
     /// The polish choices the app plans each dictation with.
     pub polish: bool,
+    /// The snippets the engine expands. The model stays loaded.
+    pub snippets: bool,
     /// The push-to-talk hook needs reinstalling with the new key.
     pub key: bool,
     pub autostart: bool,
@@ -191,6 +220,7 @@ pub fn changes(old: &Settings, new: &Settings) -> Changes {
             || old.dictionary != new.dictionary
             || old.models_dir != new.models_dir,
         polish: old.polish != new.polish || old.apps != new.apps || old.dictionary != new.dictionary,
+        snippets: old.snippets != new.snippets,
         key: old.push_to_talk != new.push_to_talk,
         autostart: old.autostart != new.autostart,
         history: old.history.enabled != new.history.enabled,
@@ -217,8 +247,8 @@ mod tests {
     use bolo_core::{HinglishScript, LanguageMode};
     use bolo_store::{PushToTalkKey, Settings};
 
-    use bolo_core::OutputFormat;
-    use bolo_store::AppProfile;
+    use bolo_core::{OutputFormat, Snippet};
+    use bolo_store::{AppProfile, SnippetRow};
 
     use super::{AppChange, Changes, Form, add_app, changes, new_exe, provider_of, reset_app, set_app};
 
@@ -270,6 +300,11 @@ mod tests {
             Changes { engine: true, polish: true, ..Default::default() }
         );
         assert_eq!(with(|f| f.polish = true), Changes { polish: true, ..Default::default() });
+        assert_eq!(
+            with(|f| f.snippets = vec![Snippet { trigger: "sig".into(), text: "Thanks".into() }]),
+            Changes { snippets: true, ..Default::default() },
+            "snippets don't reload the model"
+        );
         assert_eq!(with(|f| f.tone = "casual".into()), Changes { polish: true, ..Default::default() });
         let apps = Settings { apps: vec![AppProfile::new("slack.exe")], ..old.clone() };
         assert_eq!(changes(&old, &apps), Changes { polish: true, ..Default::default() }, "app rows replan polish");
@@ -277,6 +312,29 @@ mod tests {
         assert_eq!(with(|f| f.autostart = true), Changes { autostart: true, ..Default::default() });
         assert_eq!(with(|f| f.history = false), Changes { history: true, ..Default::default() });
         assert_eq!(with(|f| f.retention_days = 7), Changes { retention: true, ..Default::default() });
+    }
+
+    #[test]
+    fn snippets_are_tidied_and_keep_unknown_keys() {
+        let mut row = SnippetRow::new("sig", "old");
+        row.unknown.insert("future".into(), toml::Value::Boolean(true));
+        let s = Settings { snippets: vec![row], ..Default::default() };
+        let snippet = |t: &str, x: &str| Snippet { trigger: t.into(), text: x.into() };
+        let mut f = Form::of(&s);
+        assert_eq!(f.snippets, [snippet("sig", "old")]);
+        f.snippets = vec![
+            snippet(" SIG ", "Thanks,\nPriya \n"),
+            snippet("sig", "again"),
+            snippet("  ", "no trigger"),
+            snippet("blank", "  "),
+            snippet("my address", "221B"),
+        ];
+        let saved = f.apply(&s).snippets;
+        assert_eq!(saved.len(), 2);
+        assert_eq!((saved[0].trigger.as_str(), saved[0].text.as_str()), ("SIG", "Thanks,\nPriya \n"), "text verbatim");
+        assert_eq!(saved[0].unknown.get("future").and_then(toml::Value::as_bool), Some(true));
+        assert_eq!((saved[1].trigger.as_str(), saved[1].text.as_str()), ("my address", "221B"));
+        assert!(saved[1].unknown.is_empty());
     }
 
     #[test]
