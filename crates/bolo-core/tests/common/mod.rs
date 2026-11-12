@@ -271,6 +271,8 @@ pub enum Ev {
     Error(String),
     State(DictationState),
     Usage(Usage),
+    /// `on_mic_fallback(wanted, using)`.
+    MicFallback(String, String),
 }
 
 struct Recorder(Mutex<Sender<Ev>>);
@@ -304,6 +306,9 @@ impl EngineEvents for Recorder {
     }
     fn on_usage(&self, usage: Usage) {
         self.send(Ev::Usage(usage));
+    }
+    fn on_mic_fallback(&self, wanted: String, using: String) {
+        self.send(Ev::MicFallback(wanted, using));
     }
 }
 
@@ -373,10 +378,9 @@ impl Harness {
         let (tx, rx) = mpsc::channel();
         let stt = Arc::new(stt);
         let audio = Arc::new(audio);
-        let factory: bolo_core::AudioFactory =
-            Arc::new(
-                move || Ok(Box::new(WavSource::with_speed(audio.as_ref().clone(), speed)) as Box<dyn AudioSource>),
-            );
+        let factory: bolo_core::AudioFactory = Arc::new(move |_| {
+            Ok(Box::new(WavSource::with_speed(audio.as_ref().clone(), speed)) as Box<dyn AudioSource>)
+        });
         let engine = Engine::with_llm_client(
             config(language, polish),
             Box::new(Recorder(Mutex::new(tx))),
@@ -385,6 +389,15 @@ impl Harness {
             llm,
         )
         .expect("engine starts with an injected STT engine and LLM client");
+        Self { engine, stt, rx }
+    }
+
+    /// An engine with `config` on a fake STT and a custom audio source.
+    pub fn with_factory(stt: FakeStt, config: EngineConfig, factory: bolo_core::AudioFactory) -> Self {
+        let (tx, rx) = mpsc::channel();
+        let stt = Arc::new(stt);
+        let engine = Engine::with_stt_engine(config, Box::new(Recorder(Mutex::new(tx))), factory, stt.clone())
+            .expect("engine starts with an injected STT engine");
         Self { engine, stt, rx }
     }
 

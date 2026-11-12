@@ -97,7 +97,7 @@ pub async fn run(opts: &Options<'_>, clips_dir: &Path, models_dir: &Path) -> Res
     };
     let current: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
     let cur = current.clone();
-    let factory: AudioFactory = Arc::new(move || {
+    let factory: AudioFactory = Arc::new(move |_| {
         let samples = cur.lock().map(|g| g.clone()).unwrap_or_default();
         Ok(Box::new(WavSource::new(samples)) as Box<dyn AudioSource>)
     });

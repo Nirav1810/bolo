@@ -1,4 +1,4 @@
-//! Onboarding's mic check: open the default microphone cold, the way a dictation's
+//! Onboarding's mic check: open the chosen microphone cold, the way a dictation's
 //! first open does, and measure how long it delivers digital silence (exact zeros)
 //! before real sound. Windows Audio enhancements often add 200 ms or more, which clips
 //! the first word (ADR-009); `bolo mic-test` measures the same thing.
@@ -21,6 +21,8 @@ const HEARD_RMS: f32 = 0.003;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MicCheck {
     pub device: String,
+    /// The chosen microphone isn't plugged in, so `device` is the Windows default.
+    pub fell_back: bool,
     /// Digital silence after the stream opened, in ms; `None` if it never ended.
     pub leading_ms: Option<u64>,
     /// The loudest moment, as RMS over ~50 ms.
@@ -41,6 +43,7 @@ pub fn verdict(device: String, leading: Option<Duration>, peak_rms: f32) -> MicC
     let leading_ms = leading.map(|d| d.as_millis() as u64);
     MicCheck {
         device,
+        fell_back: false,
         leading_ms,
         peak_rms,
         heard: peak_rms >= HEARD_RMS,
@@ -48,9 +51,10 @@ pub fn verdict(device: String, leading: Option<Duration>, peak_rms: f32) -> MicC
     }
 }
 
-/// Run the check, calling `level` with the RMS as it listens. Blocks for [`LISTEN`].
-pub fn check(level: impl Fn(f32)) -> Result<MicCheck, String> {
-    let mut cap = Capture::start_default().map_err(|e| e.to_string())?;
+/// Run the check on `device` (`None`: the Windows default), calling `level` with the RMS
+/// as it listens. Blocks for [`LISTEN`].
+pub fn check(device: Option<&str>, level: impl Fn(f32)) -> Result<MicCheck, String> {
+    let mut cap = Capture::start(device).map_err(|e| e.to_string())?;
     let rate = f64::from(cap.sample_rate());
     let t0 = Instant::now();
     let (mut seen, mut leading, mut peak) = (0usize, None, 0f32);
@@ -69,10 +73,10 @@ pub fn check(level: impl Fn(f32)) -> Result<MicCheck, String> {
         peak = peak.max(rms);
         level(rms);
     }
-    let device = cap.device_name().to_owned();
+    let (device, fell_back) = (cap.device_name().to_owned(), cap.fell_back());
     let mut rest = Vec::new();
     cap.stop(&mut rest);
-    Ok(verdict(device, leading, peak))
+    Ok(MicCheck { fell_back, ..verdict(device, leading, peak) })
 }
 
 #[cfg(test)]
@@ -105,7 +109,7 @@ mod tests {
     #[ignore = "opens the real microphone"]
     fn live_check_on_the_default_mic() {
         let levels = std::sync::atomic::AtomicUsize::new(0);
-        let r = super::check(|_| {
+        let r = super::check(None, |_| {
             levels.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         })
         .unwrap();

@@ -181,6 +181,10 @@ pub trait EngineEvents: Send + Sync {
     /// A paid cloud request finished: for the host's usage meter. Once per request that
     /// returned a result; a request dropped at a deadline or cancelled isn't reported.
     fn on_usage(&self, _usage: Usage) {}
+    /// The mic opened on the default device (`using`) because the chosen one (`wanted`)
+    /// isn't plugged in. Once per unplug: not again until the chosen device has been used
+    /// again or the choice changed.
+    fn on_mic_fallback(&self, _wanted: String, _using: String) {}
 }
 
 /// One paid cloud request, as [`EngineEvents::on_usage`] reports it. Costs are
@@ -253,6 +257,10 @@ pub struct EngineConfig {
     /// Keep the mic open this long after a dictation (ADR-009 hybrid policy). 0 = close
     /// immediately.
     pub mic_warm_secs: u32,
+    /// The input device by name; `None` for the system default. When it isn't plugged
+    /// in the default is used, and [`EngineEvents::on_mic_fallback`] says so.
+    #[serde(default)]
+    pub input_device: Option<String>,
     pub models_dir: PathBuf,
     /// Inference threads for local models (default min(4, cores)).
     pub threads: Option<i32>,
@@ -273,6 +281,7 @@ impl Default for EngineConfig {
             snippets: Vec::new(),
             idle_unload_secs: 30,
             mic_warm_secs: 120,
+            input_device: None,
             models_dir: PathBuf::new(),
             threads: None,
             polish: Polish::Off,
@@ -409,6 +418,12 @@ impl Engine {
     /// Change the snippets alone, from the next dictation on; the model stays loaded.
     pub fn set_snippets(&self, snippets: Vec<Snippet>) {
         let _ = self.send(Cmd::SetSnippets(snippets));
+    }
+
+    /// Change the input device alone (`None`: the system default); the model stays
+    /// loaded. A warm mic reopens on the new device once no dictation is running.
+    pub fn set_input_device(&self, device: Option<String>) {
+        let _ = self.send(Cmd::SetInputDevice(device));
     }
 
     pub fn state(&self) -> DictationState {

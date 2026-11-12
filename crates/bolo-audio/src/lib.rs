@@ -3,6 +3,7 @@
 #[cfg(feature = "capture")]
 pub mod capture;
 pub mod codec;
+pub mod device;
 pub mod resample;
 
 /// Pipeline sample rate. Every STT engine receives audio at this rate.

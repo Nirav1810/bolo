@@ -6,6 +6,7 @@
 //! polished text through the [`Inserter`]; the [`Journal`] records both in history.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use bolo_core::{BoloError, DictationState, EngineEvents, FormattedOutput, Usage};
@@ -72,10 +73,18 @@ pub enum AppEvent {
 pub const BLOCKED_NOTICE: &str = "Copied. Couldn't paste into an admin window";
 pub const BLOCKED_HINT: &str = "Ctrl+V";
 
+/// The notice when the chosen microphone isn't plugged in and the default is used.
+pub const MIC_FALLBACK_NOTICE: &str = "Mic unplugged. Using the Windows default";
+
 impl AppEvent {
     /// The notice for a paste the window in front blocked.
     pub fn blocked() -> Self {
         Self::Notice { message: BLOCKED_NOTICE.into(), hint: Some(BLOCKED_HINT.into()) }
+    }
+
+    /// The notice for a dictation on the default mic because the chosen one is gone.
+    pub fn mic_fallback() -> Self {
+        Self::Notice { message: MIC_FALLBACK_NOTICE.into(), hint: None }
     }
 }
 
@@ -131,11 +140,14 @@ pub struct Controller {
     flags: Arc<Flags>,
     inserter: Arc<Inserter>,
     journal: Arc<Journal>,
+    /// The mic fell back to the default: say so with the next text. The mic opens before
+    /// the pill shows Listening, which would hide a notice sent at once.
+    mic_notice: AtomicBool,
 }
 
 impl Controller {
     pub fn new(emit: Arc<dyn Emit>, flags: Arc<Flags>, inserter: Arc<Inserter>, journal: Arc<Journal>) -> Self {
-        Self { emit, flags, inserter, journal }
+        Self { emit, flags, inserter, journal, mic_notice: AtomicBool::new(false) }
     }
 }
 
@@ -152,7 +164,13 @@ impl EngineEvents for Controller {
         let inserted = self.inserter.insert(&out, Instant::now());
         tracing::info!(engine = %out.engine_id, language = ?out.language, ?inserted, "final");
         match inserted {
-            Inserted::Pasted | Inserted::Empty => {}
+            Inserted::Pasted | Inserted::Empty => {
+                // Before the final, so the pill keeps it over "Inserted" (as for a blocked
+                // paste). A blocked or failed paste's message goes first; this waits.
+                if self.mic_notice.swap(false, Ordering::Relaxed) {
+                    self.emit.emit(AppEvent::mic_fallback());
+                }
+            }
             Inserted::Blocked => self.emit.emit(AppEvent::blocked()),
             Inserted::Failed(e) => self.emit.emit(AppEvent::Error { message: format!("could not paste: {e}") }),
         }
@@ -201,6 +219,11 @@ impl EngineEvents for Controller {
         tracing::debug!(?usage, "usage");
         self.journal.usage(&usage);
         self.emit.emit(AppEvent::Usage);
+    }
+
+    fn on_mic_fallback(&self, wanted: String, using: String) {
+        tracing::info!(%wanted, %using, "the chosen mic isn't plugged in; using the default");
+        self.mic_notice.store(true, Ordering::Relaxed);
     }
 }
 
@@ -405,6 +428,31 @@ Two."
         assert!(matches!(events[1], AppEvent::Final { .. }));
         assert_eq!(r.desktop.text().as_deref(), Some("Hello."));
         assert!(r.timer.delays().is_empty());
+    }
+
+    #[test]
+    fn a_mic_fallback_is_told_once_with_the_next_text() {
+        let r = rig();
+        r.c.on_mic_fallback("USB Headset".into(), "Microphone Array".into());
+        assert!(r.rec.take().is_empty(), "not over Listening");
+        r.c.on_final(output("Hello."));
+        let events = r.rec.take();
+        assert_eq!(events[0], AppEvent::mic_fallback());
+        assert!(matches!(events[1], AppEvent::Final { .. }));
+        r.c.on_final(output("Again."));
+        assert_eq!(kinds(&r.rec), ["final"], "once");
+    }
+
+    #[test]
+    fn a_mic_fallback_waits_behind_a_blocked_paste() {
+        let r = rig();
+        r.c.on_mic_fallback("USB Headset".into(), "Microphone Array".into());
+        r.desktop.set_blocked(true);
+        r.c.on_final(output("Hello."));
+        assert_eq!(r.rec.take()[0], AppEvent::blocked());
+        r.desktop.set_blocked(false);
+        r.c.on_final(output("Again."));
+        assert_eq!(r.rec.take()[0], AppEvent::mic_fallback());
     }
 
     #[test]

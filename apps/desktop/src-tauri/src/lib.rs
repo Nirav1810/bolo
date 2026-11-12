@@ -396,7 +396,7 @@ impl Bolo {
 
     /// Make the running app match `settings` after `changes`.
     fn follow(&self, app: &AppHandle, settings: &Settings, changes: Changes) {
-        if changes.engine || changes.polish || changes.snippets {
+        if changes.engine || changes.polish || changes.snippets || changes.mic {
             self.reconfigure(settings, changes.engine);
         }
         // A new engine config carries the snippets already; otherwise send them alone,
@@ -405,6 +405,14 @@ impl Bolo {
             let snippets = lock(&self.config).snippets.clone();
             if let Some(e) = lock(&self.engine).as_ref() {
                 e.set_snippets(snippets);
+            }
+        }
+        // The same for the microphone: a warm mic moves to the new device.
+        if changes.mic && !changes.engine {
+            let device = lock(&self.config).input_device.clone();
+            tracing::info!(?device, "microphone changed");
+            if let Some(e) = lock(&self.engine).as_ref() {
+                e.set_input_device(device);
             }
         }
         if changes.key {
@@ -919,6 +927,7 @@ pub fn run() {
             commands::open_folder,
             commands::open_link,
             commands::mic_check,
+            commands::microphones,
             commands::onboarding_save,
             commands::update_view,
             commands::update_check,

@@ -15,32 +15,69 @@ pub trait AudioSource {
     fn drain_mono(&mut self, out: &mut Vec<f32>);
     /// Recent input level (RMS, 0..1) for the waveform UI.
     fn level(&self) -> f32;
+    /// The device this source records from, for the user.
+    fn device_name(&self) -> String {
+        String::new()
+    }
+    /// Opened on the default device because the one asked for isn't plugged in.
+    fn fell_back(&self) -> bool {
+        false
+    }
+    /// The source stopped for good (its device went away): the engine opens a new one.
+    fn failed(&self) -> bool {
+        false
+    }
+    /// After [`Self::fell_back`]: whether the device asked for is plugged in again. The
+    /// engine asks every few seconds while the mic is warm; it may list the devices.
+    fn wanted_is_back(&self) -> bool {
+        false
+    }
 }
 
-/// Opens a source. Called on the engine thread when the mic needs to (re)open.
-pub type AudioFactory = Arc<dyn Fn() -> Result<Box<dyn AudioSource>, BoloError> + Send + Sync>;
+/// Opens a source on the input device named by its argument (`None`: the default).
+/// Called on the engine thread when the mic needs to (re)open.
+pub type AudioFactory = Arc<dyn Fn(Option<&str>) -> Result<Box<dyn AudioSource>, BoloError> + Send + Sync>;
 
-pub struct MicSource(Capture);
+/// The live microphone: the device chosen by name, or the default.
+pub struct MicSource {
+    capture: Capture,
+    wanted: Option<String>,
+}
 
 impl MicSource {
-    pub fn open() -> Result<Self, BoloError> {
-        Capture::start_default().map(Self).map_err(|e| BoloError::Audio(e.to_string()))
+    /// Open `device` (`None`: the default), falling back to the default when it isn't
+    /// plugged in.
+    pub fn open(device: Option<&str>) -> Result<Self, BoloError> {
+        let capture = Capture::start(device).map_err(|e| BoloError::Audio(e.to_string()))?;
+        Ok(Self { capture, wanted: device.map(str::to_owned) })
     }
 
     pub fn factory() -> AudioFactory {
-        Arc::new(|| Ok(Box::new(MicSource::open()?) as Box<dyn AudioSource>))
+        Arc::new(|device| Ok(Box::new(MicSource::open(device)?) as Box<dyn AudioSource>))
     }
 }
 
 impl AudioSource for MicSource {
     fn sample_rate(&self) -> u32 {
-        self.0.sample_rate()
+        self.capture.sample_rate()
     }
     fn drain_mono(&mut self, out: &mut Vec<f32>) {
-        self.0.drain_mono(out);
+        self.capture.drain_mono(out);
     }
     fn level(&self) -> f32 {
-        self.0.level()
+        self.capture.level()
+    }
+    fn device_name(&self) -> String {
+        self.capture.device_name().to_owned()
+    }
+    fn fell_back(&self) -> bool {
+        self.capture.fell_back()
+    }
+    fn failed(&self) -> bool {
+        self.capture.failed()
+    }
+    fn wanted_is_back(&self) -> bool {
+        self.wanted.as_deref().is_some_and(bolo_audio::capture::is_available)
     }
 }
 
@@ -68,7 +105,7 @@ impl WavSource {
 
     /// A factory that replays `samples` each time the engine opens the "mic".
     pub fn factory(samples: Arc<Vec<f32>>) -> AudioFactory {
-        Arc::new(move || Ok(Box::new(WavSource::new(samples.as_ref().clone())) as Box<dyn AudioSource>))
+        Arc::new(move |_| Ok(Box::new(WavSource::new(samples.as_ref().clone())) as Box<dyn AudioSource>))
     }
 }
 

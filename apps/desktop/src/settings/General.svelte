@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Keyboard } from "@lucide/svelte";
-  import { api, keyFromCode, keyLabel, type Form, type SettingsView } from "../lib/api";
+  import { api, keyFromCode, keyLabel, type Form, type Microphones, type SettingsView } from "../lib/api";
   import Button from "../lib/ui/Button.svelte";
   import Segmented from "../lib/ui/Segmented.svelte";
   import SettingsRow from "../lib/ui/SettingsRow.svelte";
@@ -12,6 +12,23 @@
 
   let capturing = $state(false);
   let captureNote = $state("");
+
+  // The microphones plugged in now, read again each time the list opens (hot-plug).
+  let mics = $state<Microphones | null>(null);
+  const chosenMic = $derived(view.form.input_device);
+  const micMissing = $derived(mics !== null && chosenMic !== null && !mics.devices.includes(chosenMic));
+
+  async function refreshMics() {
+    try {
+      mics = await api.microphones();
+    } catch {
+      // Keep the last list; the select still shows the choice.
+    }
+  }
+
+  $effect(() => {
+    refreshMics();
+  });
 
   async function startCapture() {
     captureNote = "";
@@ -79,6 +96,36 @@
         <Keyboard aria-hidden="true" />
         <span class="flex-1 text-center">{capturing ? "Press a key…" : keyLabel(view.form.push_to_talk)}</span>
       </Button>
+    {/snippet}
+  </SettingsRow>
+  <SettingsRow title="Microphone" labelFor="microphone">
+    {#snippet description()}
+      {#if micMissing}
+        Not plugged in. Bolo uses the Windows default until it’s back.
+      {:else if chosenMic === null && mics?.default}
+        Follows Windows, now {mics.default}.
+      {:else}
+        The microphone Bolo listens on.
+      {/if}
+    {/snippet}
+    {#snippet control()}
+      <select
+        id="microphone"
+        class="select max-w-64 truncate"
+        value={chosenMic ?? ""}
+        onfocus={refreshMics}
+        onpointerdown={refreshMics}
+        onchange={(e) => {
+          const v = e.currentTarget.value;
+          update((f) => (f.input_device = v === "" ? null : v));
+        }}
+      >
+        <option value="">Windows default</option>
+        {#each mics?.devices ?? [] as name (name)}<option value={name}>{name}</option>{/each}
+        {#if chosenMic !== null && (mics === null || micMissing)}
+          <option value={chosenMic}>{chosenMic}{micMissing ? " (not plugged in)" : ""}</option>
+        {/if}
+      </select>
     {/snippet}
   </SettingsRow>
   <SettingsRow title="Start with Windows" labelFor="autostart" description="Bolo waits in the tray, ready for your key.">

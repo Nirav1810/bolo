@@ -99,7 +99,7 @@ pub fn run(
     // The "mic" plays whichever clip is current.
     let current: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
     let cur = current.clone();
-    let factory: AudioFactory = Arc::new(move || {
+    let factory: AudioFactory = Arc::new(move |_| {
         let samples = cur.lock().map(|g| g.clone()).unwrap_or_default();
         Ok(Box::new(WavSource::with_speed(samples, speed)) as Box<dyn AudioSource>)
     });
