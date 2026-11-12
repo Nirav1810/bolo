@@ -42,6 +42,10 @@ _Avoid_: Destination, focus app
 The user's choices for one app, edited on the Apps tab and stored as an `[[apps]]` row in settings: its name, polish on or off, tone and format. Each field the user set wins over the bundled app rule's (ADR-0020).
 _Avoid_: Override, per-app polish
 
+**Snippet**:
+A saved trigger phrase and the text it expands to, kept as a `[[snippets]]` row in settings. Saying the trigger inserts the text verbatim in its place; it is expanded last, after Layer 1 and after polish, and polish is told to keep the trigger as spoken.
+_Avoid_: Macro, shortcut, text replacement
+
 **Overlay pill**:
 The small, non-activating, click-through window that shows listening state, the waveform and partial text during a dictation.
 _Avoid_: HUD, toast, popup

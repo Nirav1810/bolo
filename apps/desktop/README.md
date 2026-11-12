@@ -33,7 +33,7 @@ The settings window (tray › Settings…) edits `%APPDATA%\Bolo\settings.toml` 
 - **Engines and keys:** the engine chain, model downloads, and API keys. Keys live in Windows Credential Manager under `bolo` and never go in the file.
 - **Polish:** on/off and the tone.
 - **Apps:** per-app format, polish and tone (`[[apps]]` in the file, ADR-0020). Each field you set wins over the bundled rule for that app.
-- **Dictionary.**
+- **Dictionary & snippets:** words to spell your way, and snippets (`[[snippets]]` in the file): say a trigger phrase and Bolo types the saved text in its place.
 - **History:** search and copy, retention, and the off switch.
 - **About.**
 

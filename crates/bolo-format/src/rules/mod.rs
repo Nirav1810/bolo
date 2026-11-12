@@ -24,6 +24,8 @@ mod numbers;
 mod punctuation;
 mod token;
 
+pub(crate) use token::escape_html;
+
 /// The language of the dictation being formatted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Language {

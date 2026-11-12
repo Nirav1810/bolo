@@ -22,6 +22,12 @@ export type LanguageMode = "auto" | "english" | "hinglish";
 export type Script = "roman" | "devanagari";
 export type Format = "plain" | "markdown" | "html";
 
+/** A spoken trigger and the text it expands to (bolo_core::Snippet). */
+export interface TextSnippet {
+  trigger: string;
+  text: string;
+}
+
 /** What the settings window edits (src-tauri/src/form.rs, `Form`). */
 export interface Form {
   push_to_talk: PushToTalkKey;
@@ -30,6 +36,8 @@ export interface Form {
   script: Script;
   engines: string[];
   dictionary: string[];
+  /** `[[snippets]]`: say `trigger`, get `text` (verbatim). */
+  snippets: TextSnippet[];
   polish: boolean;
   tone: string;
   history: boolean;

@@ -22,6 +22,7 @@
   import Polish from "./Polish.svelte";
   import Apps from "./Apps.svelte";
   import Dictionary from "./Dictionary.svelte";
+  import Snippets from "./Snippets.svelte";
   import History from "./History.svelte";
   import About from "./About.svelte";
   import Usage from "./Usage.svelte";
@@ -35,7 +36,7 @@
     engines: { label: "Engines and keys", icon: AudioLines, blurb: "The speech engines that turn your voice into text, and keys for the cloud ones." },
     polish: { label: "Polish", icon: Sparkles, blurb: "Claude tidies each dictation after it lands, then swaps the result in." },
     apps: { label: "Apps", icon: AppWindow, blurb: "How your words go into each app: the format, and polish and its tone." },
-    dictionary: { label: "Dictionary", icon: BookA, blurb: "Names and terms Bolo should spell your way." },
+    dictionary: { label: "Dictionary & snippets", icon: BookA, blurb: "Names and terms Bolo should spell your way, and phrases it expands to saved text." },
     history: { label: "History", icon: HistoryIcon, blurb: "Your dictations, kept as text on this PC." },
     usage: { label: "Usage", icon: Gauge, blurb: "What your cloud engines used, and what it cost." },
     about: { label: "About", icon: Info, blurb: "Version, updates and where Bolo keeps its files." },
@@ -208,6 +209,7 @@
             <Apps bind:view onkeys={() => (tab = "engines")} />
           {:else if page === "dictionary"}
             <Dictionary {view} {update} />
+            <Snippets {view} {update} />
           {:else if page === "history"}
             <History {view} {update} />
           {:else if page === "usage"}

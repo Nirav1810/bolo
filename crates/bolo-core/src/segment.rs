@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bolo_format::llm::{CleanupRequest, Script};
+use bolo_format::snippets::Snippets;
 use bolo_stt::vad::{Vad, VadConfig};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -120,6 +121,8 @@ pub(crate) struct PolishSetup {
     pub tone: String,
     pub app: String,
     pub dictionary: Vec<String>,
+    /// Applied to the joined polished text; polish is told to keep the triggers.
+    pub snippets: Arc<Snippets>,
     pub script: Script,
     pub layer1: Layer1,
     pub events: Arc<dyn EngineEvents>,
@@ -192,12 +195,14 @@ async fn run(setup: PolishSetup, mut rx: UnboundedReceiver<Msg>) {
 /// Polish one part within the deadline. A timeout, an error or a failed guard keeps
 /// the part's Layer 1 text.
 async fn polish_part(setup: &PolishSetup, input: &str, context: Option<&str>) -> Part {
+    let triggers: Vec<String> = setup.snippets.triggers_in(input).into_iter().map(str::to_owned).collect();
     let req = CleanupRequest {
         transcript: input,
         script: setup.script,
         tone: &setup.tone,
         app: &setup.app,
         dictionary: &setup.dictionary,
+        triggers: &triggers,
         context,
     };
     let kept = || Part { text: input.to_owned(), polished: false };
@@ -236,6 +241,7 @@ fn report(setup: &PolishSetup, parts: &[Part], out: FormattedOutput, called: Ins
     polished.html = setup.layer1.html_of(&text);
     polished.plain = text.clone();
     polished.markdown = text;
+    crate::worker::expand_snippets(&mut polished, &setup.snippets);
     polished.timings.llm_ms = released.elapsed().as_secs_f64() * 1e3;
     polished.timings.total_ms = called.elapsed().as_secs_f64() * 1e3;
     setup.events.on_polished(polished);

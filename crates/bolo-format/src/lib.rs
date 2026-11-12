@@ -7,7 +7,8 @@
 //! and Qwen3-ASR emit Hindi in Devanagari; [`urdu`] (Urdu script → Devanagari, for the
 //! Hindi Deepgram `multi` writes in Urdu script); [`brahmic`] (the other Indic scripts →
 //! Devanagari, for the same reason); [`language`], which tells English from
-//! Hinglish for the Auto language mode; and [`rules`], the Layer 1 pipeline (ADR-0015).
+//! Hinglish for the Auto language mode; [`rules`], the Layer 1 pipeline (ADR-0015); and
+//! [`snippets`], spoken triggers expanded to saved text after Layer 1 and polish.
 
 pub mod brahmic;
 pub mod language;
@@ -15,5 +16,6 @@ pub mod language;
 pub mod llm;
 pub mod loanwords;
 pub mod rules;
+pub mod snippets;
 pub mod translit;
 pub mod urdu;

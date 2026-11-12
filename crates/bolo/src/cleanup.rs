@@ -70,6 +70,7 @@ pub async fn run(csv_path: &Path, engines: &[String], out: &Path, aliases: &Hash
             tone: "neutral",
             app: "Notes",
             dictionary: &[],
+            triggers: &[],
             context: None,
         };
         // Generous timeout for measurement; the app enforces 1.5 s and falls back.

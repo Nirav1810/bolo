@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 use bolo_audio::resample::StreamResampler;
 use bolo_format::language::{Detected, detect};
 use bolo_format::rules;
+use bolo_format::snippets::{Snippet, Snippets};
 use bolo_models::Manifest;
 use bolo_stt::vad::{Vad, VadConfig};
 use bolo_stt::{Language, SttEngine, SttError, SttOptions, SttStream, Transcript};
@@ -61,6 +62,7 @@ pub(crate) enum Cmd {
     Release,
     UpdateConfig(Box<EngineConfig>),
     SetPolish(Polish),
+    SetSnippets(Vec<Snippet>),
     Shutdown,
 }
 
@@ -266,6 +268,21 @@ pub(crate) struct Worker {
     /// Bumped to cancel polish: a polish task reports only while the generation it
     /// started in is current. Held while reporting, so after a bump nothing reports.
     polish_generation: Arc<Mutex<u64>>,
+    /// `config.snippets`, ready to match.
+    snippets: Arc<Snippets>,
+}
+
+/// `out` with its snippet triggers expanded, in every rendering. Runs last, after Layer 1
+/// or polish; polish itself is given the text before expansion.
+pub(crate) fn expand_snippets(out: &mut FormattedOutput, snippets: &Snippets) {
+    if snippets.is_empty() {
+        return;
+    }
+    out.plain = snippets.expand(&out.plain);
+    out.markdown = snippets.expand(&out.markdown);
+    if let Some(html) = out.html.as_mut() {
+        *html = snippets.expand_html(html);
+    }
 }
 
 /// The non-empty texts, space-separated.
@@ -302,6 +319,7 @@ impl Worker {
         // Polish on without a key: fail now rather than at the first dictation.
         polish::client(&config.polish, &config.api_keys, injected_llm.as_ref(), &http, &events)?;
         Ok(Self {
+            snippets: Arc::new(Snippets::new(&config.snippets)),
             config,
             events,
             state,
@@ -610,6 +628,17 @@ impl Worker {
                 let t_rules = Instant::now();
                 let layer1 = Layer1::new(self.config.script, &s.target);
                 let text = layer1.format(raw.trim(), language);
+                let mut out = FormattedOutput {
+                    plain: text.plain,
+                    markdown: text.markdown,
+                    html: (layer1.format == OutputFormat::Html).then_some(text.html),
+                    timings: Timings::default(),
+                    engine_id,
+                    language,
+                };
+                // Polish works on the text before expansion; `on_final` gets it expanded.
+                let mut expanded = out.clone();
+                expand_snippets(&mut expanded, &self.snippets);
                 let rules_ms = t_rules.elapsed().as_secs_f64() * 1e3;
                 let total_ms = called.elapsed().as_secs_f64() * 1e3;
                 let ms = |a: Instant, b: Instant| b.duration_since(a).as_secs_f64() * 1e3;
@@ -623,15 +652,10 @@ impl Worker {
                     total_ms,
                     "stop breakdown"
                 );
-                let out = FormattedOutput {
-                    plain: text.plain,
-                    markdown: text.markdown,
-                    html: (layer1.format == OutputFormat::Html).then_some(text.html),
-                    timings: Timings { stt_ms, rules_ms, llm_ms: 0.0, format_ms: 0.0, total_ms },
-                    engine_id,
-                    language,
-                };
-                self.events.on_final(out.clone());
+                let timings = Timings { stt_ms, rules_ms, llm_ms: 0.0, format_ms: 0.0, total_ms };
+                out.timings = timings;
+                expanded.timings = timings;
+                self.events.on_final(expanded);
                 // With segments sent, polish only the rest. When they no longer line
                 // up with the final (another pass won, or the text shrank), drop them
                 // and polish the whole text.
@@ -744,6 +768,7 @@ impl Worker {
             tone,
             app,
             dictionary,
+            snippets: self.snippets.clone(),
             script,
             layer1: Layer1::new(self.config.script, target),
             events: self.events.clone(),
@@ -870,10 +895,15 @@ impl Worker {
                     // Engines, keys or paths may have changed: drop and rebuild lazily.
                     self.release();
                     self.stt = None;
+                    self.snippets = Arc::new(Snippets::new(&c.snippets));
                     self.config = *c;
                 }
                 // Only polish changed: the model and connections stay.
                 Ok(Cmd::SetPolish(p)) => self.config.polish = p,
+                Ok(Cmd::SetSnippets(s)) => {
+                    self.snippets = Arc::new(Snippets::new(&s));
+                    self.config.snippets = s;
+                }
                 Ok(Cmd::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
                 Err(RecvTimeoutError::Timeout) => {}
             }

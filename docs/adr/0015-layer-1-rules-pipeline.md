@@ -20,6 +20,6 @@ Each pass is tested with TOML golden cases (`input` / `expected` / `note`) run b
 
 ## Considered Options
 
-- **User-editable rule file (regex/TOML at runtime)**: rejected for M2. Ordering and the "leave it verbatim" guarantees are hard to keep when users write rules. User replacements (a personal dictionary) arrive with the M3 settings file and run after the built-in passes.
+- **User-editable rule file (regex/TOML at runtime)**: rejected for M2. Ordering and the "leave it verbatim" guarantees are hard to keep when users write rules. User replacements (a personal dictionary) arrive with the M3 settings file and run after the built-in passes. (Amended 2026-11-12, M4 ticket 02: the user replacements are **snippets**, `bolo_format::snippets`. They are not a pass: the engine expands them after the whole pipeline and after polish, matching normalised words so that the pipeline's capitals, periods and digits don't hide a trigger.)
 - **A punctuation or truecasing model**: rejected. Most engines already punctuate, a model costs milliseconds, and polish covers the rest.
 - **Aggressive self-correction (any "no" or "sorry")**: rejected because of wrong deletions on the instant path.

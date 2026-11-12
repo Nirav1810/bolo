@@ -1,0 +1,185 @@
+# Snippet expansion (M4 ticket 02). Every case runs with the [[snippet]] list below.
+#
+# format says what `input` is:
+#   text (default)  already formatted text: expanded as it is
+#   html            already rendered HTML: expanded with expand_html
+#   layer1          a raw transcript: run through the rules pipeline (plain), then expanded
+#   layer1-markdown the same, Markdown rendering
+#   layer1-code     the same, code mode
+#   layer1-html     the same, HTML rendering, expanded with expand_html
+# language = "hinglish" runs the rules as Hinglish.
+
+[[snippet]]
+trigger = "my address"
+text = "221B Baker Street\nLondon NW1 6XE"
+
+[[snippet]]
+trigger = "sig"
+text = "Thanks,\nPriya"
+
+[[snippet]]
+trigger = "my email"
+text = "priya@example.com"
+
+[[snippet]]
+trigger = "email sig"
+text = "Sent from Bolo."
+
+[[snippet]]
+trigger = "room twenty five"
+text = "Room 25, Block C"
+
+[[snippet]]
+trigger = "zoom link"
+text = "https://zoom.us/j/123?pwd=a&b <x>"
+
+[[snippet]]
+trigger = "loop"
+text = "say sig"
+
+[[snippet]]
+trigger = "mera address"
+text = "Flat 4, MG Road"
+
+# --- matching ---
+
+[[case]]
+note = "the trigger alone is the expansion"
+input = "my address"
+expected = "221B Baker Street\nLondon NW1 6XE"
+
+[[case]]
+note = "Layer 1's capital and final period on a lone trigger are dropped"
+input = "My address."
+expected = "221B Baker Street\nLondon NW1 6XE"
+
+[[case]]
+note = "mid-sentence, the text around the trigger stays"
+input = "Send it to my address please."
+expected = "Send it to 221B Baker Street\nLondon NW1 6XE please."
+
+[[case]]
+note = "case is ignored"
+input = "Send it to MY ADDRESS today."
+expected = "Send it to 221B Baker Street\nLondon NW1 6XE today."
+
+[[case]]
+note = "punctuation between the trigger's words is ignored"
+input = "Send it to my, address."
+expected = "Send it to 221B Baker Street\nLondon NW1 6XE."
+
+[[case]]
+note = "whole words only: no match inside a longer word"
+input = "Send it to myaddress and my addresses."
+expected = "Send it to myaddress and my addresses."
+
+[[case]]
+note = "whole words only: no match glued to another word by punctuation"
+input = "Open sig.example.com now."
+expected = "Open sig.example.com now."
+
+[[case]]
+note = "a trigger never spans a line break"
+input = "Send it to my\naddress."
+expected = "Send it to my\naddress."
+
+[[case]]
+note = "the longest trigger wins; a period after it goes when the expansion ends in one"
+input = "Here is the email sig."
+expected = "Here is the Sent from Bolo."
+
+[[case]]
+note = "a question mark after a trigger stays when the expansion doesn't end a sentence"
+input = "Is it my email?"
+expected = "Is it priya@example.com?"
+
+[[case]]
+note = "every trigger in the text is expanded"
+input = "Use my email, then sig."
+expected = "Use priya@example.com, then Thanks,\nPriya."
+
+[[case]]
+note = "an expansion is never searched for triggers"
+input = "loop"
+expected = "say sig"
+
+[[case]]
+note = "number words match their digits"
+input = "Meet me in room 25 at noon."
+expected = "Meet me in Room 25, Block C at noon."
+
+[[case]]
+note = "text with no trigger comes back unchanged"
+input = "Nothing to see here, sigh."
+expected = "Nothing to see here, sigh."
+
+# --- after Layer 1 ---
+
+[[case]]
+note = "a filler before a lone trigger: still just the expansion"
+input = "um my address"
+expected = "221B Baker Street\nLondon NW1 6XE"
+format = "layer1"
+
+[[case]]
+note = "the numbers pass writes twenty five as 25; the trigger still matches"
+input = "meet me in room twenty five"
+expected = "Meet me in Room 25, Block C."
+format = "layer1"
+
+[[case]]
+note = "list items: each trigger on its own line expands"
+input = "first my address second sig third milk"
+expected = "1. 221B Baker Street\nLondon NW1 6XE\n2. Thanks,\nPriya\n3. Milk"
+format = "layer1"
+
+[[case]]
+note = "Markdown rendering"
+input = "here is my email new paragraph sig"
+expected = "Here is priya@example.com\n\nThanks,\nPriya."
+format = "layer1-markdown"
+
+[[case]]
+note = "code mode: no capital or period to begin with"
+input = "my email"
+expected = "priya@example.com"
+format = "layer1-code"
+
+[[case]]
+note = "Hinglish"
+input = "mera address bhej do"
+expected = "Flat 4, MG Road bhej do."
+format = "layer1"
+language = "hinglish"
+
+# --- HTML ---
+
+[[case]]
+note = "HTML: a lone trigger keeps its paragraph, line breaks become <br>"
+input = "my address"
+expected = "<p>221B Baker Street<br>London NW1 6XE</p>"
+format = "layer1-html"
+
+[[case]]
+note = "HTML: the expansion is escaped"
+input = "send the zoom link now"
+expected = "<p>Send the https://zoom.us/j/123?pwd=a&amp;b &lt;x&gt; now.</p>"
+format = "layer1-html"
+
+[[case]]
+note = "HTML: entities are punctuation, tags are line breaks"
+input = "<p>Tom &amp; my address</p><p>sig</p>"
+expected = "<p>Tom &amp; 221B Baker Street<br>London NW1 6XE</p><p>Thanks,<br>Priya</p>"
+format = "html"
+
+[[case]]
+note = "HTML: a trigger never spans a tag"
+input = "<p>Send it to my<br>address.</p>"
+expected = "<p>Send it to my<br>address.</p>"
+format = "html"
+
+[[case]]
+note = "HTML: an entity glued to a word is not a word boundary"
+input = "<p>Tom&amp;sig</p>"
+expected = "<p>Tom&amp;sig</p>"
+format = "html"

@@ -222,7 +222,7 @@ fn render_html(tokens: &[Token]) -> String {
 }
 
 /// Append `text` to `out` with the HTML special characters escaped.
-pub(super) fn escape_html(text: &str, out: &mut String) {
+pub(crate) fn escape_html(text: &str, out: &mut String) {
     for c in text.chars() {
         match c {
             '&' => out.push_str("&amp;"),

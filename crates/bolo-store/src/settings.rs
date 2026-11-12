@@ -6,6 +6,8 @@
 //!   Version 1 kept per-app polish as `[polish.apps]` (exe → bool); version 2 has the
 //!   `[[apps]]` profile table instead (ADR-0020).
 //!   [`Settings::load`] migrates older versions step by step and saves the result.
+//!   The `[[snippets]]` table came later in version 2; it is additive, so there was no
+//!   new version for it.
 //! - Keys this version doesn't know are kept through a load and save, so a newer Bolo's
 //!   settings survive a run of an older one.
 //! - A file that doesn't parse, or whose values have the wrong types, is renamed to
@@ -18,7 +20,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bolo_core::{ANTHROPIC, ApiKeys, EngineConfig, HinglishScript, LanguageMode, OutputFormat, Polish};
+use bolo_core::{ANTHROPIC, ApiKeys, EngineConfig, HinglishScript, LanguageMode, OutputFormat, Polish, Snippet};
 use serde::{Deserialize, Serialize};
 use toml::{Table, Value};
 
@@ -106,6 +108,24 @@ pub fn exe_name(exe: &str) -> String {
     if exe.ends_with(".exe") { exe } else { format!("{exe}.exe") }
 }
 
+/// One `[[snippets]]` row: say `trigger`, and Bolo inserts `text` in its place.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct SnippetRow {
+    /// The phrase the user says, e.g. "my address".
+    pub trigger: String,
+    /// What replaces it, exactly as written (line breaks included).
+    pub text: String,
+    /// Keys this version doesn't know, written back as they were.
+    #[serde(flatten)]
+    pub unknown: Table,
+}
+
+impl SnippetRow {
+    pub fn new(trigger: &str, text: &str) -> Self {
+        Self { trigger: trigger.into(), text: text.into(), unknown: Table::new() }
+    }
+}
+
 /// Dictation history: text only, pruned after `retention_days`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -160,6 +180,9 @@ pub struct Settings {
     /// Per-app profiles (`[[apps]]`), in the order the user added them.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub apps: Vec<AppProfile>,
+    /// Snippets (`[[snippets]]`), in the order the user added them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub snippets: Vec<SnippetRow>,
     pub history: HistorySettings,
     pub overlay: OverlaySettings,
     /// First-run onboarding's step while it's unfinished (0 = welcome); `None` once it's
@@ -183,6 +206,7 @@ impl Default for Settings {
             models_dir: None,
             polish: PolishSettings::default(),
             apps: Vec::new(),
+            snippets: Vec::new(),
             history: HistorySettings::default(),
             overlay: OverlaySettings::default(),
             onboarding_step: None,
@@ -290,6 +314,19 @@ impl Settings {
             .collect()
     }
 
+    /// The snippets the engine expands: triggers trimmed, rows with a blank trigger or
+    /// text dropped, and of two rows with the same trigger (ignoring case) the first wins.
+    /// The text is kept exactly as written.
+    pub fn snippet_list(&self) -> Vec<Snippet> {
+        let mut seen = std::collections::HashSet::new();
+        self.snippets
+            .iter()
+            .map(|s| (s.trigger.trim(), &s.text))
+            .filter(|(t, text)| !t.is_empty() && !text.trim().is_empty() && seen.insert(t.to_lowercase()))
+            .map(|(t, text)| Snippet { trigger: t.to_owned(), text: text.clone() })
+            .collect()
+    }
+
     /// The engine config for these settings and keys. The dictionary feeds both the
     /// engines and polish. Polish is on only when it's enabled *and* the Anthropic key
     /// is stored; the app shows the missing key, the engine just runs without polish.
@@ -317,6 +354,7 @@ impl Settings {
             language: self.language,
             script: self.script,
             dictionary,
+            snippets: self.snippet_list(),
             models_dir: self.models_dir.clone().or_else(bolo_models::default_models_root).unwrap_or_default(),
             polish,
             api_keys,
@@ -428,6 +466,8 @@ mod tests {
             format: Some(OutputFormat::Markdown),
             ..AppProfile::new("WhatsApp")
         });
+        s.snippets.push(SnippetRow::new("my address", "221B Baker Street\nLondon"));
+        s.snippets.push(SnippetRow::new("sig", "Thanks,\n\"Priya\""));
         s.history.retention_days = 7;
         s.overlay.idle_button = false;
         s.overlay.position = 0.25;
@@ -617,6 +657,27 @@ mod tests {
             c.polish,
             Polish::On { tone: "casual".into(), app: String::new(), dictionary: vec!["Nirav".into(), "Bolo".into()] }
         );
+    }
+
+    #[test]
+    fn snippets_are_additive_and_tidied_for_the_engine() {
+        let (s, v) = Settings::parse(
+            "version = 2\n[[snippets]]\ntrigger = \" My Address \"\ntext = \"221B\\nLondon \"\nlang = \"en\"\n\n\
+             [[snippets]]\ntrigger = \"my address\"\ntext = \"second\"\n\n\
+             [[snippets]]\ntrigger = \"  \"\ntext = \"blank trigger\"\n\n\
+             [[snippets]]\ntrigger = \"empty\"\ntext = \" \"\n",
+        )
+        .ok()
+        .unwrap();
+        assert_eq!(v, 2, "no version bump for snippets");
+        assert_eq!(s.snippets.len(), 4);
+        assert_eq!(s.snippets[0].unknown.get("lang").and_then(Value::as_str), Some("en"));
+        let list = s.snippet_list();
+        assert_eq!(list, [Snippet { trigger: "My Address".into(), text: "221B\nLondon ".into() }]);
+        assert_eq!(s.engine_config_with_keys(ApiKeys::default()).snippets, list);
+        assert!(Settings::default().snippet_list().is_empty());
+        let text = toml::to_string(&Table::try_from(Settings::default()).unwrap()).unwrap();
+        assert!(!text.contains("snippets"), "no empty table: {text}");
     }
 
     #[test]

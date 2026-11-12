@@ -37,6 +37,7 @@ impl Polisher {
             tone: "neutral",
             app: "Notes",
             dictionary: &[],
+            triggers: &[],
             context: None,
         };
         self.calls += 1;
