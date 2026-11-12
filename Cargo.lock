@@ -449,7 +449,7 @@ dependencies = [
 
 [[package]]
 name = "bolo"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -474,7 +474,7 @@ dependencies = [
 
 [[package]]
 name = "bolo-audio"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cpal",
  "hound",
@@ -486,7 +486,7 @@ dependencies = [
 
 [[package]]
 name = "bolo-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "bolo-audio",
@@ -504,7 +504,7 @@ dependencies = [
 
 [[package]]
 name = "bolo-desktop"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bolo-audio",
@@ -534,14 +534,14 @@ dependencies = [
 
 [[package]]
 name = "bolo-ffi"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bolo-core",
 ]
 
 [[package]]
 name = "bolo-format"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "proptest",
  "reqwest",
@@ -553,7 +553,7 @@ dependencies = [
 
 [[package]]
 name = "bolo-models"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bzip2 0.6.1",
  "directories",
@@ -570,7 +570,7 @@ dependencies = [
 
 [[package]]
 name = "bolo-store"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bolo-core",
  "bolo-models",
@@ -588,7 +588,7 @@ dependencies = [
 
 [[package]]
 name = "bolo-stt"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "bolo-audio",
