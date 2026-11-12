@@ -70,9 +70,22 @@ use variant::Variant;
 /// The one Tauri event every [`AppEvent`] is sent on.
 pub const EVENT: &str = "bolo://event";
 
+/// The settings window (settings, history, about, onboarding, debug), built when it's
+/// opened and destroyed when it's closed ([`show_window`]).
 const MAIN_WINDOW: &str = "main";
 /// The overlay pill, created hidden at startup (`tauri.conf.json`).
 const PILL_WINDOW: &str = "pill";
+
+/// `BOLO_MEASURE=1` in a build with the `measure` feature: run beside an installed Bolo
+/// for `scripts/idle_ram.ps1` without touching it. No single-instance check, no key or
+/// mouse hook, no step-aside, no update checks; default settings in memory, no history,
+/// no API keys and no log file, so nothing of the installed app's is read or written
+/// except the models. Never on in shipped builds.
+fn measuring() -> bool {
+    static ON: LazyLock<bool> =
+        LazyLock::new(|| cfg!(feature = "measure") && std::env::var_os("BOLO_MEASURE").is_some_and(|v| v == "1"));
+    *ON
+}
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
@@ -147,6 +160,8 @@ struct Bolo {
     hook: Mutex<Option<KeyHook>>,
     /// The hook's thread id (0 for none), read without the `hook` lock by the inserter.
     hook_thread: Arc<AtomicU32>,
+    /// The settings window let go of the hook to capture a new key ([`commands::ptt_capture`]).
+    capturing: AtomicBool,
     /// The self-updater's state (ADR-0019).
     updates: Arc<Updates>,
 }
@@ -293,7 +308,8 @@ impl Bolo {
 
     fn install_hook(&self, app: &AppHandle) {
         let mut hook = lock(&self.hook);
-        if hook.is_some() {
+        // Measuring beside an installed Bolo: never take its key or ask it to pause.
+        if hook.is_some() || measuring() {
             return;
         }
         let key = *lock(&self.push_to_talk);
@@ -381,7 +397,9 @@ impl Bolo {
             return Ok(());
         }
         let changes = form::changes(&current, &new);
-        Settings::default_path().and_then(|path| new.save(&path)).map_err(|e| e.to_string())?;
+        if !measuring() {
+            Settings::default_path().and_then(|path| new.save(&path)).map_err(|e| e.to_string())?;
+        }
         *current = new.clone();
         drop(current);
         self.follow(app, &new, changes);
@@ -559,13 +577,40 @@ pub(crate) fn key_name(key: PushToTalkKey) -> String {
     }
 }
 
-/// Show the main window on a page: `debug`, `settings`, `history` or `onboarding`.
+/// Show the main window on a page: `debug`, `settings`, `onboarding` or a settings tab
+/// (`history`, `about`, ...). Closing the window destroys its webview, which gives back
+/// the WebView2 memory it held while hidden (M4 ticket 04), so this builds it again when
+/// it's gone. Called on the main thread (the tray, setup, a second launch).
 fn show_window(app: &AppHandle, page: &str) {
-    let Some(window) = app.get_webview_window(MAIN_WINDOW) else { return };
-    let _ = window.eval(format!("location.hash = '#{page}'"));
-    let _ = window.unminimize();
-    let _ = window.show();
-    let _ = window.set_focus();
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+        let _ = window.eval(format!("location.hash = '#{page}'"));
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        return;
+    }
+    let url = tauri::WebviewUrl::App(format!("index.html#{page}").into());
+    // The page sets its own title once it loads (App.svelte).
+    let built = tauri::WebviewWindowBuilder::new(app, MAIN_WINDOW, url)
+        .title(format!("{} Settings", Variant::current().product_name()))
+        .inner_size(980.0, 700.0)
+        .min_inner_size(760.0, 520.0)
+        .center()
+        .focused(true)
+        .build();
+    if let Err(e) = built {
+        tracing::warn!(%e, page, "could not open the window");
+    }
+}
+
+/// The main window closed and its webview is gone. If it was capturing a new
+/// push-to-talk key, the page had no chance to hand the key back: take it back here.
+/// (Only then: on Quit the hook is already gone on purpose.)
+fn main_window_destroyed(app: &AppHandle) {
+    let bolo = app.state::<Bolo>();
+    if bolo.capturing.swap(false, Ordering::AcqRel) && !lock(&bolo.session).paused() {
+        bolo.install_hook(app);
+    }
 }
 
 fn init_logging() {
@@ -575,6 +620,7 @@ fn init_logging() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     // %LOCALAPPDATA%\Bolo\data\logs, next to the models (ADR-007).
     let file = bolo_models::default_models_root()
+        .filter(|_| !measuring())
         .and_then(|m| m.parent().map(|d| d.join("logs")))
         .and_then(|dir| std::fs::create_dir_all(&dir).ok().map(|()| dir.join(Variant::current().log_file())))
         .and_then(|path| std::fs::OpenOptions::new().create(true).append(true).open(path).ok());
@@ -588,7 +634,14 @@ fn init_logging() {
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let toggle = MenuItem::with_id(app, "toggle", "Start dictation", true, None::<&str>)?;
     let pause = MenuItem::with_id(app, "pause", "Pause Bolo", true, None::<&str>)?;
-    let (mut settings, fresh) = load_settings();
+    let (mut settings, fresh) = if measuring() {
+        // The defaults, minus the on-screen button: no second pill over the installed one's.
+        let mut s = Settings::default();
+        s.overlay.idle_button = false;
+        (s, false)
+    } else {
+        load_settings()
+    };
     if fresh {
         settings.onboarding_step = Some(0);
         if let Err(e) = Settings::default_path().and_then(|p| settings.save(&p)) {
@@ -693,13 +746,16 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             None => {}
         }
     }));
-    let secrets =
-        Secrets::os().inspect_err(|e| tracing::warn!(%e, "could not open the credential store; no API keys")).ok();
+    let secrets = if measuring() {
+        None
+    } else {
+        Secrets::os().inspect_err(|e| tracing::warn!(%e, "could not open the credential store; no API keys")).ok()
+    };
     let keys = secrets.as_ref().map(|s| s.api_keys().clone()).unwrap_or_default();
     let (config, config_error) = engine_config(&settings, keys);
     tracing::info!(engines = ?config.engines, language = ?config.language, models = %config.models_dir.display(), "engine config");
     let prefs = polish_prefs(&settings, &config);
-    let journal = Arc::new(Journal::new(open_history(&settings)));
+    let journal = Arc::new(Journal::new(if measuring() { None } else { open_history(&settings) }));
     let retention_days = Arc::new(AtomicU32::new(settings.history.retention_days));
     keep_pruning(journal.clone(), retention_days.clone());
     let push_to_talk: PushToTalkKey = settings.push_to_talk;
@@ -736,6 +792,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         push_to_talk: Mutex::new(push_to_talk),
         hook: Mutex::new(None),
         hook_thread,
+        capturing: AtomicBool::new(false),
         updates,
     };
     if let Err(e) = bolo.engine() {
@@ -743,6 +800,14 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         lock(&bolo.startup_error).get_or_insert(e.to_string());
     }
     app.manage(bolo);
+    if measuring() {
+        tracing::warn!("BOLO_MEASURE: no hooks, no update checks, nothing saved");
+        // `BOLO_MEASURE_OPEN=settings` opens that page, to measure it open and then closed.
+        if let Ok(page) = std::env::var("BOLO_MEASURE_OPEN") {
+            show_window(app.handle(), &page);
+        }
+        return Ok(());
+    }
     app.state::<Bolo>().install_hook(app.handle());
     keep_checking_for_updates(app.handle().clone());
     let handle = app.handle().clone();
@@ -792,6 +857,9 @@ fn pill_window(app: &tauri::App) -> Box<dyn overlay::PillWindow> {
 /// The mouse hook for the pill's clicks, hover and drag; `None` if it can't start (the
 /// pill then only shows).
 fn pointer_hook() -> Option<(Box<dyn overlay::Pointer>, std::sync::mpsc::Receiver<pointer::Action>)> {
+    if measuring() {
+        return None;
+    }
     #[cfg(windows)]
     match pointer::win::PointerHook::start() {
         Ok((hook, actions)) => return Some((Box::new(hook), actions)),
@@ -896,9 +964,12 @@ fn keep_checking_for_updates(app: AppHandle) {
 pub fn run() {
     init_logging();
     tracing::info!(version = variant::VERSION, app = Variant::current().product_name(), "Bolo desktop starting");
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    if !measuring() {
         // First, so a second launch exits before it builds anything.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_window(app, "settings")))
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_window(app, "settings")));
+    }
+    let app = builder
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
@@ -935,14 +1006,17 @@ pub fn run() {
         ])
         .setup(setup)
         .on_window_event(|window, event| match event {
-            // Closing a window hides it; Bolo keeps running in the tray.
-            WindowEvent::CloseRequested { api, .. } => {
+            // Closing the main window (settings, history, onboarding) destroys it, so its
+            // webview's memory goes back (M4 ticket 04); `show_window` builds it again.
+            // Bolo keeps running in the tray. Any other window (the pill) only hides.
+            WindowEvent::CloseRequested { api, .. } if window.label() != MAIN_WINDOW => {
                 api.prevent_close();
                 let _ = window.hide();
             }
+            WindowEvent::Destroyed if window.label() == MAIN_WINDOW => main_window_destroyed(window.app_handle()),
             // The user went from Settings to another app: note it, so the Apps tab can
             // offer it on the way back. A moment later, once that app is in front.
-            WindowEvent::Focused(false) if window.label() == "settings" => {
+            WindowEvent::Focused(false) if window.label() == MAIN_WINDOW => {
                 let app = window.app_handle().clone();
                 let _ = std::thread::Builder::new().name("bolo-recent-app".into()).spawn(move || {
                     std::thread::sleep(Duration::from_millis(400));

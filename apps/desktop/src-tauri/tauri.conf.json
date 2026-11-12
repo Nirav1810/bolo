@@ -11,16 +11,6 @@
   "app": {
     "windows": [
       {
-        "label": "main",
-        "title": "Bolo Settings",
-        "width": 980,
-        "height": 700,
-        "minWidth": 760,
-        "minHeight": 520,
-        "visible": false,
-        "center": true
-      },
-      {
         "label": "pill",
         "title": "Bolo",
         "url": "pill.html",

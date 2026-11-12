@@ -446,3 +446,43 @@ M2 measured `bolo run --engines local:nemotron-stream` at 285–295 ms finish-on
 **Finding: no code change caused it. The machine is slower.** The M1 binary itself reads 226 ms today, not 158 ms. The three builds sit within 9 ms of each other, inside run-to-run noise. The 285–295 ms read in M2 came from a busier or throttled machine that day (the same day's `bolo replay` also read slower; see §18). This laptop's `bolo run` timings drift by tens of milliseconds with what else runs on it, so compare builds only in back-to-back runs like these. Machine load was not controlled: other apps were open during these runs too.
 
 No fix is needed. The user-facing clock, `bolo replay`'s release → text, is unaffected by this question.
+
+## 21. Idle RAM with the settings window destroyed on close (M4 ticket 04)
+
+Closing the settings window (every tab: Settings, History, About, the debug page) or finishing onboarding now destroys the window and its webview. The tray, a second launch and the restart after an update build it again on the right page (`index.html#<page>`). Before, the window was declared in `tauri.conf.json`, built hidden at startup and only hidden on close, so its webview lived for the whole session.
+
+**Script:** `scripts/idle_ram.ps1` finds `bolo-desktop.exe`, walks `ParentProcessId` down to its `msedgewebview2.exe` descendants, and prints private bytes and working set for each group, plus CPU over `-Seconds` (default 10) as a share of all cores. When Bolo and Bolo Nightly both run, pick one with `-PathLike` or `-ProcessId`. The script only reads.
+
+**Measuring a build beside an installed Bolo.** A build with the `measure` feature, run with `BOLO_MEASURE=1`, takes no single-instance lock, installs no keyboard or mouse hook, never asks the other variant to step aside, and checks for no updates. It uses default settings held in memory, with no history, no keys and no log file, and reads only the models. `BOLO_MEASURE_OPEN=<page>` opens that page at startup. Point WebView2 at a scratch profile too. Otherwise the build's webviews join the installed app's browser process, because they share the identifier and so the profile.
+
+```powershell
+cargo build --release -p bolo-desktop --features tauri/custom-protocol,bolo-desktop/measure
+$env:BOLO_MEASURE = '1'; $env:BOLO_MEASURE_OPEN = 'settings'
+$env:WEBVIEW2_USER_DATA_FOLDER = "$env:TEMP\bolo-measure-wv2"
+$env:PATH = "$PWD\.cache\sherpa-lib;$env:PATH"
+$p = Start-Process target\release\bolo-desktop.exe -PassThru
+powershell -File scripts/idle_ram.ps1 -ProcessId $p.Id -Seconds 30   # open
+# Close the window with its X, wait a minute, then:
+powershell -File scripts/idle_ram.ps1 -ProcessId $p.Id -Seconds 60   # closed
+```
+
+**Results (2026-11-12, dev laptop, 20 logical cores, other apps open).** Private bytes / working set, in MB.
+
+| build, state | `bolo-desktop.exe` | WebView2 processes | CPU (app / WebView2) |
+|---|---|---|---|
+| before: installed Bolo 0.3.0, idle for hours, window hidden | 10.8 / 0.5 | 7: **196.1** / 42.5 | 0.00% / 0.00% |
+| before: installed Bolo Nightly 0.4.0-nightly.20261111.14, same | 27.9 / 4.2 | 7: **269.0** / 34.6 | 0.00% / 0.00% |
+| after: this build, settings never opened | 8.6 / 40.0 | 6: **157.5** / 342.8 | 0.00% / 0.07% |
+| after: settings open (in its own renderer) | 9.4 / 42.4 | 7: 210.0 / 436.4 | 0.00% / 0.14% |
+| after: 60 s after closing it | 9.3 / 42.4 | 6: **169.1** / 360.7 | 0.00% / 0.07% |
+| after, second run: History open (renderer shared with the pill) | 9.8 / 31.5 | 6: 192.1 / 375.9 | 0.00% / 0.11% |
+| after, second run: 60 s after closing it | 9.6 / 31.6 | 6: **184.5** / 374.8 | 0.00% / 0.02% |
+
+The installed apps' working sets are tiny because Windows had trimmed them after hours idle, so compare private bytes. Their `bolo-desktop.exe` numbers come after real dictations, with the model since unloaded (the 30 s idle unload). Nobody dictated with this build: the measuring mode has no hook, and no one spoke. So its model was never loaded.
+
+**Findings.**
+- **`bolo-desktop.exe` is 9–28 MB private while idle, well under the 60 MB budget.** That includes the installed Nightly after a morning of dictation, with the model unloaded. Nothing keeps model memory after the unload, so no allocator or ONNX arena work is needed. CPU is 0.00%.
+- **Closing settings now gives back its renderer.** With the window open in its own renderer, the tree is 7 processes and 210 MB. Closed, it's 6 processes and 169 MB. The installed apps keep the hidden window's webview for the whole session, at 196 and 269 MB.
+- **Most of what's left is the pill's WebView2,** which the always-on idle button needs (spec). That's the browser process (about 36 MB), the GPU process (73–98 MB), the network and storage utilities (about 20 MB), crashpad (4 MB) and one renderer (24–27 MB). The GPU process keeps 10–25 MB of the closed window's memory. With the settings window never opened, the floor is about 158 MB.
+- **The GPU process is the biggest single item.** A one-off run with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--disable-gpu ..."` cut it from 73 MB to 12 MB, and the tree to **99 MB**. It isn't shipped. The pill is a transparent, animated, always-on-top window, and with software compositing a person has to check how it looks and how much CPU it takes while dictating. It's a candidate follow-up.
+- Each open after a close now starts a webview again. That wasn't timed. It's the same path the first open always took.

@@ -94,7 +94,8 @@
     const off = onAppEvent((e) => {
       if (e.kind === "update" && updates) updates = { ...updates, status: e.status };
     });
-    // The window hides rather than closes, so refresh whenever it comes back.
+    // Closing the window destroys it, so everything above loads afresh on each open.
+    // Refresh on focus too: the tray or another app may have changed things meanwhile.
     const onFocus = () => load();
     addEventListener("focus", onFocus);
     return () => {
