@@ -23,6 +23,12 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write # create the release and upload the zip
+      actions: read # SignPath reads this run's details and the unsigned artifact
+    # Authenticode signing through SignPath (ADR-0021, docs/SIGNING.md) runs only once the
+    # SIGNPATH_API_TOKEN secret and the SIGNPATH_ORGANIZATION_ID variable are set. Until
+    # then the signing steps are skipped and the installer ships unsigned, as before.
+    env:
+      SIGNPATH_SIGNING: ${{ secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
     defaults:
       run:
         shell: bash
@@ -57,6 +63,57 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Zip bolo.exe with the sherpa-onnx DLLs, README and licences; collect the installer
         run: python -I scripts/release.py package "$GITHUB_REF_NAME"
+      # Signing (ADR-0021): SignPath takes the installer as a workflow artifact and hands
+      # back the signed copy, which replaces dist/'s. The updater .sig that `tauri build`
+      # wrote covers the unsigned bytes, so it and the .sha256 are redone over the signed file.
+      - name: Pick the version to sign
+        id: tag
+        if: env.SIGNPATH_SIGNING == 'true'
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Upload the unsigned installer for signing
+        id: unsigned
+        if: env.SIGNPATH_SIGNING == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: installer-unsigned
+          path: dist/Bolo_*_x64-setup.exe
+          if-no-files-found: error
+          retention-days: 1
+      - name: Sign the installer with SignPath (release-signing, waits for approval)
+        if: env.SIGNPATH_SIGNING == 'true'
+        uses: signpath/github-action-submit-signing-request@v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: bolo
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: default
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          # Metadata restrictions in .signpath/artifact-configurations/default.xml.
+          parameters: |
+            productName: "Bolo"
+            version: "${{ steps.tag.outputs.version }}"
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed
+      - name: Check the signed installer's Authenticode signature
+        if: env.SIGNPATH_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature (Get-Item signed\Bolo_*_x64-setup.exe).FullName
+          Write-Output "$($sig.Status): $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne "Valid") { throw "the signed installer's signature is $($sig.Status): $($sig.StatusMessage)" }
+      - name: Use the signed installer; redo its updater signature and checksum
+        if: env.SIGNPATH_SIGNING == 'true'
+        run: |
+          setup=$(basename signed/Bolo_*_x64-setup.exe)
+          cp "signed/$setup" "dist/$setup"
+          (cd apps/desktop && npx tauri signer sign --app-version "$VERSION" "../../dist/$setup")
+          python -I scripts/release.py sha256 "dist/$setup"
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       # Unzip into an empty folder and run it with only Windows' own folders on PATH, so a
       # DLL that only the build machine has fails here instead of on a user's machine.
       - name: Smoke-test the zip in isolation

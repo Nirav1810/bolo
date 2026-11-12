@@ -25,6 +25,9 @@ Subcommands (a bare version means `prepare`):
   feed vX --url-base URL
       Write dist/latest.json, the updater feed (ADR-0019): the installer's URL under
       URL, its minisign signature (the .sig `tauri build` wrote) and the changelog notes.
+  sha256 FILE...
+      Rewrite FILE.sha256 for each file: after SignPath has Authenticode-signed the
+      installer (ADR-0021), its checksum must cover the signed bytes.
   nightly-version --run N
       Print the next nightly's version: next minor after the newest release, plus
       `-nightly.<UTC YYYYMMDD>.N`.
@@ -468,6 +471,15 @@ def package(tag_name: str) -> int:
     return 0
 
 
+def sha256(paths: list[str]) -> int:
+    for name in paths:
+        path = Path(name)
+        if not path.is_file():
+            raise ReleaseError(f"{path} is missing")
+        print(f"{path.name}: sha256 {write_sha256(path)}")
+    return 0
+
+
 def feed_json(version: str, notes: str, signature: str, url: str, pub_date: datetime.datetime) -> dict:
     """Tauri's static updater feed for one Windows x64 installer."""
     return {
@@ -547,6 +559,8 @@ def main(argv: list[str]) -> int:
     p.add_argument("tag_name")
     p.add_argument("--url-base", required=True, help="where the installer is downloaded from")
     p.add_argument("--notes", help="notes text instead of the CHANGELOG.md section (nightlies)")
+    p = sub.add_parser("sha256", help="write FILE.sha256 for each file (after signing)")
+    p.add_argument("paths", nargs="+")
     p = sub.add_parser("nightly-version", help="print the version for a nightly build")
     p.add_argument("--run", type=int, required=True, help="the CI run number")
     sub.add_parser("set-version", help="write a nightly version into the manifests").add_argument("version")
@@ -568,6 +582,8 @@ def main(argv: list[str]) -> int:
                 return package(a.tag_name)
             case "feed":
                 return feed(a.tag_name, a.url_base, a.notes)
+            case "sha256":
+                return sha256(a.paths)
             case "nightly-version":
                 print(nightly_version(git_tags(), datetime.datetime.now(datetime.timezone.utc).date(), a.run))
                 return 0
