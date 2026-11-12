@@ -1,0 +1,16 @@
+# A version-1 settings file: per-app polish lives in `[polish.apps]` (exe → on/off),
+# keyed as the user typed them. Version 2 moves them to `[[apps]]` rows (ADR-0020).
+version = 1
+engines = ["local:parakeet-v2-en"]
+dictionary = ["Bolo"]
+
+[polish]
+enabled = true
+tone = "formal"
+style = "terse"
+
+[polish.apps]
+"code.exe" = true
+Slack = false
+"WhatsApp.EXE" = true
+" " = false

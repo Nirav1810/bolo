@@ -3,6 +3,7 @@
   // in the footer) and one centred column of setting sections. Every change is saved
   // and applied at once by Rust (src-tauri/src/commands.rs); there is no Save button.
   import {
+    AppWindow,
     AudioLines,
     BookA,
     History as HistoryIcon,
@@ -19,6 +20,7 @@
   import General from "./General.svelte";
   import Engines from "./Engines.svelte";
   import Polish from "./Polish.svelte";
+  import Apps from "./Apps.svelte";
   import Dictionary from "./Dictionary.svelte";
   import History from "./History.svelte";
   import About from "./About.svelte";
@@ -32,6 +34,7 @@
     general: { label: "General", icon: SlidersHorizontal, blurb: "How you start a dictation, and the language Bolo listens for." },
     engines: { label: "Engines and keys", icon: AudioLines, blurb: "The speech engines that turn your voice into text, and keys for the cloud ones." },
     polish: { label: "Polish", icon: Sparkles, blurb: "Claude tidies each dictation after it lands, then swaps the result in." },
+    apps: { label: "Apps", icon: AppWindow, blurb: "How your words go into each app: the format, and polish and its tone." },
     dictionary: { label: "Dictionary", icon: BookA, blurb: "Names and terms Bolo should spell your way." },
     history: { label: "History", icon: HistoryIcon, blurb: "Your dictations, kept as text on this PC." },
     usage: { label: "Usage", icon: Gauge, blurb: "What your cloud engines used, and what it cost." },
@@ -40,7 +43,7 @@
   type Page = keyof typeof PAGES;
 
   const GROUPS: { heading: string; pages: Page[] }[] = [
-    { heading: "Dictation", pages: ["general", "engines", "polish", "dictionary"] },
+    { heading: "Dictation", pages: ["general", "engines", "polish", "apps", "dictionary"] },
     { heading: "Activity", pages: ["history", "usage"] },
     { heading: "App", pages: ["about"] },
   ];
@@ -200,7 +203,9 @@
           {:else if page === "engines"}
             <Engines bind:view {update} />
           {:else if page === "polish"}
-            <Polish {view} {update} onkeys={() => (tab = "engines")} />
+            <Polish {view} {update} onkeys={() => (tab = "engines")} onapps={() => (tab = "apps")} />
+          {:else if page === "apps"}
+            <Apps bind:view onkeys={() => (tab = "engines")} />
           {:else if page === "dictionary"}
             <Dictionary {view} {update} />
           {:else if page === "history"}

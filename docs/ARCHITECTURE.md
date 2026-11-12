@@ -22,7 +22,7 @@ Tauri v2 hosts one `Engine` in-process; the Svelte webviews only render.
 ```
 WH_KEYBOARD_LL hook ─► hotkey state machine ─► Start / Stop / Cancel
    (Caps Lock, ADR-0017)                          │
-foreground exe + title ─► app rules ─► TargetContext + polish plan ─► Engine
+foreground exe + title ─► app rules + app profiles (ADR-0020) ─► TargetContext + polish plan ─► Engine
 Engine events ─► controller ─► inserter: clipboard paste, restore, polish swap (ADR-0018)
                              ├► journal: SQLite history
                              └► overlay: pill state machine ─► pill webview (waveform, partials)
