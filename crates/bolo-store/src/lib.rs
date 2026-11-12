@@ -21,7 +21,7 @@ pub use history::{Dictation, History, HistoryRow};
 pub use secrets::{PROVIDERS, SERVICE, Secrets};
 pub use settings::{
     AppProfile, AudioSettings, HistorySettings, Loaded, OverlaySettings, PolishSettings, PushToTalkKey,
-    SETTINGS_VERSION, Settings, SnippetRow, exe_name,
+    SETTINGS_VERSION, Settings, SnippetRow, UpdateSettings, exe_name,
 };
 pub use usage::{ProviderUsage, UsageEvent, provider_of};
 

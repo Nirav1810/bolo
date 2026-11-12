@@ -180,6 +180,23 @@ impl AudioSettings {
     }
 }
 
+/// The self-updater (ADR-0019). Bolo and Bolo Nightly share this file, so the switch
+/// covers both.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// Check for updates at launch and once a day. Off leaves only the manual check.
+    pub auto_check: bool,
+    #[serde(flatten)]
+    pub unknown: Table,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self { auto_check: true, unknown: Table::new() }
+    }
+}
+
 /// Everything in `settings.toml`. Defaults match a fresh install.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -205,6 +222,7 @@ pub struct Settings {
     pub history: HistorySettings,
     pub overlay: OverlaySettings,
     pub audio: AudioSettings,
+    pub updates: UpdateSettings,
     /// First-run onboarding's step while it's unfinished (0 = welcome); `None` once it's
     /// done. A settings file from before onboarding existed has none, so it isn't shown.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -230,6 +248,7 @@ impl Default for Settings {
             history: HistorySettings::default(),
             overlay: OverlaySettings::default(),
             audio: AudioSettings::default(),
+            updates: UpdateSettings::default(),
             onboarding_step: None,
             unknown: Table::new(),
         }
@@ -494,6 +513,7 @@ mod tests {
         s.overlay.idle_button = false;
         s.overlay.position = 0.25;
         s.audio.input_device = Some("Headset (Jabra Evolve2 65)".into());
+        s.updates.auto_check = false;
         s
     }
 
@@ -536,6 +556,23 @@ mod tests {
         assert!(d.history.enabled && d.history.retention_days == 30);
         assert!(!d.polish.enabled && !d.autostart);
         assert_eq!(d.push_to_talk, PushToTalkKey::CapsLock);
+        assert!(d.updates.auto_check);
+    }
+
+    #[test]
+    fn automatic_update_checks_are_on_unless_the_file_turns_them_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        // A file from before the switch existed has no [updates]: checks stay on.
+        fs::write(&path, "version = 2\nlanguage = \"english\"\n").unwrap();
+        assert!(Settings::load(&path).unwrap().settings.updates.auto_check);
+        fs::write(&path, "version = 2\n\n[updates]\nauto_check = false\nchannel = \"beta\"\n").unwrap();
+        let s = Settings::load(&path).unwrap().settings;
+        assert!(!s.updates.auto_check);
+        s.save(&path).unwrap();
+        let t: Table = fs::read_to_string(&path).unwrap().parse().unwrap();
+        assert_eq!(t["updates"]["auto_check"].as_bool(), Some(false));
+        assert_eq!(t["updates"]["channel"].as_str(), Some("beta"), "unknown keys in [updates] are kept");
     }
 
     #[test]

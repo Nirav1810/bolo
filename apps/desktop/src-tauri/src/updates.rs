@@ -15,9 +15,19 @@ use crate::lock;
 use crate::variant::{self, Variant};
 
 /// How often a running Bolo looks for an update, after the check at launch.
-pub const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+pub const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 /// The check at launch waits this long, so it doesn't compete with loading the model.
 pub const FIRST_CHECK_AFTER: Duration = Duration::from_secs(20);
+/// How often the schedule asks [`check_due`], so turning automatic checks back on takes
+/// effect within this long, without a restart.
+pub const SCHEDULE_TICK: Duration = Duration::from_secs(10 * 60);
+
+/// Whether the background schedule should check now: only with automatic checks on
+/// (`[updates] auto_check`), and then if it hasn't checked yet (`since_last` is `None`)
+/// or did [`CHECK_EVERY`] ago. A manual check runs whatever this says.
+pub fn check_due(auto_check: bool, since_last: Option<Duration>) -> bool {
+    auto_check && since_last.is_none_or(|d| d >= CHECK_EVERY)
+}
 
 /// Updates only go forward. `0.4.0-nightly.*` sorts below `0.4.0`, and the first nightly
 /// after a release above it.
@@ -297,6 +307,47 @@ mod tests {
         assert_eq!(view.version, variant::VERSION);
         assert_ne!(view.product, view.other.product);
         assert!(view.other.url.starts_with("https://github.com/Nirav1810/bolo/releases/"));
+    }
+
+    const HOUR: Duration = Duration::from_secs(60 * 60);
+
+    #[test]
+    fn background_checks_run_at_launch_then_daily_and_only_when_on() {
+        assert_eq!(CHECK_EVERY, 24 * HOUR);
+        assert!(check_due(true, None), "the first check after launch");
+        assert!(!check_due(true, Some(6 * HOUR)));
+        assert!(!check_due(true, Some(24 * HOUR - SCHEDULE_TICK)));
+        assert!(check_due(true, Some(24 * HOUR)));
+        assert!(check_due(true, Some(30 * HOUR)));
+        // Off: no check at launch, nor later.
+        assert!(!check_due(false, None));
+        assert!(!check_due(false, Some(48 * HOUR)));
+    }
+
+    /// The schedule as `lib.rs` runs it, one tick at a time, reading the switch afresh at
+    /// each: the hours at which it checks.
+    fn schedule(hours: u32, on: impl Fn(Duration) -> bool) -> Vec<u64> {
+        let mut last = None;
+        let mut checks = Vec::new();
+        let mut now = Duration::ZERO;
+        while now < hours * HOUR {
+            if check_due(on(now), last.map(|at| now - at)) {
+                checks.push(now.as_secs() / 3600);
+                last = Some(now);
+            }
+            now += SCHEDULE_TICK;
+        }
+        checks
+    }
+
+    #[test]
+    fn turning_automatic_checks_back_on_resumes_them_without_a_restart() {
+        assert_eq!(schedule(72, |_| true), [0, 24, 48]);
+        assert_eq!(schedule(72, |_| false), [] as [u64; 0]);
+        // Launched with checks off, switched on at hour 30: a check then, then daily.
+        assert_eq!(schedule(72, |t| t >= 30 * HOUR), [30, 54]);
+        // Off for a while after the launch check: the next one comes when it's back on.
+        assert_eq!(schedule(72, |t| !(HOUR..40 * HOUR).contains(&t)), [0, 40, 64]);
     }
 
     #[test]

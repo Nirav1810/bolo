@@ -44,6 +44,8 @@ export interface Form {
   retention_days: number;
   /** `[audio] input_device`: the microphone by name; `null` for the Windows default. */
   input_device: string | null;
+  /** Check for updates at launch and once a day (`[updates] auto_check`). */
+  auto_update_check: boolean;
 }
 
 export interface ModelView {

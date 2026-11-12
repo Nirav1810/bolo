@@ -1,17 +1,22 @@
 <script lang="ts">
   import { ExternalLink, FolderOpen, RefreshCw, LoaderCircle, CircleCheck, ArrowUpCircle, CircleAlert } from "@lucide/svelte";
-  import { api, megabytes, type SettingsView, type UpdateView } from "../lib/api";
+  import { api, megabytes, type Form, type SettingsView, type UpdateView } from "../lib/api";
   import Badge from "../lib/ui/Badge.svelte";
   import Button from "../lib/ui/Button.svelte";
   import SettingsRow from "../lib/ui/SettingsRow.svelte";
   import SettingsSection from "../lib/ui/SettingsSection.svelte";
+  import Switch from "../lib/ui/Switch.svelte";
   // The apps' own icons (src-tauri/icons, icons-nightly), so About looks like the taskbar.
   import releaseIcon from "../../src-tauri/icons/128x128.png?no-inline";
   import nightlyIcon from "../../src-tauri/icons-nightly/128x128.png?no-inline";
 
   // The self-updater (ADR-0019): the state lives in Rust and arrives as `update` events,
   // which the settings shell keeps in `updates`.
-  let { view, updates = $bindable() }: { view: SettingsView; updates: UpdateView | null } = $props();
+  let {
+    view,
+    update,
+    updates = $bindable(),
+  }: { view: SettingsView; update: (change: (f: Form) => void) => Promise<void>; updates: UpdateView | null } = $props();
 
   const status = $derived(updates?.status ?? { state: "idle" as const });
   const busy = $derived(["checking", "downloading", "installing"].includes(status.state));
@@ -54,7 +59,9 @@
                 ? `Updated to version ${updates?.version ?? view.version}`
               : status.state === "error" && status.manual
                 ? "Couldn’t check for updates"
-                : "Automatic updates"}
+                : view.form.auto_update_check
+                  ? "Automatic updates"
+                  : "Automatic updates are off"}
   >
     {#snippet leading()}
       <div class="grid size-8 place-items-center rounded-lg bg-accent">
@@ -65,7 +72,12 @@
         {:else if status.state === "error" && status.manual}
           <CircleAlert class="size-4 text-destructive-foreground" aria-hidden="true" />
         {:else}
-          <CircleCheck class="size-4 text-success-foreground" aria-hidden="true" />
+          <CircleCheck
+            class="size-4 {status.state === 'idle' && !view.form.auto_update_check
+              ? 'text-muted-foreground'
+              : 'text-success-foreground'}"
+            aria-hidden="true"
+          />
         {/if}
       </div>
     {/snippet}
@@ -80,8 +92,10 @@
         {status.message}
       {:else if status.state === "updated"}
         {product} restarted after updating from {status.from}, and is ready: hold your key to dictate.
+      {:else if view.form.auto_update_check}
+        {product} checks when it starts and once a day.
       {:else}
-        Bolo checks when it starts and every 6 hours.
+        Check now to look for an update.
       {/if}
     {/snippet}
     {#snippet control()}
@@ -113,6 +127,19 @@
       <p class="max-h-40 overflow-y-auto text-[13px] whitespace-pre-wrap">{status.notes}</p>
     </div>
   {/if}
+  <SettingsRow
+    title="Check for updates automatically"
+    labelFor="auto-update-check"
+    description="It never installs without your click. Bolo and Bolo Nightly share this switch."
+  >
+    {#snippet control()}
+      <Switch
+        id="auto-update-check"
+        checked={view.form.auto_update_check}
+        onchange={(on) => update((f) => (f.auto_update_check = on))}
+      />
+    {/snippet}
+  </SettingsRow>
   {#if updates}
     <SettingsRow
       title={updates.variant === "nightly" ? "Bolo Nightly gets a new build with every change" : "Try what’s next with Bolo Nightly"}
