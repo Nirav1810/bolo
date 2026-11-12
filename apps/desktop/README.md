@@ -6,7 +6,7 @@ Bolo sits in the tray. **Hold Caps Lock** to dictate and let go to finish (ADR-0
 
 - **The overlay pill** shows the waveform and the words as they're heard. It never takes focus.
 - **The idle button**, a small bar near the bottom of the screen, starts a hands-free dictation when clicked. The tray can hide it.
-- **The tray menu** has Start dictation, Pause Bolo (lets go of the key), Settings, History, Set up Bolo (onboarding again) and the Debug window.
+- **The tray menu** has Start dictation, Pause Bolo (lets go of the key; turns Bolo back on if it was switched off on the About page), Settings, History, Set up Bolo (onboarding again) and the Debug window.
 - **On first run** (no settings file), onboarding checks the mic, downloads the recommended model and lets you try a dictation.
 
 The whole M3 plan is in `.scratch/m3-desktop/`, and the results are in [docs/M3-REPORT.md](../../docs/M3-REPORT.md).

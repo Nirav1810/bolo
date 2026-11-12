@@ -197,6 +197,26 @@ impl Default for UpdateSettings {
     }
 }
 
+/// Which of the two apps is on (ADR-0019). An app that is off stays in the tray, but it
+/// doesn't listen for the push-to-talk key or show the pill, even after a restart. Both
+/// apps share this file, so each can turn either one off.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VariantSettings {
+    /// Bolo, the releases (the Beta).
+    pub release: bool,
+    /// Bolo Nightly.
+    pub nightly: bool,
+    #[serde(flatten)]
+    pub unknown: Table,
+}
+
+impl Default for VariantSettings {
+    fn default() -> Self {
+        Self { release: true, nightly: true, unknown: Table::new() }
+    }
+}
+
 /// Everything in `settings.toml`. Defaults match a fresh install.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -223,6 +243,7 @@ pub struct Settings {
     pub overlay: OverlaySettings,
     pub audio: AudioSettings,
     pub updates: UpdateSettings,
+    pub variants: VariantSettings,
     /// First-run onboarding's step while it's unfinished (0 = welcome); `None` once it's
     /// done. A settings file from before onboarding existed has none, so it isn't shown.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -249,6 +270,7 @@ impl Default for Settings {
             overlay: OverlaySettings::default(),
             audio: AudioSettings::default(),
             updates: UpdateSettings::default(),
+            variants: VariantSettings::default(),
             onboarding_step: None,
             unknown: Table::new(),
         }
@@ -517,6 +539,7 @@ mod tests {
         s.overlay.position = 0.25;
         s.audio.input_device = Some("Headset (Jabra Evolve2 65)".into());
         s.updates.auto_check = false;
+        s.variants.nightly = false;
         s
     }
 
@@ -560,6 +583,35 @@ mod tests {
         assert!(!d.polish.enabled && !d.autostart);
         assert_eq!(d.push_to_talk, PushToTalkKey::CapsLock);
         assert!(d.updates.auto_check);
+        assert!(d.variants.release && d.variants.nightly);
+    }
+
+    #[test]
+    fn both_apps_are_on_unless_the_file_turns_one_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        fs::write(
+            &path,
+            "version = 2
+",
+        )
+        .unwrap();
+        let s = Settings::load(&path).unwrap().settings;
+        assert!(s.variants.release && s.variants.nightly, "a file from before the switches");
+        fs::write(
+            &path,
+            "version = 2
+
+[variants]
+nightly = false
+",
+        )
+        .unwrap();
+        let s = Settings::load(&path).unwrap().settings;
+        assert!(s.variants.release && !s.variants.nightly);
+        s.save(&path).unwrap();
+        let t: Table = fs::read_to_string(&path).unwrap().parse().unwrap();
+        assert_eq!(t["variants"]["nightly"].as_bool(), Some(false));
     }
 
     #[test]

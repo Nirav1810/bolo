@@ -46,6 +46,10 @@ export interface Form {
   input_device: string | null;
   /** Check for updates at launch and once a day (`[updates] auto_check`). */
   auto_update_check: boolean;
+  /** Bolo (the Beta) listens for the key and shows the pill (`[variants] release`). */
+  release_on: boolean;
+  /** The same for Bolo Nightly (`[variants] nightly`). */
+  nightly_on: boolean;
 }
 
 export interface ModelView {

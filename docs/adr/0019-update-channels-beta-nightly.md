@@ -17,6 +17,8 @@ The two apps install side by side. A Nightly is never taken for Bolo:
 
 They share the settings (`%APPDATA%\Bolo`), models, history and the API keys in Credential Manager. Each writes its own log. Only one holds the push-to-talk key: when either installs its keyboard hook (at start, or on Resume), it sets the other's named event `Local\dev.bolo.desktop[.nightly].step-aside`. The other then pauses and says so in the pill. Bolo Nightly's uninstaller leaves the shared folders alone.
 
+Each app also has an on/off switch, `[variants] release` and `nightly` in the shared settings, shown on the About page of both. An app that is off stays in the tray, paused: no hook, no pill, no model, and it stays off after a restart or an update. Its tray's Resume turns it back on. Changing the switches sets the other app's `Local\dev.bolo.desktop[.nightly].switches-changed` event, and the other app reads them from the file again.
+
 Each app updates only from its own feed, a static `latest.json` (Tauri's updater format) attached as a release asset:
 - Bolo: `https://github.com/Nirav1810/bolo/releases/latest/download/latest.json`. For `/releases/latest/` to resolve, releases are no longer marked prerelease on GitHub. The Beta tag in the app replaces that flag.
 - Bolo Nightly: `https://github.com/Nirav1810/bolo/releases/download/nightly/latest.json`.

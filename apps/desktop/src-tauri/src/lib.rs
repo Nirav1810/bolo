@@ -162,6 +162,9 @@ struct Bolo {
     hook_thread: Arc<AtomicU32>,
     /// The settings window let go of the hook to capture a new key ([`commands::ptt_capture`]).
     capturing: AtomicBool,
+    /// This app is turned on in settings (`[variants]`), as last applied. Off, it stays
+    /// paused: no hook, no pill, no model, until it is turned on again.
+    on: AtomicBool,
     /// The self-updater's state (ADR-0019).
     updates: Arc<Updates>,
 }
@@ -372,6 +375,33 @@ impl Bolo {
         drop(lock(&self.engine).take());
     }
 
+    /// This app's on/off switch is now `on`: pause it for good, or resume it. Nothing
+    /// happens unless the switch itself changed, so a pause from the tray stays.
+    fn apply_switch(&self, app: &AppHandle, on: bool) {
+        if self.on.swap(on, Ordering::AcqRel) == on {
+            return;
+        }
+        tracing::info!(on, "turned {} in settings", if on { "on" } else { "off" });
+        let paused = lock(&self.session).paused();
+        if on == paused {
+            self.set_paused(!on, app);
+        }
+    }
+
+    /// The other app changed the on/off switches: read them from the file again.
+    fn reload_switches(&self, app: &AppHandle) {
+        let variants = match Settings::default_path().and_then(|p| Settings::load(&p)) {
+            Ok(loaded) => loaded.settings.variants,
+            Err(e) => {
+                tracing::warn!(%e, "could not read the switches the other Bolo changed");
+                return;
+            }
+        };
+        let on = Variant::current().is_on(&variants);
+        lock(&self.settings).variants = variants;
+        self.apply_switch(app, on);
+    }
+
     /// The other Bolo started or resumed: pause, and say why.
     fn step_aside(&self, app: &AppHandle) {
         if lock(&self.session).paused() {
@@ -411,6 +441,21 @@ impl Bolo {
     }
 
     fn toggle_paused(&self, app: &AppHandle) {
+        // Turned off in settings: Resume turns it back on, so it stays on after a restart.
+        if !self.on.load(Ordering::Acquire) {
+            let turned_on = self.change_settings(app, |s| {
+                let mut s = s.clone();
+                match Variant::current() {
+                    Variant::Release => s.variants.release = true,
+                    Variant::Nightly => s.variants.nightly = true,
+                }
+                s
+            });
+            if let Err(e) = turned_on {
+                tracing::warn!(%e, "could not turn Bolo on");
+            }
+            return;
+        }
         let paused = lock(&self.session).paused();
         self.set_paused(!paused, app);
     }
@@ -481,6 +526,10 @@ impl Bolo {
         if changes.retention {
             self.retention_days.store(settings.history.retention_days, Ordering::Relaxed);
             self.journal.with_history(|h| prune(h, settings.history.retention_days));
+        }
+        if changes.variants {
+            self.apply_switch(app, Variant::current().is_on(&settings.variants));
+            variant::ask_to_reload(Variant::current().other());
         }
         if changes.warm {
             self.warm(settings);
@@ -823,6 +872,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         hook: Mutex::new(None),
         hook_thread,
         capturing: AtomicBool::new(false),
+        on: AtomicBool::new(Variant::current().is_on(&settings.variants)),
         updates,
     };
     if let Err(e) = bolo.engine() {
@@ -838,17 +888,29 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
         return Ok(());
     }
-    app.state::<Bolo>().install_hook(app.handle());
-    // After the hook, which may ask the other Bolo to pause (and so free its model).
     let bolo = app.state::<Bolo>();
-    let settings = lock(&bolo.settings).clone();
-    bolo.warm(&settings);
+    if bolo.on.load(Ordering::Acquire) {
+        bolo.install_hook(app.handle());
+        // After the hook, which may ask the other Bolo to pause (and so free its model).
+        let settings = lock(&bolo.settings).clone();
+        bolo.warm(&settings);
+    } else {
+        // Turned off in settings: stay paused, and leave the key to the other Bolo.
+        tracing::info!("turned off in settings; staying paused");
+        bolo.set_paused(true, app.handle());
+    }
     keep_checking_for_updates(app.handle().clone());
     let handle = app.handle().clone();
     if let Err(e) = variant::listen_for_step_aside(Variant::current(), move || {
         handle.state::<Bolo>().step_aside(&handle);
     }) {
         tracing::warn!(%e, "could not listen for the other Bolo");
+    }
+    let handle = app.handle().clone();
+    if let Err(e) = variant::listen_for_reload(Variant::current(), move || {
+        handle.state::<Bolo>().reload_switches(&handle);
+    }) {
+        tracing::warn!(%e, "could not listen for the other Bolo's switches");
     }
     // First run (or onboarding left unfinished): open it.
     if onboarding {
