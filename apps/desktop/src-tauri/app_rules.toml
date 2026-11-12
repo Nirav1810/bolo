@@ -1,5 +1,7 @@
 # Bolo's app rules: how dictated text goes into each Windows app (M3 spec, ADR-0018).
-# Bundled into the app; the user's per-app polish choices in settings win over `polish`.
+# Bundled into the app. The user's `[[apps]]` rows in settings (the Apps tab, ADR-0020)
+# win over `name`, `format` and `polish` field by field, and can add a tone; `code_mode`,
+# `paste` and `multiline_swap_safe` are this table's alone.
 #
 # The first rule that matches wins. A rule matches when the window in front belongs to
 # one of its `exe` names (lower-case image names). A rule with `title` and no `exe`

@@ -31,12 +31,13 @@ The text is pasted where the cursor is: Bolo writes it to the clipboard and send
 The settings window (tray › Settings…) edits `%APPDATA%\Bolo\settings.toml` and applies every change at once:
 - **General:** the push-to-talk key (Caps Lock, Right Ctrl, Right Alt, F13–F24), Start with Windows, language mode and Hinglish script.
 - **Engines and keys:** the engine chain, model downloads, and API keys. Keys live in Windows Credential Manager under `bolo` and never go in the file.
-- **Polish:** on/off, tone, and per-app overrides.
+- **Polish:** on/off and the tone.
+- **Apps:** per-app format, polish and tone (`[[apps]]` in the file, ADR-0020). Each field you set wins over the bundled rule for that app.
 - **Dictionary.**
 - **History:** search and copy, retention, and the off switch.
 - **About.**
 
-`app_rules.toml` (bundled) maps each app to Plain, Markdown, HTML or code mode.
+`app_rules.toml` (bundled) maps each app to Plain, Markdown, HTML or code mode; the Apps tab's choices win over it.
 
 ## Run it
 

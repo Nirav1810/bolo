@@ -5,15 +5,15 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use bolo_core::OutputFormat;
 use bolo_store::{History, PROVIDERS, ProviderUsage, Settings};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::desktop::Clipboard;
-use crate::form::{CLOUD_ENGINES, Form};
+use crate::form::{self, AppChange, CLOUD_ENGINES, Form};
 use crate::keys::{self, Tested};
 use crate::models::{self, DownloadEvent, ModelView};
+use crate::rules::{self, AppView, Defaults};
 use crate::{Bolo, billing, key_name, lock, updates};
 
 /// Download progress goes out on this event, as [`DownloadEvent`]s.
@@ -21,18 +21,6 @@ pub const DOWNLOAD_EVENT: &str = "bolo://download";
 
 /// How many history rows the window lists.
 const HISTORY_ROWS: usize = 200;
-
-/// An app the bundled rules know, for the per-app polish list.
-#[derive(Debug, Clone, Serialize)]
-pub struct AppRow {
-    pub name: String,
-    /// The exe names; the first is the one an override is stored under.
-    pub exes: Vec<String>,
-    pub format: OutputFormat,
-    pub code_mode: bool,
-    /// The rule's polish choice; `None` follows the global switch.
-    pub polish: Option<bool>,
-}
 
 /// A cloud engine the window offers.
 #[derive(Debug, Clone, Serialize)]
@@ -62,7 +50,11 @@ pub struct SettingsView {
     /// Models downloading now.
     pub downloading: Vec<String>,
     pub cloud: Vec<CloudEngine>,
-    pub apps: Vec<AppRow>,
+    /// The Apps tab's rows: the bundled apps, then the ones the user added.
+    pub apps: Vec<AppView>,
+    /// The last app in front that wasn't Bolo, when the Apps tab has no row for it: the
+    /// one "Add app" offers.
+    pub recent_app: Option<String>,
     pub version: &'static str,
     pub paths: Paths,
     pub ram_mb: u64,
@@ -92,19 +84,8 @@ fn view(bolo: &Bolo) -> SettingsView {
             models::views(m, &root, rec.as_deref())
         })
         .unwrap_or_default();
-    let apps = bolo
-        .rules
-        .rules
-        .iter()
-        .filter(|r| !r.exe.is_empty())
-        .map(|r| AppRow {
-            name: r.name.clone().unwrap_or_else(|| r.exe[0].trim_end_matches(".exe").to_owned()),
-            exes: r.exe.clone(),
-            format: r.format.unwrap_or_default(),
-            code_mode: r.code_mode,
-            polish: r.polish,
-        })
-        .collect();
+    let apps = app_views(bolo, &settings);
+    let recent_app = lock(&bolo.recent_app).clone().filter(|exe| !listed(&apps, exe));
     let path = |p: bolo_store::Result<PathBuf>| p.map(|p| p.display().to_string()).unwrap_or_default();
     SettingsView {
         form: Form::of(&settings),
@@ -115,6 +96,7 @@ fn view(bolo: &Bolo) -> SettingsView {
         downloading: bolo.downloads.running(),
         cloud: CLOUD_ENGINES.iter().map(|&(spec, name, provider)| CloudEngine { spec, name, provider }).collect(),
         apps,
+        recent_app,
         version: env!("CARGO_PKG_VERSION"),
         paths: Paths {
             settings: path(Settings::default_path()),
@@ -126,6 +108,16 @@ fn view(bolo: &Bolo) -> SettingsView {
     }
 }
 
+fn app_views(bolo: &Bolo, settings: &Settings) -> Vec<AppView> {
+    let defaults = Defaults { polish: settings.polish.enabled, tone: &settings.polish.tone };
+    rules::app_views(&bolo.rules, &settings.apps, defaults)
+}
+
+/// The Apps tab has a row covering `exe`.
+fn listed(apps: &[AppView], exe: &str) -> bool {
+    apps.iter().any(|a| a.exes.iter().any(|e| e == exe))
+}
+
 #[tauri::command]
 pub fn settings_get(bolo: State<'_, Bolo>) -> SettingsView {
     view(&bolo)
@@ -135,6 +127,32 @@ pub fn settings_get(bolo: State<'_, Bolo>) -> SettingsView {
 #[tauri::command]
 pub fn settings_save(app: AppHandle, bolo: State<'_, Bolo>, form: Form) -> Result<SettingsView, String> {
     bolo.save_form(&app, form)?;
+    Ok(view(&bolo))
+}
+
+/// Set one field of `exe`'s `[[apps]]` row (ADR-0020); a `null` value clears it.
+#[tauri::command]
+pub fn app_set(app: AppHandle, bolo: State<'_, Bolo>, exe: String, change: AppChange) -> Result<SettingsView, String> {
+    let change = change.tidy()?;
+    bolo.change_settings(&app, |s| Settings { apps: form::set_app(&s.apps, &exe, change), ..s.clone() })?;
+    Ok(view(&bolo))
+}
+
+/// Drop `exe`'s `[[apps]]` row: a bundled app goes back to its rule, an added one goes.
+#[tauri::command]
+pub fn app_reset(app: AppHandle, bolo: State<'_, Bolo>, exe: String) -> Result<SettingsView, String> {
+    bolo.change_settings(&app, |s| Settings { apps: form::reset_app(&s.apps, &exe), ..s.clone() })?;
+    Ok(view(&bolo))
+}
+
+/// Add a row for program `exe` (as typed: `whatsapp` or `WhatsApp.exe`).
+#[tauri::command]
+pub fn app_add(app: AppHandle, bolo: State<'_, Bolo>, exe: String) -> Result<SettingsView, String> {
+    let exe = form::new_exe(&exe)?;
+    bolo.change_settings(&app, |s| {
+        let listed = listed(&app_views(&bolo, s), &exe);
+        Settings { apps: form::add_app(&s.apps, &exe, listed), ..s.clone() }
+    })?;
     Ok(view(&bolo))
 }
 

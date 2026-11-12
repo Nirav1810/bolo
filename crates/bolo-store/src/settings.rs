@@ -1,8 +1,10 @@
 //! `settings.toml`: what the user chose, versioned so later releases can migrate it.
 //!
-//! - The file starts with `version = 1`. A file without `version` is version 0, the flat
+//! - The file starts with `version = 2`. A file without `version` is version 0, the flat
 //!   layout of the `BOLO_*` variables the desktop shell read before this crate (ticket
 //!   01): `polish = "off" | "on" | "<tone>"`, `history = <bool>`, `history_days = <n>`.
+//!   Version 1 kept per-app polish as `[polish.apps]` (exe → bool); version 2 has the
+//!   `[[apps]]` profile table instead (ADR-0020).
 //!   [`Settings::load`] migrates older versions step by step and saves the result.
 //! - Keys this version doesn't know are kept through a load and save, so a newer Bolo's
 //!   settings survive a run of an older one.
@@ -12,24 +14,23 @@
 //!
 //! API keys never live here: see [`crate::secrets`].
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bolo_core::{ANTHROPIC, ApiKeys, EngineConfig, HinglishScript, LanguageMode, Polish};
+use bolo_core::{ANTHROPIC, ApiKeys, EngineConfig, HinglishScript, LanguageMode, OutputFormat, Polish};
 use serde::{Deserialize, Serialize};
 use toml::{Table, Value};
 
 use crate::{Result, Secrets, StoreError, io_err};
 
 /// The settings layout this build writes.
-pub const SETTINGS_VERSION: i64 = 1;
+pub const SETTINGS_VERSION: i64 = 2;
 
 type Migration = fn(&mut Table) -> Result<(), String>;
 
 /// One step per old version: `MIGRATIONS[v]` turns a version-`v` table into `v + 1`.
-const MIGRATIONS: [Migration; SETTINGS_VERSION as usize] = [v0_to_v1];
+const MIGRATIONS: [Migration; SETTINGS_VERSION as usize] = [v0_to_v1, v1_to_v2];
 
 /// The key held to dictate (ADR-0017). Caps Lock by default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -53,24 +54,56 @@ pub enum PushToTalkKey {
     F24,
 }
 
-/// Polish (ADR-0016): on or off, the tone, and per-app overrides.
+/// Polish (ADR-0016): on or off, and the tone. Per-app choices are [`AppProfile`]s.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PolishSettings {
     pub enabled: bool,
     /// "neutral", "casual" or "formal".
     pub tone: String,
-    /// Lower-case exe name → polish on/off there. Wins over the bundled app rules.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub apps: BTreeMap<String, bool>,
     #[serde(flatten)]
     pub unknown: Table,
 }
 
 impl Default for PolishSettings {
     fn default() -> Self {
-        Self { enabled: false, tone: "neutral".into(), apps: BTreeMap::new(), unknown: Table::new() }
+        Self { enabled: false, tone: "neutral".into(), unknown: Table::new() }
     }
+}
+
+/// One `[[apps]]` row: the user's choices for one app (ADR-0020). Each field the user
+/// set wins over the bundled app rule's; an unset field falls back to the rule, then to
+/// the default (plain text, the global polish switch, the global tone).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct AppProfile {
+    /// The lower-case image name, e.g. `slack.exe`.
+    pub exe: String,
+    /// The app's name, shown in the window and given to polish.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub polish: Option<bool>,
+    /// "neutral", "casual" or "formal".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<OutputFormat>,
+    /// Keys this version doesn't know, written back as they were.
+    #[serde(flatten)]
+    pub unknown: Table,
+}
+
+impl AppProfile {
+    /// An empty row for `exe`, its name tidied by [`exe_name`].
+    pub fn new(exe: &str) -> Self {
+        Self { exe: exe_name(exe), ..Self::default() }
+    }
+}
+
+/// `exe` as the app rules match it: trimmed, lower case, ending in `.exe`.
+pub fn exe_name(exe: &str) -> String {
+    let exe = exe.trim().to_lowercase();
+    if exe.ends_with(".exe") { exe } else { format!("{exe}.exe") }
 }
 
 /// Dictation history: text only, pruned after `retention_days`.
@@ -124,6 +157,9 @@ pub struct Settings {
     /// Overrides the ADR-007 models directory.
     pub models_dir: Option<PathBuf>,
     pub polish: PolishSettings,
+    /// Per-app profiles (`[[apps]]`), in the order the user added them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub apps: Vec<AppProfile>,
     pub history: HistorySettings,
     pub overlay: OverlaySettings,
     /// First-run onboarding's step while it's unfinished (0 = welcome); `None` once it's
@@ -146,6 +182,7 @@ impl Default for Settings {
             autostart: false,
             models_dir: None,
             polish: PolishSettings::default(),
+            apps: Vec::new(),
             history: HistorySettings::default(),
             overlay: OverlaySettings::default(),
             onboarding_step: None,
@@ -328,6 +365,34 @@ fn v0_to_v1(t: &mut Table) -> Result<(), String> {
     Ok(())
 }
 
+/// v1 → v2: `[polish.apps]` (exe → polish on/off) becomes `[[apps]]` rows.
+fn v1_to_v2(t: &mut Table) -> Result<(), String> {
+    let Some(Value::Table(polish)) = t.get_mut("polish") else { return Ok(()) };
+    let old = match polish.remove("apps") {
+        None => return Ok(()),
+        Some(Value::Table(apps)) => apps,
+        Some(v) => return Err(format!("v1 polish.apps = {v}: expected a table")),
+    };
+    let mut rows = Vec::with_capacity(old.len());
+    for (exe, on) in old {
+        let Value::Boolean(on) = on else {
+            return Err(format!("v1 polish.apps.{exe} = {on}: expected true or false"));
+        };
+        let exe = exe_name(&exe);
+        if exe == ".exe" {
+            continue;
+        }
+        let mut row = Table::new();
+        row.insert("exe".into(), Value::String(exe));
+        row.insert("polish".into(), Value::Boolean(on));
+        rows.push(Value::Table(row));
+    }
+    if !rows.is_empty() {
+        t.insert("apps".into(), Value::Array(rows));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -356,7 +421,13 @@ mod tests {
         };
         s.polish.enabled = true;
         s.polish.tone = "casual".into();
-        s.polish.apps.insert("slack.exe".into(), false);
+        s.apps.push(AppProfile { polish: Some(false), ..AppProfile::new("slack.exe") });
+        s.apps.push(AppProfile {
+            name: Some("WhatsApp".into()),
+            tone: Some("casual".into()),
+            format: Some(OutputFormat::Markdown),
+            ..AppProfile::new("WhatsApp")
+        });
         s.history.retention_days = 7;
         s.overlay.idle_button = false;
         s.overlay.position = 0.25;
@@ -370,7 +441,7 @@ mod tests {
         let s = custom();
         s.save(&path).unwrap();
         let text = fs::read_to_string(&path).unwrap();
-        assert!(text.starts_with("version = 1\n"), "{text}");
+        assert!(text.starts_with("version = 2\n"), "{text}");
         let loaded = Settings::load(&path).unwrap();
         assert_eq!(loaded.settings, s);
         assert!(loaded.recovered_from.is_none() && loaded.migrated_from.is_none());
@@ -410,8 +481,9 @@ mod tests {
         let path = dir.path().join("settings.toml");
         fs::write(
             &path,
-            "version = 1\nfuture_flag = true\nlanguage = \"english\"\n\n[polish]\nenabled = true\nstyle = \"terse\"\n\n\
-             [history]\nkeep_audio = false\n\n[sync]\nendpoint = \"top\"\n",
+            "version = 2\nfuture_flag = true\nlanguage = \"english\"\n\n[polish]\nenabled = true\nstyle = \"terse\"\n\n\
+             [history]\nkeep_audio = false\n\n[sync]\nendpoint = \"top\"\n\n\
+             [[apps]]\nexe = \"slack.exe\"\npolish = false\nemoji = true\n",
         )
         .unwrap();
         let s = Settings::load(&path).unwrap().settings;
@@ -422,11 +494,13 @@ mod tests {
         assert_eq!(t["polish"]["style"].as_str(), Some("terse"));
         assert_eq!(t["history"]["keep_audio"].as_bool(), Some(false));
         assert_eq!(t["sync"]["endpoint"].as_str(), Some("top"));
+        assert_eq!(t["apps"][0]["emoji"].as_bool(), Some(true));
+        assert_eq!(s.apps[0].polish, Some(false));
         assert_eq!(Settings::load(&path).unwrap().settings, s);
     }
 
     #[test]
-    fn a_v0_file_is_migrated_and_saved_as_v1() {
+    fn a_v0_file_is_migrated_and_saved_as_the_current_version() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.toml");
         fs::write(&path, include_str!("../tests/fixtures/settings-v0.toml")).unwrap();
@@ -442,10 +516,58 @@ mod tests {
         assert_eq!(s.history.retention_days, 14);
         assert!(s.unknown.is_empty(), "{:?}", s.unknown);
         let text = fs::read_to_string(&path).unwrap();
-        assert!(text.starts_with("version = 1\n"), "{text}");
+        assert!(text.starts_with("version = 2\n"), "{text}");
         let again = Settings::load(&path).unwrap();
         assert_eq!(again.migrated_from, None);
         assert_eq!(again.settings, s);
+    }
+
+    #[test]
+    fn a_v1_file_is_migrated_and_its_per_app_polish_becomes_app_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        fs::write(&path, include_str!("../tests/fixtures/settings-v1.toml")).unwrap();
+        let loaded = Settings::load(&path).unwrap();
+        assert_eq!(loaded.migrated_from, Some(1));
+        let s = loaded.settings;
+        assert!(s.polish.enabled);
+        assert_eq!(s.polish.tone, "formal");
+        assert_eq!(s.polish.unknown.get("style").and_then(Value::as_str), Some("terse"), "other polish keys stay");
+        assert!(!s.polish.unknown.contains_key("apps"));
+        assert_eq!(
+            s.apps,
+            [
+                AppProfile { polish: Some(false), ..AppProfile::new("slack.exe") },
+                AppProfile { polish: Some(true), ..AppProfile::new("whatsapp.exe") },
+                AppProfile { polish: Some(true), ..AppProfile::new("code.exe") },
+            ],
+            "keys lower-cased with .exe, blanks dropped"
+        );
+        assert_eq!(s.dictionary, ["Bolo"]);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("version = 2\n") && text.contains("[[apps]]"), "{text}");
+        assert!(!text.contains("polish.apps"), "{text}");
+        let again = Settings::load(&path).unwrap();
+        assert_eq!(again.migrated_from, None);
+        assert_eq!(again.settings, s);
+    }
+
+    #[test]
+    fn a_v1_file_without_per_app_polish_has_no_app_rows() {
+        let (s, v) = Settings::parse("version = 1\n[polish]\nenabled = true\n").ok().unwrap();
+        assert_eq!(v, 1);
+        assert!(s.apps.is_empty() && s.polish.enabled);
+        assert!(matches!(Settings::parse("version = 1\n[polish]\napps = 3\n"), Err(Bad::Invalid(_))));
+        assert!(matches!(
+            Settings::parse("version = 1\n[polish.apps]\n\"slack.exe\" = \"off\"\n"),
+            Err(Bad::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn exe_names_are_tidied() {
+        assert_eq!(exe_name(" WhatsApp "), "whatsapp.exe");
+        assert_eq!(exe_name("Code.EXE"), "code.exe");
     }
 
     #[test]
@@ -458,7 +580,7 @@ mod tests {
 
     #[test]
     fn a_bad_file_is_backed_up_and_replaced_with_the_defaults() {
-        for bad in ["version = 1\nlanguage = [unclosed", "version = 1\nlanguage = \"klingon\"", "version = \"one\""] {
+        for bad in ["version = 2\nlanguage = [unclosed", "version = 2\nlanguage = \"klingon\"", "version = \"one\""] {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("settings.toml");
             fs::write(&path, bad).unwrap();
