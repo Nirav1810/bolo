@@ -946,13 +946,21 @@ fn keep_pruning(journal: Arc<Journal>, retention_days: Arc<AtomicU32>) {
     }
 }
 
-/// Check for an update shortly after launch, then every few hours (ADR-0019).
+/// Check for an update shortly after launch, then once a day, while `[updates]
+/// auto_check` is on (ADR-0019). The switch is read at every tick, so it takes effect
+/// without a restart.
 fn keep_checking_for_updates(app: AppHandle) {
     let spawned = std::thread::Builder::new().name("bolo-update-schedule".into()).spawn(move || {
         std::thread::sleep(updates::FIRST_CHECK_AFTER);
+        let mut last: Option<Instant> = None;
         loop {
-            app.state::<Bolo>().check_for_update(&app, false);
-            std::thread::sleep(updates::CHECK_EVERY);
+            let bolo = app.state::<Bolo>();
+            let on = lock(&bolo.settings).updates.auto_check;
+            if updates::check_due(on, last.map(|at| at.elapsed())) {
+                last = Some(Instant::now());
+                bolo.check_for_update(&app, false);
+            }
+            std::thread::sleep(updates::SCHEDULE_TICK);
         }
     });
     if let Err(e) = spawned {

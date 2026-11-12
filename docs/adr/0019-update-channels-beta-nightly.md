@@ -23,6 +23,8 @@ Each app updates only from its own feed, a static `latest.json` (Tauri's updater
 
 The app checks on launch and every 6 hours, and never installs without a click. When a newer build is out, Settings → About and the tray offer **Update**. Clicking it downloads the installer, checks its minisign signature against the public key compiled into the app, runs it quietly (per-user NSIS needs no elevation), and the installer restarts the app. About links to the other app's download page instead of a channel switch.
 
+*Amended in M4 (ticket 05, update settings):* the check runs on launch and once a day, not every 6 hours, and `[updates] auto_check` (a switch in About, on by default, shared by both apps) turns the automatic checks off; **Check now** still works.
+
 The installers are signed with a Tauri updater key (minisign). The private key and its password live in the repo secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, with an offline copy kept by the maintainer. Losing the key strands every install on its current version, because a new key needs a manual reinstall. Authenticode signing is a separate decision (M4).
 
 ## Considered Options

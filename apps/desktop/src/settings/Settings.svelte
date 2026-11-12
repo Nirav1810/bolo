@@ -216,7 +216,7 @@
           {:else if page === "usage"}
             <Usage />
           {:else}
-            <About {view} bind:updates />
+            <About {view} {update} bind:updates />
           {/if}
         {:else if !error}
           <div class="flex flex-col gap-2.5" aria-hidden="true">

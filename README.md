@@ -23,7 +23,7 @@ Open-source, local-first voice dictation for **Windows** and **Android**. Hold a
 - Lists arrive as real lists in Word, Outlook and Gmail, and as Markdown in Slack, Notion and Obsidian. Code editors and terminals get no auto-capitals or trailing period.
 - Your clipboard is restored after each paste, and the pastes stay out of Win+V history.
 
-**Privacy.** With the default local model, audio and text never leave the PC. Audio goes to a provider only if you choose a cloud engine (Deepgram, Groq, Sarvam). Polish, which is off by default, sends the text, never the audio, to Anthropic using your own key; it stays off in code editors and terminals. API keys are kept in Windows Credential Manager. History keeps text only, on this PC, for 30 days, and you can turn it off or clear it. Bolo has no telemetry and no accounts. Besides the engines you choose, it only goes online to download a speech model you pick (from its upstream host, SHA-256 verified) and to check GitHub for updates (on launch and every 6 hours; it never installs without your click).
+**Privacy.** With the default local model, audio and text never leave the PC. Audio goes to a provider only if you choose a cloud engine (Deepgram, Groq, Sarvam). Polish, which is off by default, sends the text, never the audio, to Anthropic using your own key; it stays off in code editors and terminals. API keys are kept in Windows Credential Manager. History keeps text only, on this PC, for 30 days, and you can turn it off or clear it. Bolo has no telemetry and no accounts. Besides the engines you choose, it only goes online to download a speech model you pick (from its upstream host, SHA-256 verified) and to check GitHub for updates (on launch and once a day, which you can turn off in Settings → About; it never installs without your click).
 
 To uninstall, use Windows Settings › Apps. The uninstaller asks whether to delete your downloaded models and dictation history. Settings and API keys stay unless you tick "Delete the application data".
 
@@ -117,7 +117,7 @@ Only installers built by this repository's GitHub Actions workflows from its own
 - Committers and reviewers: [the maintainer](https://github.com/Nirav1810)
 - Approvers: [the maintainer](https://github.com/Nirav1810)
 
-Privacy: Bolo sends nothing to any networked system except what you configure or ask for: audio or text to the cloud engines you choose (Deepgram, Groq, Sarvam, and Anthropic for Polish), each with your own key, the speech models you download, and the update check against this repository's GitHub releases. See **Privacy** under [Install](#install-the-desktop-app-windows-x64).
+Privacy: Bolo sends nothing to any networked system except what you configure or ask for: audio or text to the cloud engines you choose (Deepgram, Groq, Sarvam, and Anthropic for Polish), each with your own key, the speech models you download, and the update check against this repository's GitHub releases (at launch and once a day; you can turn it off in Settings → About). See **Privacy** under [Install](#install-the-desktop-app-windows-x64).
 
 ## License
 
