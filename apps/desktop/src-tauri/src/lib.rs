@@ -42,7 +42,7 @@ pub mod updates;
 pub mod variant;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use bolo_core::{ANTHROPIC, ApiKeys, BoloError, DictationState, Engine, EngineConfig, Polish};
@@ -124,6 +124,8 @@ struct Bolo {
     /// The bundled app rules and the user's polish settings, for each dictation's plan.
     rules: AppRules,
     prefs: Mutex<PolishPrefs>,
+    /// The last app seen in front that isn't Bolo, offered by the Apps tab's "Add app".
+    recent_app: Mutex<Option<String>>,
     inserter: Arc<Inserter>,
     journal: Arc<Journal>,
     /// History's retention, read by the daily prune.
@@ -170,7 +172,21 @@ impl Bolo {
     /// The plan for a dictation into the window in front.
     fn plan(&self) -> Plan {
         let fg = self.desktop.foreground().unwrap_or_default();
+        self.note_app(&fg.exe);
         rules::plan(&fg.exe, &fg.title, &self.rules, &lock(&self.prefs))
+    }
+
+    /// Remember `exe` as the last app in front, unless it's Bolo itself or the shell
+    /// (the taskbar and the desktop are `explorer.exe`).
+    fn note_app(&self, exe: &str) {
+        static OWN: LazyLock<String> = LazyLock::new(|| {
+            let exe = std::env::current_exe().ok();
+            exe.and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase())).unwrap_or_default()
+        });
+        let exe = exe.trim().to_lowercase();
+        if !exe.is_empty() && exe != *OWN && exe != "explorer.exe" {
+            *lock(&self.recent_app) = Some(exe);
+        }
     }
 
     /// A dictation started: tell the inserter how its text goes in, and history where.
@@ -690,6 +706,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         desktop,
         rules: AppRules::bundled(),
         prefs: Mutex::new(prefs),
+        recent_app: Mutex::new(None),
         inserter,
         journal,
         retention_days,
@@ -808,7 +825,7 @@ fn polish_prefs(settings: &Settings, config: &EngineConfig) -> PolishPrefs {
             Polish::Off => settings.polish.tone.clone(),
         },
         dictionary: config.dictionary.clone(),
-        apps: settings.polish.apps.clone(),
+        apps: settings.apps.clone(),
         has_key: config.api_keys.get(ANTHROPIC).is_some(),
     }
 }
@@ -875,6 +892,9 @@ pub fn run() {
             pill_regions,
             commands::settings_get,
             commands::settings_save,
+            commands::app_set,
+            commands::app_reset,
+            commands::app_add,
             commands::key_save,
             commands::key_test,
             commands::ptt_capture,
@@ -897,12 +917,25 @@ pub fn run() {
             commands::update_install,
         ])
         .setup(setup)
-        .on_window_event(|window, event| {
+        .on_window_event(|window, event| match event {
             // Closing a window hides it; Bolo keeps running in the tray.
-            if let WindowEvent::CloseRequested { api, .. } = event {
+            WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
                 let _ = window.hide();
             }
+            // The user went from Settings to another app: note it, so the Apps tab can
+            // offer it on the way back. A moment later, once that app is in front.
+            WindowEvent::Focused(false) if window.label() == "settings" => {
+                let app = window.app_handle().clone();
+                let _ = std::thread::Builder::new().name("bolo-recent-app".into()).spawn(move || {
+                    std::thread::sleep(Duration::from_millis(400));
+                    let bolo = app.state::<Bolo>();
+                    if let Some(fg) = bolo.desktop.foreground() {
+                        bolo.note_app(&fg.exe);
+                    }
+                });
+            }
+            _ => {}
         })
         .build(tauri::generate_context!());
     let app = match app {

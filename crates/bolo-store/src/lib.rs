@@ -20,7 +20,8 @@ use std::path::PathBuf;
 pub use history::{Dictation, History, HistoryRow};
 pub use secrets::{PROVIDERS, SERVICE, Secrets};
 pub use settings::{
-    HistorySettings, Loaded, OverlaySettings, PolishSettings, PushToTalkKey, SETTINGS_VERSION, Settings,
+    AppProfile, HistorySettings, Loaded, OverlaySettings, PolishSettings, PushToTalkKey, SETTINGS_VERSION, Settings,
+    exe_name,
 };
 pub use usage::{ProviderUsage, UsageEvent, provider_of};
 

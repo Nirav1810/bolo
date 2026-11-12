@@ -35,8 +35,12 @@ The key the user holds to dictate on the desktop: Caps Lock by default (ADR-0017
 _Avoid_: Hotkey (fine in code, but ambiguous in docs), trigger
 
 **Target app**:
-The foreground app the text will be inserted into. Its exe (and window title for browsers) decides the dictation's `TargetContext`: format, `code_mode` and whether polish runs.
+The foreground app the text will be inserted into. Its exe (and window title for browsers) decides the dictation's `TargetContext`: format, `code_mode` and whether polish runs, from the bundled app rules and the user's app profile for it.
 _Avoid_: Destination, focus app
+
+**App profile**:
+The user's choices for one app, edited on the Apps tab and stored as an `[[apps]]` row in settings: its name, polish on or off, tone and format. Each field the user set wins over the bundled app rule's (ADR-0020).
+_Avoid_: Override, per-app polish
 
 **Overlay pill**:
 The small, non-activating, click-through window that shows listening state, the waveform and partial text during a dictation.

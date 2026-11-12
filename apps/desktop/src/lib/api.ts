@@ -32,7 +32,6 @@ export interface Form {
   dictionary: string[];
   polish: boolean;
   tone: string;
-  polish_apps: Record<string, boolean>;
   history: boolean;
   retention_days: number;
 }
@@ -49,13 +48,40 @@ export interface ModelView {
   hinglish: boolean;
 }
 
-export interface AppRow {
-  name: string;
-  exes: string[];
-  format: Format;
-  code_mode: boolean;
-  polish: boolean | null;
+/** Where an app's field comes from: the user's row, Bolo's app rules, or the default. */
+export type Source = "user" | "bundled" | "default";
+export interface Field<T> {
+  value: T;
+  source: Source;
 }
+export interface AppFields {
+  name: Field<string>;
+  polish: Field<boolean>;
+  tone: Field<string>;
+  format: Field<Format>;
+}
+
+/** One row of the Apps tab (src-tauri/src/rules.rs, `AppView`; ADR-0020). */
+export interface AppView extends AppFields {
+  /** The exe the user's row is stored under. */
+  exe: string;
+  /** Every exe the row covers. */
+  exes: string[];
+  /** The fields without the user's row: what clearing one goes back to. */
+  inherited: AppFields;
+  code_mode: boolean;
+  /** Bolo's app rules know it; resetting keeps it listed. */
+  bundled: boolean;
+  /** The user set at least one field. */
+  custom: boolean;
+}
+
+/** One field of an app's row; `null` clears it (src-tauri/src/form.rs, `AppChange`). */
+export type AppChange =
+  | { field: "name"; value: string | null }
+  | { field: "polish"; value: boolean | null }
+  | { field: "tone"; value: string | null }
+  | { field: "format"; value: Format | null };
 
 export interface CloudEngine {
   spec: string;
@@ -71,7 +97,9 @@ export interface SettingsView {
   models: ModelView[];
   downloading: string[];
   cloud: CloudEngine[];
-  apps: AppRow[];
+  apps: AppView[];
+  /** The last app in front that wasn't Bolo, when it has no row yet. */
+  recent_app: string | null;
   version: string;
   paths: { settings: string; models: string; history: string };
   ram_mb: number;
@@ -200,6 +228,10 @@ export function variant(version: string): {
 export const api = {
   settings: () => invoke<SettingsView>("settings_get"),
   save: (form: Form) => invoke<SettingsView>("settings_save", { form }),
+  appSet: (exe: string, change: AppChange) =>
+    invoke<SettingsView>("app_set", { exe, change }),
+  appReset: (exe: string) => invoke<SettingsView>("app_reset", { exe }),
+  appAdd: (exe: string) => invoke<SettingsView>("app_add", { exe }),
   saveKey: (provider: string, key: string) =>
     invoke<string | null>("key_save", { provider, key }),
   testKey: (provider: string, key?: string) =>
