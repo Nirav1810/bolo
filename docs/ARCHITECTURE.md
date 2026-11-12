@@ -99,7 +99,7 @@ The `deepgram-stream` engine spec (`bolo_stt::cloud::DeepgramStreamEngine`) open
 ## Engine lifecycle (RAM/battery)
 
 - `LocalEngine` holds `Mutex<Option<Recognizer>>`. Weights are loaded by `prewarm()` or on first use and dropped by `release()`.
-- The host calls `release()` after its idle timeout (30 s desktop, 20 s Android) and immediately on `onTrimMemory`.
+- The engine calls `release()` after its idle timeout (20 s on Android) and the host immediately on `onTrimMemory`. The desktop app sets no timeout: it loads the model at launch and keeps it, so a push-to-talk hold never waits on a ~2.4 s load. It releases it only when paused.
 - Inference threads default to `min(4, cores)`.
 - Cloud engines share one `reqwest::Client` (keep-alive, h2) so `prewarm()` actually saves the TLS handshake.
 - `FallbackEngine` warms only the primary engine. Warming a local fallback would cost RAM for nothing.

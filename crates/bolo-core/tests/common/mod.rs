@@ -45,6 +45,8 @@ pub struct FakeStt {
     opened: Mutex<Vec<Language>>,
     /// (language, samples accepted) of every stream that finished.
     finished: Arc<Mutex<Vec<(Language, usize)>>>,
+    /// How many times the engine asked it to free its model.
+    released: std::sync::atomic::AtomicUsize,
 }
 
 impl FakeStt {
@@ -92,6 +94,11 @@ impl FakeStt {
         self.opened.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
+    /// How many times the engine released the model.
+    pub fn released(&self) -> usize {
+        self.released.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     fn script_for(&self, language: Language) -> Script {
         let g = self.scripts.lock();
         g.ok().and_then(|g| g.iter().find(|(l, _)| *l == language).map(|(_, s)| s.clone())).unwrap_or_default()
@@ -110,6 +117,10 @@ impl SttEngine for FakeStt {
 
     fn per_stream_language(&self) -> bool {
         true
+    }
+
+    fn release(&self) {
+        self.released.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     async fn transcribe(&self, _audio: &[f32], opts: &SttOptions) -> bolo_stt::Result<Transcript> {

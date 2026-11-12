@@ -252,7 +252,8 @@ pub struct EngineConfig {
     /// `on_polished` in every rendering. Polish is told to keep the triggers as spoken.
     #[serde(default)]
     pub snippets: Vec<Snippet>,
-    /// Unload the local model after this many idle seconds (30 desktop, 20 Android).
+    /// Unload the local model after this many idle seconds (20 on Android). 0 keeps it
+    /// loaded for good, so a dictation never waits on a model load (the desktop app).
     pub idle_unload_secs: u32,
     /// Keep the mic open this long after a dictation (ADR-009 hybrid policy). 0 = close
     /// immediately.

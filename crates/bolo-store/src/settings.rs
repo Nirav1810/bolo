@@ -399,6 +399,9 @@ impl Settings {
             models_dir: self.models_dir.clone().or_else(bolo_models::default_models_root).unwrap_or_default(),
             polish,
             api_keys,
+            // The desktop keeps the model loaded: a push-to-talk hold must never wait on
+            // a ~2.4 s reload, or the key is often let go before the dictation starts.
+            idle_unload_secs: 0,
             ..defaults
         }
     }
@@ -713,6 +716,7 @@ mod tests {
         assert_eq!(c.dictionary, ["Nirav", "Bolo"]);
         assert_eq!(c.models_dir, PathBuf::from(r"D:\models"));
         assert_eq!(c.api_keys.get("deepgram"), Some("dg"));
+        assert_eq!(c.idle_unload_secs, 0, "the desktop keeps the model loaded");
         assert_eq!(
             c.polish,
             Polish::On { tone: "casual".into(), app: String::new(), dictionary: vec!["Nirav".into(), "Bolo".into()] }

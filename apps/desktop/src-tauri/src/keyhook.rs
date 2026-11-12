@@ -94,7 +94,9 @@ mod win {
     use bolo_store::PushToTalkKey;
     use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows_sys::Win32::System::Threading::{GetCurrentThreadId, INFINITE};
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentThread, GetCurrentThreadId, INFINITE, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
+    };
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
         SendInput, VK_ESCAPE, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN,
@@ -193,6 +195,12 @@ mod win {
         // procedures are `extern "system"` functions that live for the whole program, and
         // every hook is unhooked before the thread ends.
         unsafe {
+            // Windows silently removes a low-level hook that answers too slowly, and the key
+            // then never works again until a restart. This thread does almost nothing, so
+            // it runs first even while the model loads or decodes on every core.
+            if SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL) == 0 {
+                tracing::warn!(e = %std::io::Error::last_os_error(), "could not raise the hook thread's priority");
+            }
             let mut msg: MSG = std::mem::zeroed();
             // Create this thread's message queue before anyone posts to it.
             PeekMessageW(&mut msg, null_mut(), 0, 0, PM_NOREMOVE);
