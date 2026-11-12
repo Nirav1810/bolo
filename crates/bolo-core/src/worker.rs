@@ -3,7 +3,7 @@
 //!
 //! Every ~10 ms while the mic is open it drains audio, resamples to 16 kHz, and either
 //! feeds the dictation or keeps a short pre-roll ring when idle-warm. Timers close the mic
-//! after `mic_warm_secs` and unload the model after `idle_unload_secs`.
+//! after `mic_warm_secs` and unload the model after `idle_unload_secs` (0: never).
 //!
 //! Each streaming pass decodes on its own thread, so the engine thread never waits on a
 //! chunk decode: it hands audio over, picks up partials, and handles Stop as soon as it
@@ -760,7 +760,8 @@ impl Worker {
             }
         }
         self.set_state(DictationState::Idle);
-        self.unload_at = Some(Instant::now() + Duration::from_secs(u64::from(self.config.idle_unload_secs)));
+        let idle = self.config.idle_unload_secs;
+        self.unload_at = (idle > 0).then(|| Instant::now() + Duration::from_secs(u64::from(idle)));
     }
 
     /// Finish the passes and pick the result.

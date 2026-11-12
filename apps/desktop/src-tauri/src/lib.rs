@@ -184,6 +184,24 @@ impl Bolo {
         Ok(engine)
     }
 
+    /// Load the model now, in the background, so a push-to-talk hold starts listening at
+    /// once instead of waiting ~2.4 s on a load. It then stays loaded (the desktop's
+    /// `idle_unload_secs` is 0). Not while paused or measuring, nor before onboarding is
+    /// done, when the model may not be downloaded yet. Loading again is a no-op.
+    fn warm(&self, settings: &Settings) {
+        if measuring() || settings.onboarding_step.is_some() || lock(&self.session).paused() {
+            return;
+        }
+        match self.engine() {
+            Ok(engine) => {
+                if let Some(e) = engine.as_ref() {
+                    e.prewarm();
+                }
+            }
+            Err(e) => tracing::debug!(%e, "no engine to warm"),
+        }
+    }
+
     /// The plan for a dictation into the window in front.
     fn plan(&self) -> Plan {
         let fg = self.desktop.foreground().unwrap_or_default();
@@ -268,10 +286,16 @@ impl Bolo {
             let Some(e) = engine.as_ref() else { return Err(BoloError::Stopped) };
             let mut session = lock(&self.session);
             match command {
-                Command::Start => session.press(e, || self.plan()).map(|t| {
-                    self.begin(&t);
-                    tracing::info!(?t, "push-to-talk held");
-                }),
+                Command::Start => {
+                    let t0 = Instant::now();
+                    session.press(e, || self.plan()).map(|t| {
+                        self.begin(&t);
+                        // Hold recognised → listening: the mic open, plus a model load if
+                        // the model wasn't warm.
+                        let start_ms = t0.elapsed().as_millis() as u64;
+                        tracing::info!(?t, start_ms, "push-to-talk held");
+                    })
+                }
                 Command::Stop => {
                     // Key-up, for the key-up → paste latency the inserter logs.
                     self.inserter.released(Instant::now());
@@ -301,6 +325,8 @@ impl Bolo {
             self.remove_hook();
         } else {
             self.install_hook(app);
+            let settings = lock(&self.settings).clone();
+            self.warm(&settings);
         }
         tracing::info!(paused, "pause");
         self.emit.emit(AppEvent::Paused { paused });
@@ -456,6 +482,9 @@ impl Bolo {
             self.retention_days.store(settings.history.retention_days, Ordering::Relaxed);
             self.journal.with_history(|h| prune(h, settings.history.retention_days));
         }
+        if changes.warm {
+            self.warm(settings);
+        }
     }
 
     /// Rebuild the engine config from `settings` and the stored keys. With `engine`, the
@@ -487,6 +516,7 @@ impl Bolo {
         };
         let settings = lock(&self.settings).clone();
         self.reconfigure(&settings, true);
+        self.warm(&settings);
         Ok(hint)
     }
 }
@@ -809,6 +839,10 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     app.state::<Bolo>().install_hook(app.handle());
+    // After the hook, which may ask the other Bolo to pause (and so free its model).
+    let bolo = app.state::<Bolo>();
+    let settings = lock(&bolo.settings).clone();
+    bolo.warm(&settings);
     keep_checking_for_updates(app.handle().clone());
     let handle = app.handle().clone();
     if let Err(e) = variant::listen_for_step_aside(Variant::current(), move || {

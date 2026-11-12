@@ -200,7 +200,7 @@ fn dedupe(items: Vec<String>, key: impl Fn(&str) -> String) -> Vec<String> {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Changes {
     /// The engine needs the new config (engines, language, script, dictionary or the
-    /// models directory). Its model reloads on the next dictation.
+    /// models directory). Its model is dropped and loaded again (see [`Changes::warm`]).
     pub engine: bool,
     /// The polish choices the app plans each dictation with.
     pub polish: bool,
@@ -215,6 +215,9 @@ pub struct Changes {
     pub history: bool,
     /// Prune now with the new retention.
     pub retention: bool,
+    /// Load the model now, ready for the next push-to-talk: the engine config changed,
+    /// or onboarding just finished (the first time a model is surely there).
+    pub warm: bool,
 }
 
 impl Changes {
@@ -225,12 +228,13 @@ impl Changes {
 
 /// What changed from `old` to `new`.
 pub fn changes(old: &Settings, new: &Settings) -> Changes {
+    let engine = old.engines != new.engines
+        || old.language != new.language
+        || old.script != new.script
+        || old.dictionary != new.dictionary
+        || old.models_dir != new.models_dir;
     Changes {
-        engine: old.engines != new.engines
-            || old.language != new.language
-            || old.script != new.script
-            || old.dictionary != new.dictionary
-            || old.models_dir != new.models_dir,
+        engine,
         polish: old.polish != new.polish || old.apps != new.apps || old.dictionary != new.dictionary,
         snippets: old.snippets != new.snippets,
         mic: old.audio.device() != new.audio.device(),
@@ -238,6 +242,7 @@ pub fn changes(old: &Settings, new: &Settings) -> Changes {
         autostart: old.autostart != new.autostart,
         history: old.history.enabled != new.history.enabled,
         retention: old.history.retention_days != new.history.retention_days,
+        warm: engine || (old.onboarding_step.is_some() && new.onboarding_step.is_none()),
     }
 }
 
@@ -313,12 +318,21 @@ mod tests {
             changes(&old, &form.apply(&old))
         };
         assert!(!changes(&old, &old).any());
-        assert_eq!(with(|f| f.language = LanguageMode::Hinglish), Changes { engine: true, ..Default::default() });
-        assert_eq!(with(|f| f.script = HinglishScript::Devanagari), Changes { engine: true, ..Default::default() });
-        assert_eq!(with(|f| f.engines = vec!["deepgram".into()]), Changes { engine: true, ..Default::default() });
+        assert_eq!(
+            with(|f| f.language = LanguageMode::Hinglish),
+            Changes { engine: true, warm: true, ..Default::default() }
+        );
+        assert_eq!(
+            with(|f| f.script = HinglishScript::Devanagari),
+            Changes { engine: true, warm: true, ..Default::default() }
+        );
+        assert_eq!(
+            with(|f| f.engines = vec!["deepgram".into()]),
+            Changes { engine: true, warm: true, ..Default::default() }
+        );
         assert_eq!(
             with(|f| f.dictionary = vec!["Bolo".into()]),
-            Changes { engine: true, polish: true, ..Default::default() }
+            Changes { engine: true, polish: true, warm: true, ..Default::default() }
         );
         assert_eq!(with(|f| f.polish = true), Changes { polish: true, ..Default::default() });
         assert_eq!(
@@ -338,6 +352,9 @@ mod tests {
         assert_eq!(with(|f| f.autostart = true), Changes { autostart: true, ..Default::default() });
         assert_eq!(with(|f| f.history = false), Changes { history: true, ..Default::default() });
         assert_eq!(with(|f| f.retention_days = 7), Changes { retention: true, ..Default::default() });
+        let onboarding = Settings { onboarding_step: Some(2), ..old.clone() };
+        assert_eq!(changes(&onboarding, &old), Changes { warm: true, ..Default::default() }, "onboarding done: load");
+        assert!(!changes(&old, &onboarding).any(), "starting onboarding loads nothing");
         // The update schedule reads the switch at every tick: nothing to redo.
         assert!(!with(|f| f.auto_update_check = false).any());
         let mut f = Form::of(&old);
