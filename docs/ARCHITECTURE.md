@@ -15,7 +15,7 @@
 
 Dependency direction: `core → {audio, stt, format}`, `stt → {audio, models}`, `bolo (CLI) → {core, audio, stt, models, format}`, `store → core`. Only `apps/*` contain platform UI code.
 
-## Windows app (`apps/desktop`, M3)
+## Windows app (`apps/desktop`, M3–M4)
 
 Tauri v2 hosts one `Engine` in-process; the Svelte webviews only render.
 
@@ -29,8 +29,10 @@ Engine events ─► controller ─► inserter: clipboard paste, restore, polis
 ```
 
 - The decisions are pure and tested without a desktop: the hotkey machine, the swap decision, the app rules, the pill, and the settings form. The Win32 calls sit behind the `Desktop` seam.
-- Settings are saved and applied live. Engine changes go through `update_config`, and per-dictation polish through `set_polish`.
-- The per-user NSIS installer bundles the sherpa-onnx DLLs. Models are downloaded on first run (onboarding), not shipped.
+- Settings are saved and applied live. Engine changes go through `update_config`. Per-dictation polish goes through `set_polish`, and snippets and the microphone through `set_snippets` and `set_input_device`, so neither reloads the model.
+- Snippets are expanded last, after the rules and after polish (`bolo_format::snippets`).
+- The settings window is built on demand and destroyed on close (M4 ticket 04). Only the pill's webview lives for the whole session.
+- The per-user NSIS installer bundles the sherpa-onnx DLLs. Models are downloaded on first run (onboarding), not shipped. Releases and nightlies update themselves (ADR-0019), and they are Authenticode-signed through SignPath once that's approved (ADR-0021).
 
 ## Pipeline
 

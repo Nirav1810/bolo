@@ -7,7 +7,7 @@ Open-source, local-first voice dictation for **Windows** and **Android**. Hold a
 - **Private**: no telemetry, no accounts. Audio leaves the device only if you configure a cloud provider.
 - **Lean**: models load only while you dictate and unload when idle.
 
-> **Status: Milestone 3: the Windows desktop app (preview).** There is no Android keyboard yet. See the [M3 report](docs/M3-REPORT.md), the [M2 report](docs/M2-REPORT.md), the [M1 report](docs/M1-REPORT.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+> **Status: Milestone 4: the Windows desktop app, polished (preview).** There is no Android keyboard yet. See the [M4 report](docs/M4-REPORT.md), the [M3 report](docs/M3-REPORT.md), the [M2 report](docs/M2-REPORT.md), the [M1 report](docs/M1-REPORT.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Install the desktop app (Windows x64)
 
