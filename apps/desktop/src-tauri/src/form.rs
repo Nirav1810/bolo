@@ -40,6 +40,10 @@ pub struct Form {
     pub input_device: Option<String>,
     /// `[updates] auto_check`: check for updates at launch and once a day.
     pub auto_update_check: bool,
+    /// `[variants] release`: Bolo (the Beta) listens for the key and shows the pill.
+    pub release_on: bool,
+    /// `[variants] nightly`: the same for Bolo Nightly.
+    pub nightly_on: bool,
 }
 
 impl Form {
@@ -58,6 +62,8 @@ impl Form {
             retention_days: s.history.retention_days,
             input_device: s.audio.input_device.clone(),
             auto_update_check: s.updates.auto_check,
+            release_on: s.variants.release,
+            nightly_on: s.variants.nightly,
         }
     }
 
@@ -88,6 +94,8 @@ impl Form {
         s.history.retention_days = self.retention_days.max(1);
         s.audio.input_device = self.input_device.map(|d| d.trim().to_owned()).filter(|d| !d.is_empty());
         s.updates.auto_check = self.auto_update_check;
+        s.variants.release = self.release_on;
+        s.variants.nightly = self.nightly_on;
         s
     }
 }
@@ -215,6 +223,8 @@ pub struct Changes {
     pub history: bool,
     /// Prune now with the new retention.
     pub retention: bool,
+    /// Which app is on changed: this one turns on or off, and the other is told.
+    pub variants: bool,
     /// Load the model now, ready for the next push-to-talk: the engine config changed,
     /// or onboarding just finished (the first time a model is surely there).
     pub warm: bool,
@@ -242,6 +252,7 @@ pub fn changes(old: &Settings, new: &Settings) -> Changes {
         autostart: old.autostart != new.autostart,
         history: old.history.enabled != new.history.enabled,
         retention: old.history.retention_days != new.history.retention_days,
+        variants: old.variants != new.variants,
         warm: engine || (old.onboarding_step.is_some() && new.onboarding_step.is_none()),
     }
 }
@@ -352,6 +363,7 @@ mod tests {
         assert_eq!(with(|f| f.autostart = true), Changes { autostart: true, ..Default::default() });
         assert_eq!(with(|f| f.history = false), Changes { history: true, ..Default::default() });
         assert_eq!(with(|f| f.retention_days = 7), Changes { retention: true, ..Default::default() });
+        assert_eq!(with(|f| f.nightly_on = false), Changes { variants: true, ..Default::default() });
         let onboarding = Settings { onboarding_step: Some(2), ..old.clone() };
         assert_eq!(changes(&onboarding, &old), Changes { warm: true, ..Default::default() }, "onboarding done: load");
         assert!(!changes(&old, &onboarding).any(), "starting onboarding loads nothing");
@@ -450,5 +462,7 @@ mod tests {
         assert_eq!(json["retention_days"], 30);
         assert_eq!(json["input_device"], serde_json::Value::Null);
         assert_eq!(json["auto_update_check"], true);
+        assert_eq!(json["release_on"], true);
+        assert_eq!(json["nightly_on"], true);
     }
 }
