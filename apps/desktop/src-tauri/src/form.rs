@@ -38,6 +38,8 @@ pub struct Form {
     /// The microphone by name; `None` for the Windows default.
     #[serde(default)]
     pub input_device: Option<String>,
+    /// `[updates] auto_check`: check for updates at launch and once a day.
+    pub auto_update_check: bool,
 }
 
 impl Form {
@@ -55,6 +57,7 @@ impl Form {
             history: s.history.enabled,
             retention_days: s.history.retention_days,
             input_device: s.audio.input_device.clone(),
+            auto_update_check: s.updates.auto_check,
         }
     }
 
@@ -84,6 +87,7 @@ impl Form {
         s.history.enabled = self.history;
         s.history.retention_days = self.retention_days.max(1);
         s.audio.input_device = self.input_device.map(|d| d.trim().to_owned()).filter(|d| !d.is_empty());
+        s.updates.auto_check = self.auto_update_check;
         s
     }
 }
@@ -334,6 +338,11 @@ mod tests {
         assert_eq!(with(|f| f.autostart = true), Changes { autostart: true, ..Default::default() });
         assert_eq!(with(|f| f.history = false), Changes { history: true, ..Default::default() });
         assert_eq!(with(|f| f.retention_days = 7), Changes { retention: true, ..Default::default() });
+        // The update schedule reads the switch at every tick: nothing to redo.
+        assert!(!with(|f| f.auto_update_check = false).any());
+        let mut f = Form::of(&old);
+        f.auto_update_check = false;
+        assert!(!f.apply(&old).updates.auto_check);
     }
 
     #[test]
@@ -423,5 +432,6 @@ mod tests {
         assert_eq!(json["script"], "roman");
         assert_eq!(json["retention_days"], 30);
         assert_eq!(json["input_device"], serde_json::Value::Null);
+        assert_eq!(json["auto_update_check"], true);
     }
 }
