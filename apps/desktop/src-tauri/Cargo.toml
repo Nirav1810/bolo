@@ -43,6 +43,12 @@ unicode-segmentation = "1.13"
 tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls", "system-proxy"] }
 semver = "1"
 
+[features]
+# `BOLO_MEASURE=1` runs a build with this feature beside an installed Bolo, touching
+# none of its state, so `scripts/idle_ram.ps1` can measure it (BENCH.md §21). Never on
+# in shipped builds.
+measure = []
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",

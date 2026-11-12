@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use bolo_store::{History, PROVIDERS, ProviderUsage, Settings};
 use serde::Serialize;
@@ -181,6 +182,7 @@ pub async fn key_test(app: AppHandle, provider: String, key: Option<String>) -> 
 /// the press reaches the window (and Caps Lock doesn't start a dictation).
 #[tauri::command]
 pub fn ptt_capture(app: AppHandle, bolo: State<'_, Bolo>, capturing: bool) {
+    bolo.capturing.store(capturing, Ordering::Release);
     if capturing {
         bolo.remove_hook();
     } else if !lock(&bolo.session).paused() {

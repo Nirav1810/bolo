@@ -180,7 +180,8 @@
 
   async function finish() {
     await api.onboardingSave(null);
-    await getCurrentWindow().hide();
+    // Closing destroys the window and its webview; the tray builds it again.
+    await getCurrentWindow().close();
     ondone();
   }
 </script>
