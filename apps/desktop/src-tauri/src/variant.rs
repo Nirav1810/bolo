@@ -4,7 +4,9 @@
 //! - each has its own name, icon, install folder, Start menu entry and update feed;
 //! - they share the settings, models, history and API keys;
 //! - only one holds the push-to-talk key at a time. Starting or resuming one asks the
-//!   other to pause ([`ask_to_step_aside`], [`listen_for_step_aside`]).
+//!   other to pause ([`ask_to_step_aside`], [`listen_for_step_aside`]);
+//! - each can be turned off in settings (`[variants]`), and stays off across restarts.
+//!   Changing the switches tells the other app to read them again ([`ask_to_reload`]).
 
 use serde::Serialize;
 
@@ -77,6 +79,22 @@ impl Variant {
             Variant::Nightly => "Local\\dev.bolo.desktop.nightly.step-aside",
         }
     }
+
+    /// The named event the other variant sets when it changed the on/off switches.
+    fn reload_event(self) -> &'static str {
+        match self {
+            Variant::Release => "Local\\dev.bolo.desktop.switches-changed",
+            Variant::Nightly => "Local\\dev.bolo.desktop.nightly.switches-changed",
+        }
+    }
+
+    /// Whether this app is turned on in `settings`.
+    pub fn is_on(self, settings: &bolo_store::VariantSettings) -> bool {
+        match self {
+            Variant::Release => settings.release,
+            Variant::Nightly => settings.nightly,
+        }
+    }
 }
 
 /// The label after the version: Nightly, or Beta for every 0.x release, none from 1.0 on.
@@ -109,6 +127,32 @@ pub fn ask_to_step_aside(other: Variant) -> bool {
     {
         let _ = other;
         false
+    }
+}
+
+/// Tell the other variant, if it runs, that the on/off switches changed.
+pub fn ask_to_reload(other: Variant) -> bool {
+    #[cfg(windows)]
+    {
+        win::signal(other.reload_event())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = other;
+        false
+    }
+}
+
+/// Run `on_request` each time the other variant changed the on/off switches.
+pub fn listen_for_reload(me: Variant, on_request: impl Fn() + Send + 'static) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        win::listen(me.reload_event(), on_request)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (me, on_request);
+        Ok(())
     }
 }
 
@@ -190,6 +234,15 @@ mod tests {
         assert!(Variant::Nightly.feed().ends_with("/releases/download/nightly/latest.json"));
         assert!(Variant::Release.feed().ends_with("/releases/latest/download/latest.json"));
         assert_ne!(Variant::Release.log_file(), Variant::Nightly.log_file());
+        assert_ne!(Variant::Release.reload_event(), Variant::Nightly.reload_event());
+        assert_ne!(Variant::Release.reload_event(), Variant::Release.step_aside_event());
+    }
+
+    #[test]
+    fn each_app_reads_its_own_switch() {
+        let s = bolo_store::VariantSettings { nightly: false, ..Default::default() };
+        assert!(Variant::Release.is_on(&s));
+        assert!(!Variant::Nightly.is_on(&s));
     }
 
     #[test]

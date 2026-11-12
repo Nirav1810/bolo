@@ -157,6 +157,24 @@
   {/if}
 </SettingsSection>
 
+<SettingsSection title="Bolo and Bolo Nightly">
+  {#each [["release_on", "Bolo", "The Beta: the releases."], ["nightly_on", "Bolo Nightly", "A new build with every change."]] as const as [field, name, what] (field)}
+    <SettingsRow
+      title="{name} is {view.form[field] ? 'on' : 'off'}"
+      labelFor="switch-{field}"
+      description="{what} Off, it stays in the tray but never listens for your key or shows the pill, even after a restart.{product === name ? ' This is the app you’re in.' : ''}"
+    >
+      {#snippet control()}
+        <Switch
+          id="switch-{field}"
+          checked={view.form[field]}
+          onchange={(on) => update((f) => (f[field] = on))}
+        />
+      {/snippet}
+    </SettingsRow>
+  {/each}
+</SettingsSection>
+
 <SettingsSection title="Files">
   {#each [["settings", "Settings file", view.paths.settings], ["models", "Models", view.paths.models], ["logs", "Logs", "For a bug report."]] as const as [which, title, detail] (which)}
     <SettingsRow {title}>
