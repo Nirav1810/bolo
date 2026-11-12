@@ -7,7 +7,7 @@
 //!   `[[apps]]` profile table instead (ADR-0020).
 //!   [`Settings::load`] migrates older versions step by step and saves the result.
 //!   The `[[snippets]]` table came later in version 2; it is additive, so there was no
-//!   new version for it.
+//!   new version for it. Nor for `[audio]`, added after it.
 //! - Keys this version doesn't know are kept through a load and save, so a newer Bolo's
 //!   settings survive a run of an older one.
 //! - A file that doesn't parse, or whose values have the wrong types, is renamed to
@@ -161,6 +161,25 @@ impl Default for OverlaySettings {
     }
 }
 
+/// The microphone (`[audio]`).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AudioSettings {
+    /// The input device's name, as Windows shows it. Absent means the Windows default;
+    /// a device that isn't plugged in falls back to the default too.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_device: Option<String>,
+    #[serde(flatten)]
+    pub unknown: Table,
+}
+
+impl AudioSettings {
+    /// The chosen device, trimmed; `None` for the default (or a blank name).
+    pub fn device(&self) -> Option<String> {
+        self.input_device.as_deref().map(str::trim).filter(|d| !d.is_empty()).map(String::from)
+    }
+}
+
 /// Everything in `settings.toml`. Defaults match a fresh install.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -185,6 +204,7 @@ pub struct Settings {
     pub snippets: Vec<SnippetRow>,
     pub history: HistorySettings,
     pub overlay: OverlaySettings,
+    pub audio: AudioSettings,
     /// First-run onboarding's step while it's unfinished (0 = welcome); `None` once it's
     /// done. A settings file from before onboarding existed has none, so it isn't shown.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -209,6 +229,7 @@ impl Default for Settings {
             snippets: Vec::new(),
             history: HistorySettings::default(),
             overlay: OverlaySettings::default(),
+            audio: AudioSettings::default(),
             onboarding_step: None,
             unknown: Table::new(),
         }
@@ -355,6 +376,7 @@ impl Settings {
             script: self.script,
             dictionary,
             snippets: self.snippet_list(),
+            input_device: self.audio.device(),
             models_dir: self.models_dir.clone().or_else(bolo_models::default_models_root).unwrap_or_default(),
             polish,
             api_keys,
@@ -471,6 +493,7 @@ mod tests {
         s.history.retention_days = 7;
         s.overlay.idle_button = false;
         s.overlay.position = 0.25;
+        s.audio.input_device = Some("Headset (Jabra Evolve2 65)".into());
         s
     }
 
@@ -678,6 +701,25 @@ mod tests {
         assert!(Settings::default().snippet_list().is_empty());
         let text = toml::to_string(&Table::try_from(Settings::default()).unwrap()).unwrap();
         assert!(!text.contains("snippets"), "no empty table: {text}");
+    }
+
+    #[test]
+    fn the_input_device_is_additive_and_absent_means_the_default() {
+        let (s, v) = Settings::parse("version = 2\n[audio]\ninput_device = \" Headset (Jabra) \"\nexclusive = true\n")
+            .ok()
+            .unwrap();
+        assert_eq!(v, 2, "no version bump for [audio]");
+        assert_eq!(s.audio.device().as_deref(), Some("Headset (Jabra)"));
+        assert_eq!(s.audio.unknown.get("exclusive").and_then(Value::as_bool), Some(true));
+        assert_eq!(s.engine_config_with_keys(ApiKeys::default()).input_device.as_deref(), Some("Headset (Jabra)"));
+
+        let d = Settings::default();
+        assert_eq!(d.audio.input_device, None);
+        assert_eq!(d.engine_config_with_keys(ApiKeys::default()).input_device, None);
+        let text = toml::to_string(&Table::try_from(&d).unwrap()).unwrap();
+        assert!(!text.contains("input_device"), "absent, not blank: {text}");
+        let blank = Settings { audio: AudioSettings { input_device: Some(" ".into()), ..Default::default() }, ..d };
+        assert_eq!(blank.engine_config_with_keys(ApiKeys::default()).input_device, None);
     }
 
     #[test]

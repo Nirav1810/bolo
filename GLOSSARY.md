@@ -28,6 +28,10 @@ _Avoid_: Golden output (golden cases are the rules' unit tests)
 The window after a dictation during which the microphone stays open so the next dictation loses no opening syllables.
 _Avoid_: Hot mic, pre-open
 
+**Input device**:
+The microphone Bolo records from: the one the user chose by name (`[audio] input_device`), or the system default. When the chosen one isn't plugged in, Bolo falls back to the default and says so once; it's resolved again on every open, so a re-plugged mic is used again.
+_Avoid_: Audio device (could be an output), source (the engine's `AudioSource` also covers WAV replay)
+
 ## Desktop
 
 **Push-to-talk key**:

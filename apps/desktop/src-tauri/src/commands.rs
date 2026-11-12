@@ -365,12 +365,33 @@ fn open(target: &std::ffi::OsStr) -> Result<(), String> {
 /// Mic levels during the check go out on this event, as an RMS number.
 pub const MIC_EVENT: &str = "bolo://mic";
 
-/// Onboarding's mic check: listen for three seconds on a cold open of the default mic.
+/// The microphones the General tab offers.
+#[derive(Debug, Clone, Serialize)]
+pub struct Microphones {
+    /// The input devices plugged in now, by name.
+    pub devices: Vec<String>,
+    /// The Windows default's name.
+    pub default: Option<String>,
+}
+
+/// The microphones plugged in now. The General tab asks again each time its list opens.
 #[tauri::command]
-pub async fn mic_check(app: AppHandle) -> Result<crate::mic::MicCheck, String> {
+pub async fn microphones() -> Result<Microphones, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let devices = bolo_audio::capture::input_devices().map_err(|e| e.to_string())?;
+        Ok(Microphones { devices, default: bolo_audio::capture::default_input_device() })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Onboarding's mic check: listen for three seconds on a cold open of the chosen mic.
+#[tauri::command]
+pub async fn mic_check(app: AppHandle, bolo: State<'_, Bolo>) -> Result<crate::mic::MicCheck, String> {
     let levels = app.clone();
+    let device = lock(&bolo.settings).audio.device();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::mic::check(|rms| {
+        crate::mic::check(device.as_deref(), |rms| {
             let _ = levels.emit(MIC_EVENT, rms);
         })
     })

@@ -52,6 +52,9 @@ const _: () = assert!(PREROLL_SECS >= 0.3, "pre-roll must cover the 150 ms push-
 /// Silence padding around VAD segments so batch models don't clip word edges.
 const SEGMENT_PAD_SECS: f32 = 0.15;
 const LEVEL_INTERVAL: Duration = Duration::from_millis(33);
+/// While a warm mic is on the default because the chosen one is unplugged, how often to
+/// look for the chosen one.
+const REPLUG_PROBE: Duration = Duration::from_secs(3);
 
 pub(crate) enum Cmd {
     Prewarm,
@@ -63,6 +66,7 @@ pub(crate) enum Cmd {
     UpdateConfig(Box<EngineConfig>),
     SetPolish(Polish),
     SetSnippets(Vec<Snippet>),
+    SetInputDevice(Option<String>),
     Shutdown,
 }
 
@@ -270,6 +274,12 @@ pub(crate) struct Worker {
     polish_generation: Arc<Mutex<u64>>,
     /// `config.snippets`, ready to match.
     snippets: Arc<Snippets>,
+    /// The input device choice changed: the open mic is replaced once idle.
+    mic_stale: bool,
+    /// `on_mic_fallback` was sent for the current unplug.
+    fallback_noticed: bool,
+    /// When a warm mic on the fallback next looks for the chosen device.
+    next_replug_probe: Instant,
 }
 
 /// `out` with its snippet triggers expanded, in every rendering. Runs last, after Layer 1
@@ -337,6 +347,9 @@ impl Worker {
             previous_language: None,
             polishing: None,
             polish_generation: Arc::new(Mutex::new(0)),
+            mic_stale: false,
+            fallback_noticed: false,
+            next_replug_probe: Instant::now(),
         })
     }
 
@@ -406,13 +419,79 @@ impl Worker {
         }
     }
 
+    /// Open the mic unless a usable one is open. One whose stream failed (its device was
+    /// unplugged) or whose device choice changed is replaced. Every open resolves the
+    /// device again, so an unplugged choice falls back to the default and a re-plugged
+    /// one is used again.
     fn open_mic(&mut self) -> Result<(), BoloError> {
+        let stale = std::mem::take(&mut self.mic_stale);
+        if let Some(mic) = &self.mic
+            && (stale || mic.source.failed())
+        {
+            tracing::info!(failed = mic.source.failed(), "reopening the mic");
+            self.mic = None;
+        }
         if self.mic.is_none() {
-            let source = (self.factory)()?;
+            let source = (self.factory)(self.config.input_device.as_deref())?;
             let resampler = StreamResampler::new(source.sample_rate()).map_err(|e| BoloError::Audio(e.to_string()))?;
+            self.note_fallback(source.as_ref());
+            self.next_replug_probe = Instant::now() + REPLUG_PROBE;
             self.mic = Some(Mic { source, resampler, preroll: VecDeque::new(), warm_until: Instant::now() });
         }
         Ok(())
+    }
+
+    /// Tell the host, once per unplug, that `source` is on the default instead of the
+    /// chosen device.
+    fn note_fallback(&mut self, source: &dyn AudioSource) {
+        if !source.fell_back() {
+            self.fallback_noticed = false;
+        } else if !std::mem::replace(&mut self.fallback_noticed, true) {
+            let wanted = self.config.input_device.clone().unwrap_or_default();
+            tracing::info!(%wanted, using = %source.device_name(), "the chosen mic isn't plugged in");
+            self.events.on_mic_fallback(wanted, source.device_name());
+        }
+    }
+
+    /// Between dictations, keep the warm mic on the right device: close it if its stream
+    /// failed (the next dictation opens a new one), and reopen it, still warm, when the
+    /// device choice changed or the chosen device is plugged back in.
+    fn refresh_mic(&mut self, now: Instant) {
+        let Some(mic) = &self.mic else {
+            self.mic_stale = false;
+            return;
+        };
+        if mic.source.failed() {
+            self.mic = None;
+            tracing::info!("mic closed: its stream failed");
+            return;
+        }
+        let probe = mic.source.fell_back() && now >= self.next_replug_probe;
+        if probe {
+            self.next_replug_probe = now + REPLUG_PROBE;
+        }
+        let reopen = self.mic_stale || (probe && mic.source.wanted_is_back());
+        if reopen {
+            let warm_until = mic.warm_until;
+            self.mic_stale = true;
+            match self.open_mic() {
+                Ok(()) => {
+                    if let Some(m) = self.mic.as_mut() {
+                        m.warm_until = warm_until;
+                    }
+                }
+                Err(e) => tracing::warn!(error = %e, "could not reopen the mic"),
+            }
+        }
+    }
+
+    fn set_input_device(&mut self, device: Option<String>) {
+        if device != self.config.input_device {
+            tracing::info!(?device, "input device changed");
+            self.config.input_device = device;
+            self.mic_stale = true;
+            self.fallback_noticed = false;
+        }
     }
 
     fn start(&mut self, ctx: TargetContext) -> Result<(), BoloError> {
@@ -870,6 +949,9 @@ impl Worker {
             self.mic = None; // closes the device; Windows mic indicator goes off
             tracing::debug!("mic closed after warm window");
         }
+        if self.dictation.is_none() {
+            self.refresh_mic(now);
+        }
         if self.dictation.is_none() && self.model_loaded && self.unload_at.is_some_and(|t| now >= t) {
             self.release();
             tracing::debug!("model released after idle timeout");
@@ -896,7 +978,9 @@ impl Worker {
                     self.release();
                     self.stt = None;
                     self.snippets = Arc::new(Snippets::new(&c.snippets));
-                    self.config = *c;
+                    let device = c.input_device.clone();
+                    self.config = EngineConfig { input_device: self.config.input_device.take(), ..*c };
+                    self.set_input_device(device);
                 }
                 // Only polish changed: the model and connections stay.
                 Ok(Cmd::SetPolish(p)) => self.config.polish = p,
@@ -904,6 +988,7 @@ impl Worker {
                     self.snippets = Arc::new(Snippets::new(&s));
                     self.config.snippets = s;
                 }
+                Ok(Cmd::SetInputDevice(d)) => self.set_input_device(d),
                 Ok(Cmd::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
                 Err(RecvTimeoutError::Timeout) => {}
             }

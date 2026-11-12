@@ -35,6 +35,9 @@ pub struct Form {
     pub tone: String,
     pub history: bool,
     pub retention_days: u32,
+    /// The microphone by name; `None` for the Windows default.
+    #[serde(default)]
+    pub input_device: Option<String>,
 }
 
 impl Form {
@@ -51,6 +54,7 @@ impl Form {
             tone: s.polish.tone.clone(),
             history: s.history.enabled,
             retention_days: s.history.retention_days,
+            input_device: s.audio.input_device.clone(),
         }
     }
 
@@ -60,7 +64,8 @@ impl Form {
     /// - snippet triggers trimmed; rows with a blank trigger or text, or a trigger
     ///   already used (ignoring case), dropped; the text kept as written;
     /// - an unknown tone becomes `neutral`;
-    /// - retention at least one day.
+    /// - retention at least one day;
+    /// - a blank microphone is the Windows default.
     pub fn apply(self, settings: &Settings) -> Settings {
         let mut s = settings.clone();
         s.push_to_talk = self.push_to_talk;
@@ -78,6 +83,7 @@ impl Form {
         s.polish.tone = if TONES.contains(&tone.as_str()) { tone } else { "neutral".into() };
         s.history.enabled = self.history;
         s.history.retention_days = self.retention_days.max(1);
+        s.audio.input_device = self.input_device.map(|d| d.trim().to_owned()).filter(|d| !d.is_empty());
         s
     }
 }
@@ -196,6 +202,8 @@ pub struct Changes {
     pub polish: bool,
     /// The snippets the engine expands. The model stays loaded.
     pub snippets: bool,
+    /// The microphone. The model stays loaded; a warm mic reopens on the new device.
+    pub mic: bool,
     /// The push-to-talk hook needs reinstalling with the new key.
     pub key: bool,
     pub autostart: bool,
@@ -221,6 +229,7 @@ pub fn changes(old: &Settings, new: &Settings) -> Changes {
             || old.models_dir != new.models_dir,
         polish: old.polish != new.polish || old.apps != new.apps || old.dictionary != new.dictionary,
         snippets: old.snippets != new.snippets,
+        mic: old.audio.device() != new.audio.device(),
         key: old.push_to_talk != new.push_to_talk,
         autostart: old.autostart != new.autostart,
         history: old.history.enabled != new.history.enabled,
@@ -281,6 +290,14 @@ mod tests {
         let again = f.apply(&s);
         assert_eq!(again.engines, ["local:moonshine-tiny", "deepgram"], "an empty chain keeps the old one");
         assert_eq!(again.polish.tone, "formal");
+
+        let mut f = Form::of(&again);
+        f.input_device = Some(" USB Headset ".into());
+        let usb = f.apply(&again);
+        assert_eq!(usb.audio.input_device.as_deref(), Some("USB Headset"));
+        let mut f = Form::of(&usb);
+        f.input_device = Some("  ".into());
+        assert_eq!(f.apply(&usb).audio.input_device, None, "blank is the Windows default");
     }
 
     #[test]
@@ -306,6 +323,11 @@ mod tests {
             "snippets don't reload the model"
         );
         assert_eq!(with(|f| f.tone = "casual".into()), Changes { polish: true, ..Default::default() });
+        assert_eq!(
+            with(|f| f.input_device = Some("USB Headset".into())),
+            Changes { mic: true, ..Default::default() },
+            "a new mic doesn't reload the model"
+        );
         let apps = Settings { apps: vec![AppProfile::new("slack.exe")], ..old.clone() };
         assert_eq!(changes(&old, &apps), Changes { polish: true, ..Default::default() }, "app rows replan polish");
         assert_eq!(with(|f| f.push_to_talk = PushToTalkKey::F13), Changes { key: true, ..Default::default() });
@@ -400,5 +422,6 @@ mod tests {
         assert_eq!(json["language"], "auto");
         assert_eq!(json["script"], "roman");
         assert_eq!(json["retention_days"], 30);
+        assert_eq!(json["input_device"], serde_json::Value::Null);
     }
 }

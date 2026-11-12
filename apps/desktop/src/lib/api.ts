@@ -42,6 +42,8 @@ export interface Form {
   tone: string;
   history: boolean;
   retention_days: number;
+  /** `[audio] input_device`: the microphone by name; `null` for the Windows default. */
+  input_device: string | null;
 }
 
 export interface ModelView {
@@ -117,10 +119,19 @@ export interface SettingsView {
 /** Onboarding's mic check (src-tauri/src/mic.rs, `MicCheck`). */
 export interface MicCheck {
   device: string;
+  /** The chosen microphone isn't plugged in, so `device` is the Windows default. */
+  fell_back: boolean;
   leading_ms: number | null;
   peak_rms: number;
   heard: boolean;
   late: boolean;
+}
+
+/** The microphones plugged in now (src-tauri/src/commands.rs, `Microphones`). */
+export interface Microphones {
+  devices: string[];
+  /** The Windows default's name. */
+  default: string | null;
 }
 
 export type Tested =
@@ -262,6 +273,7 @@ export const api = {
     invoke<void>("open_folder", { which }),
   openLink: (url: string) => invoke<void>("open_link", { url }),
   micCheck: () => invoke<MicCheck>("mic_check"),
+  microphones: () => invoke<Microphones>("microphones"),
   onboardingSave: (step: number | null) =>
     invoke<void>("onboarding_save", { step }),
   updateView: () => invoke<UpdateView>("update_view"),

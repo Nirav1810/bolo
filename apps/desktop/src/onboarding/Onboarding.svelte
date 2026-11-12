@@ -281,7 +281,9 @@
             </Alert>
           {:else if mic && !mic.heard}
             <Alert variant="warning" title="Bolo didn’t hear anything">
-              Is the right microphone the Windows default?
+              {mic.fell_back
+                ? "The microphone chosen in Settings isn’t plugged in, so Bolo listened on the Windows default."
+                : "Is the right microphone the Windows default? You can also pick one in Settings › General."}
               {#snippet actions()}
                 <Button variant="outline" size="sm" onclick={() => api.openLink("ms-settings:sound")}><ExternalLink aria-hidden="true" />Sound settings</Button>
                 <Button variant="ghost" size="sm" onclick={runMicCheck}><RefreshCw aria-hidden="true" />Check again</Button>
