@@ -1,10 +1,11 @@
 name: nightly
 
-# Every push to `main` publishes a signed installer of Bolo Nightly, a separate app with
-# its own name, icon and install folder (tauri.nightly.conf.json), to the rolling
-# `nightly` prerelease (ADR-0019). Its version, the next minor plus `-nightly.<YYYYMMDD>.<run>`, is
-# written into the manifests for this build only. The app's Nightly channel reads
-# releases/download/nightly/latest.json.
+# Every push to `main` publishes a signed installer of Bolo's Nightly channel to the
+# rolling `nightly` prerelease (ADR-0019). It is the same app as the releases (same name,
+# identifier and install folder), with the violet icons of tauri.nightly.conf.json, so
+# installing it switches an install to Nightly. Its version, the next minor plus
+# `-nightly.<YYYYMMDD>.<run>`, is written into the manifests for this build only. Bolo
+# reads releases/download/nightly/latest.json while it follows the Nightly channel.
 on:
   push:
     branches: [main]
@@ -67,7 +68,7 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
-      - name: Build the signed Bolo Nightly installer
+      - name: Build the signed Nightly installer
         working-directory: apps/desktop
         run: |
           npm ci
@@ -80,7 +81,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           mkdir -p dist
-          built="target/release/bundle/nsis/Bolo Nightly_${VERSION}_x64-setup.exe"
+          built="target/release/bundle/nsis/Bolo_${VERSION}_x64-setup.exe"
           setup="Bolo-Nightly_${VERSION}_x64-setup.exe"
           cp "$built" "dist/$setup"
           cp "$built.sig" "dist/$setup.sig"
@@ -110,7 +111,7 @@ jobs:
           github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
           # Metadata restrictions in .signpath/artifact-configurations/default.xml.
           parameters: |
-            productName: "Bolo Nightly"
+            productName: "Bolo"
             version: "${{ steps.version.outputs.version }}"
           wait-for-completion: true
           output-artifact-directory: signed
