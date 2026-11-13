@@ -1,102 +1,156 @@
 /*
- * Native form controls styled like T3 Code's inputs. These stay CSS classes (not
- * components) so pages keep `bind:value`, `id` and every native attribute. Buttons,
- * switches, badges and setting rows are components in `src/lib/ui/`.
+ * Classes for what isn't a component. Native text fields stay classes (not components) so
+ * pages keep `bind:value`, `id` and every native attribute; everything else that repeats
+ * is a component in `src/lib/ui/`.
  */
 
 @layer components {
-  .input,
-  .select,
-  .textarea {
+  /* A text field: 32 px tall, or 28 px with `field-sm`. `font-mono` on it is allowed. */
+  .field {
     width: 100%;
     min-width: 0;
     height: 32px;
     padding: 0 11px;
-    border-radius: var(--radius);
-    border: 1px solid var(--input);
-    background: var(--background);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--field-edge);
+    background: var(--control);
     color: var(--foreground);
     font: inherit;
-    font-size: 14px;
-    box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    box-shadow: var(--elev-control), var(--bevel);
     outline: none;
     transition:
-      box-shadow 150ms var(--ease-out-ui),
-      border-color 150ms var(--ease-out-ui);
+      box-shadow var(--duration-fast) var(--ease-out-ui),
+      border-color var(--duration-fast) var(--ease-out-ui);
   }
-  .input::placeholder,
-  .textarea::placeholder {
-    color: color-mix(in srgb, var(--muted-foreground) 80%, transparent);
+  .field::placeholder {
+    color: var(--placeholder);
+    font-family: var(--font-sans); /* also in a `font-mono` field */
   }
-  .input:focus-visible,
-  .select:focus-visible,
-  .textarea:focus-visible {
+  .field:hover:not(:disabled, :focus-visible) {
+    border-color: var(--field-edge-hover);
+  }
+  .field:focus-visible {
     border-color: var(--ring);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 22%, transparent);
+    box-shadow: 0 0 0 3px var(--primary-edge);
   }
-  .input:disabled,
-  .select:disabled {
-    opacity: 0.6;
+  .field[aria-invalid="true"] {
+    border-color: var(--destructive);
+  }
+  .field[aria-invalid="true"]:focus-visible {
+    box-shadow: 0 0 0 3px var(--destructive-edge);
+  }
+  .field:disabled {
+    opacity: 0.5;
     cursor: not-allowed;
   }
-  .input[type="search"]::-webkit-search-cancel-button {
+  .field[type="search"]::-webkit-search-cancel-button {
     appearance: none;
   }
-  .input.mono {
-    font-family: var(--font-mono);
-    font-size: 13px;
+  .field-sm {
+    height: 28px;
+    padding: 0 9px;
   }
-  .textarea {
+  textarea.field {
     height: auto;
-    padding: 10px 12px;
+    padding: 8px 11px;
     resize: none;
-    line-height: 22px;
   }
-  .select {
+
+  /* Select.svelte: its button is a field that isn't typed in, and its list is a popup. */
+  .select-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     width: auto;
-    min-width: 140px;
-    padding-right: 32px;
-    appearance: none;
+    padding-right: 8px;
     cursor: pointer;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 8px center;
-    background-size: 14px;
   }
-  .select option {
+  .select-list {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    padding: 4px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     background: var(--popover);
     color: var(--foreground);
+    box-shadow: var(--elev-popup);
   }
-
-  @media (prefers-color-scheme: dark) {
-    .input,
-    .select,
-    .textarea {
-      background-color: color-mix(in srgb, var(--input) 32%, transparent);
-      box-shadow: inset 0 1px 0 rgb(255 255 255 / 3%);
-    }
+  .select-list:popover-open {
+    animation: ui-pop var(--duration-fast) var(--ease-out-ui) both;
   }
-
-  .progress {
-    height: 4px;
-    overflow: hidden;
-    border-radius: 999px;
+  .select-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    cursor: pointer;
+    user-select: none;
+  }
+  .select-option[data-active="true"] {
     background: var(--accent);
   }
-  .progress > div {
-    height: 100%;
-    border-radius: inherit;
-    background: var(--primary);
-    transition: width 240ms var(--ease-out-ui);
+
+  /* ConfirmDialog.svelte. */
+  .dialog {
+    width: min(400px, calc(100vw - 48px));
+    margin: auto;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--popover);
+    color: var(--foreground);
+    box-shadow: var(--elev-popup);
+  }
+  .dialog[open] {
+    animation: ui-pop var(--duration-base) var(--ease-out-ui) both;
+  }
+  .dialog::backdrop {
+    background: var(--backdrop);
   }
 
-  .mono {
-    font-family: var(--font-mono);
+  /* A tooltip (src/lib/ui/tooltip.ts): the styled stand-in for a native `title`. */
+  .tooltip {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    max-width: 280px;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--popover);
+    color: var(--foreground);
+    font-size: 0.75rem;
+    line-height: 1.125rem;
+    font-weight: var(--weight-medium);
+    box-shadow: var(--elev-popup);
+    pointer-events: none;
+    text-wrap: balance;
+    animation: ui-pop var(--duration-fast) var(--ease-out-ui) both;
+  }
+
+  /* A popup arriving: a select's list, a dialog, a toast. */
+  .pop {
+    animation: ui-pop var(--duration-base) var(--ease-out-ui) both;
+  }
+  @keyframes ui-pop {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
   }
 
   /* A page or panel arriving: a short fade and a 4 px rise. */
   .enter {
-    animation: ui-enter 200ms var(--ease-out-ui) both;
+    animation: ui-enter var(--duration-base) var(--ease-out-ui) both;
   }
   @keyframes ui-enter {
     from {
@@ -107,15 +161,16 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .enter {
+  .enter,
+  .pop,
+  .tooltip,
+  .select-list:popover-open,
+  .dialog[open] {
     animation-name: ui-fade;
   }
   @keyframes ui-fade {
     from {
       opacity: 0;
     }
-  }
-  .progress > div {
-    transition: none;
   }
 }

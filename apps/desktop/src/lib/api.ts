@@ -190,7 +190,7 @@ export interface AnthropicReport {
   periods: Periods<{ input_tokens: number; cache_read_tokens: number; cache_write_tokens: number; output_tokens: number }>;
   account_usd: Periods<number>;
 }
-/** Which key a report read with: the Engines & keys one, or a separate usage key. */
+/** Which key a report read with: the Engines and keys one, or a separate admin key. */
 export type KeySource = "none" | "engine" | "usage";
 
 export interface ProviderReports {
@@ -242,11 +242,14 @@ export interface UpdateView {
 export function variant(version: string): {
   name: "Nightly" | "Beta" | "Release";
   nightly: boolean;
+  /** The installed app's own name. Feature prose says plain "Bolo". */
+  product: "Bolo" | "Bolo Nightly";
 } {
-  if (version.includes("-nightly.")) return { name: "Nightly", nightly: true };
+  if (version.includes("-nightly.")) return { name: "Nightly", nightly: true, product: "Bolo Nightly" };
   return {
     name: version.startsWith("0.") ? "Beta" : "Release",
     nightly: false,
+    product: "Bolo",
   };
 }
 
@@ -292,11 +295,6 @@ export function onMicLevel(
   handler: (rms: number) => void,
 ): Promise<UnlistenFn> {
   return listen<number>("bolo://mic", (e) => handler(e.payload));
-}
-
-/** RMS on a log scale, 0–1, for a level meter (speech sits around 0.01–0.2). */
-export function meter(rms: number): number {
-  return Math.max(0, Math.min(1, (Math.log10(Math.max(rms, 1e-4)) + 4) / 3.3));
 }
 
 export function onDownload(
@@ -348,3 +346,59 @@ export const PROVIDER_NAMES: Record<string, string> = {
   groq: "Groq",
   sarvam: "Sarvam",
 };
+
+// The names of the choices, written once so no page spells them its own way.
+export const TONE_NAMES: Record<string, string> = { neutral: "Neutral", casual: "Casual", formal: "Formal" };
+export const LANGUAGE_NAMES: Record<string, string> = { auto: "Auto", english: "English", hinglish: "Hinglish" };
+export const FORMAT_NAMES: Record<Format, string> = { plain: "Plain text", markdown: "Markdown", html: "Rich text" };
+
+/** "1 word", "3 words". */
+export function plural(n: number, one: string, many: string): string {
+  return `${n.toLocaleString()} ${n === 1 ? one : many}`;
+}
+
+/** A message from Rust as a sentence: a capital first letter and a final period. */
+export function sentence(message: string): string {
+  const text = message.trim();
+  if (!text) return "";
+  const capped = text[0].toUpperCase() + text.slice(1);
+  return /[.!?…]$/.test(capped) ? capped : `${capped}.`;
+}
+
+/** A download's progress, 0–100, or `null` once the bytes are in and it is being checked. */
+export function downloadPercent(d: DownloadEvent): number | null {
+  if (d.phase !== "downloading") return null;
+  return d.total ? Math.round((d.downloaded / d.total) * 100) : 0;
+}
+
+/** The line under a download's bar: "120 MB of 480 MB", then what it is doing after. */
+export function downloadCaption(d: DownloadEvent, fallbackTotal = 0): string {
+  if (d.phase === "verifying") return "Checking the download…";
+  if (d.phase !== "downloading") return "Unpacking…";
+  return `${megabytes(d.downloaded)} of ${megabytes(d.total || fallbackTotal)}`;
+}
+
+/**
+ * Checks a key with its provider, then saves it under `provider`. A key the provider
+ * refuses is not saved. One that couldn't be checked (no network) is saved, with a
+ * `note` saying so. `name` is the provider's name for the messages.
+ */
+export async function saveCheckedKey(
+  provider: string,
+  key: string,
+  name: string = PROVIDER_NAMES[provider] ?? provider,
+): Promise<{ saved: true; hint: string | null; note: string | null } | { saved: false; error: string }> {
+  let note: string | null = null;
+  try {
+    const tested = await api.testKey(provider, key);
+    if (tested.result === "refused") return { saved: false, error: `${name} refused this key.` };
+    if (tested.result === "failed") note = `Saved, but it couldn’t be checked: ${sentence(tested.message)}`;
+  } catch (e) {
+    note = `Saved, but it couldn’t be checked: ${sentence(String(e))}`;
+  }
+  try {
+    return { saved: true, hint: await api.saveKey(provider, key), note };
+  } catch (e) {
+    return { saved: false, error: sentence(String(e)) };
+  }
+}

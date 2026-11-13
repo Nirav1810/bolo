@@ -1,8 +1,20 @@
 <script lang="ts">
   // The debug page (M3 ticket 01): renders the controller's events so a dictation can be
-  // watched. Reached from the tray's "Debug window".
+  // watched. Reached from the tray's "Debug window". Built from the same parts and column
+  // as the settings pages.
   import { invoke } from "@tauri-apps/api/core";
+  import { AudioLines } from "@lucide/svelte";
+  import { LANGUAGE_NAMES, api, sentence, variant } from "./lib/api";
   import { onAppEvent, type AppEvent, type DictationState, type Output } from "./lib/events";
+  import Alert from "./lib/ui/Alert.svelte";
+  import AppMark from "./lib/ui/AppMark.svelte";
+  import Badge from "./lib/ui/Badge.svelte";
+  import Button from "./lib/ui/Button.svelte";
+  import Empty from "./lib/ui/Empty.svelte";
+  import LevelMeter from "./lib/ui/LevelMeter.svelte";
+  import PageHeader from "./lib/ui/PageHeader.svelte";
+  import SettingsRow from "./lib/ui/SettingsRow.svelte";
+  import SettingsSection from "./lib/ui/SettingsSection.svelte";
 
   type Result = { kind: "final" | "polished"; output: Output; at: Date };
 
@@ -12,6 +24,7 @@
   let partial = $state("");
   let results: Result[] = $state([]);
   let errors: string[] = $state([]);
+  let version = $state<string | null>(null);
 
   function apply(e: AppEvent) {
     switch (e.kind) {
@@ -44,53 +57,71 @@
       dictation = s.state;
       paused = s.paused;
     });
+    // The build names the page, so Bolo Nightly's is never taken for Bolo's.
+    api
+      .updateView()
+      .then((v) => (version = v.version))
+      .catch(() => {});
     return () => {
       unlisten.then((f) => f());
     };
   });
 
-  // RMS of speech sits around 0.01–0.2; show it on a log scale.
-  const meter = $derived(Math.max(0, Math.min(1, (Math.log10(Math.max(level, 1e-4)) + 4) / 3.3)));
+  const product = $derived(version === null ? "Bolo" : variant(version).product);
+  // The pill's words for the same states.
+  const STATE: Record<DictationState, { text: string; variant: "neutral" | "primary" | "info" | "success" }> = {
+    Idle: { text: "Idle", variant: "neutral" },
+    Listening: { text: "Listening…", variant: "primary" },
+    Processing: { text: "Transcribing…", variant: "info" },
+    Done: { text: "Done", variant: "success" },
+  };
+  const badge = $derived(paused ? { text: "Paused", variant: "neutral" as const } : STATE[dictation]);
 </script>
 
-<main class="flex h-screen flex-col gap-4 bg-background p-5 text-sm text-foreground">
-    <header class="flex items-center justify-between">
-      <h1 class="text-base font-semibold">Bolo debug</h1>
-      <span class="rounded-md bg-accent px-2 py-0.5 text-xs font-medium text-muted-foreground">
-        {paused ? "Paused" : dictation}
-      </span>
-    </header>
+<main class="h-screen overflow-y-auto bg-background [scrollbar-gutter:stable]">
+  <div class="enter mx-auto flex w-full max-w-3xl flex-col gap-8 px-8 pt-9 pb-16">
+    <div class="px-1"><AppMark {version} /></div>
+    <PageHeader title="{product} debug" blurb="The controller’s events as they arrive, so a dictation can be watched." />
 
-    <section class="flex items-center gap-3">
-      <button
-        class="h-8 rounded-lg border border-primary bg-primary px-3 font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        disabled={paused}
-        onclick={() => invoke("toggle_dictation")}
-      >
-        {dictation === "Listening" ? "Stop" : "Start"} dictation
-      </button>
-      <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-accent" aria-label="Input level">
-        <div class="h-full bg-success transition-[width] duration-75" style:width="{meter * 100}%"></div>
-      </div>
-    </section>
-
-    <p class="min-h-6 truncate text-muted-foreground" dir="rtl" title={partial}>
-      <bdi>{partial || (dictation === "Listening" ? "listening…" : "")}</bdi>
-    </p>
-
-    {#each errors as message}
-      <p class="rounded-xl border border-destructive/30 bg-destructive/5 px-3.5 py-2.5 text-destructive-foreground">{message}</p>
+    {#each errors as message, i (i)}
+      <Alert variant="error" title="Couldn’t dictate">{sentence(message)}</Alert>
     {/each}
 
-    <ol class="flex flex-1 flex-col gap-2 overflow-y-auto">
-      {#each results as r}
-        <li class="rounded-xl border border-border bg-card p-3">
-          <p class="whitespace-pre-wrap">{r.output.plain || "(nothing heard)"}</p>
-          <p class="mt-1 text-xs text-muted-foreground">
-            {r.kind === "polished" ? `polished +${r.output.timings.llm_ms.toFixed(0)} ms` : `${r.output.timings.total_ms.toFixed(0)} ms`}
-            · {r.output.engine_id} · {r.output.language} · {r.at.toLocaleTimeString()}
+    <SettingsSection title="Dictation">
+      <SettingsRow title="State">
+        {#snippet badges()}<Badge variant={badge.variant}>{badge.text}</Badge>{/snippet}
+        {#snippet description()}
+          <!-- Right to left, so a long partial keeps its newest words in view. -->
+          <p class="truncate text-left" dir="rtl">
+            <bdi>{partial || (dictation === "Listening" ? "Listening…" : "Hold your push-to-talk key, or start a dictation here.")}</bdi>
           </p>
-        </li>
+        {/snippet}
+        {#snippet control()}
+          <Button variant="primary" size="sm" disabled={paused} onclick={() => invoke("toggle_dictation")}>
+            {dictation === "Listening" ? "Stop" : "Start"} dictation
+          </Button>
+        {/snippet}
+        <LevelMeter rms={level} label="Input level" />
+      </SettingsRow>
+    </SettingsSection>
+
+    <SettingsSection title="Results" as="ul">
+      {#each results as r, i (i)}
+        <SettingsRow as="li" align="start">
+          {#snippet title()}<span class="whitespace-pre-wrap">{r.output.plain || "Nothing heard"}</span>{/snippet}
+          {#snippet badges()}
+            <Badge variant={r.kind === "polished" ? "primary" : "neutral"}>{r.kind === "polished" ? "Polished" : "Final"}</Badge>
+          {/snippet}
+          {#snippet description()}
+            <span class="tabular-nums">
+              {r.kind === "polished" ? `+${Math.round(r.output.timings.llm_ms)} ms` : `${Math.round(r.output.timings.total_ms)} ms`}
+              · <span class="font-mono">{r.output.engine_id}</span> · {LANGUAGE_NAMES[r.output.language] ?? r.output.language} · {r.at.toLocaleTimeString()}
+            </span>
+          {/snippet}
+        </SettingsRow>
+      {:else}
+        <li><Empty icon={AudioLines} title="No results yet" hint="Each dictation’s text and timings show here as it finishes." /></li>
       {/each}
-    </ol>
+    </SettingsSection>
+  </div>
 </main>

@@ -1,14 +1,23 @@
 /*
- * Bolo design tokens (UI overhaul, modelled on T3 Code's design language; supersedes
- * the Windows 11 look from M3 ticket 04).
+ * Bolo design tokens (modelled on T3 Code's design language).
  *
  * Raw values are semantic custom properties (`--background`, `--card`, `--primary`, ...)
  * switched by the Windows light/dark setting through `prefers-color-scheme`. `@theme
  * inline` exposes them to Tailwind, so `bg-card`, `text-muted-foreground`,
- * `border-border/60` and so on follow the theme with no `dark:` variants.
+ * `border-divider` and so on follow the theme with no `dark:` variants.
  *
- * Rules that go with the tokens:
+ * Rules that go with the tokens (`npm run check` enforces the mechanical ones, see
+ * scripts/ui-lint.mjs):
+ * - Components never do colour arithmetic. A surface, edge or tint that is needed gets a
+ *   token here, with its light and dark value side by side; pages use no `dark:` variant
+ *   and no `/NN` alpha on a colour.
+ * - Five type sizes: `text-display` 24, `text-title` 20, `text-heading` 16, `text-sm` 14
+ *   and `text-xs` 12. Nothing smaller, and no arbitrary sizes.
+ * - Controls are 32 px tall (28 px small, 24 px for the smallest icon button). Radius is
+ *   8 px for controls, 6 px for what sits inside one, and 12 px for cards. Icons are
+ *   16 px, or 14 px beside 12 px text.
  * - `live` (red) means only "the mic is recording": the pill dot and the tray icon.
+ * - Primary marks the chosen thing: the on switch, the active nav icon, a "Primary" badge.
  * - State never relies on colour alone; warning/error/success always come with an icon.
  * - No ease-in. Exits are faster than enters. Reduced motion keeps fades, drops movement.
  */
@@ -19,92 +28,166 @@
   color-scheme: light dark;
   --radius: 0.5rem;
 
+  /* Surfaces, from the window out to what sits on a card. */
   --background: oklch(99.2% 0 0);
   --foreground: #18181b;
   --card: #ffffff;
   --popover: #ffffff;
-  --primary: oklch(0.488 0.217 264);
-  --primary-foreground: #ffffff;
-  --secondary: #f4f4f5;
-  --secondary-foreground: #27272a;
-  --muted: #fafafa;
-  --muted-foreground: #71717a;
-  --accent: #f4f4f5;
-  --border: #e4e4e7;
-  --input: #d4d4d8;
-  --ring: oklch(0.488 0.217 264);
-  /* Primary as text or a thin mark on the background (icons, waveform, badges). */
-  --primary-text: oklch(0.488 0.217 264);
+  --inset: #fafafa; /* a panel set into a card: an inline form, an expanded row */
+  --muted: #f4f4f5; /* a quiet fill: icon tiles, skeletons, a step's number */
+  --muted-foreground: #65656d;
+  --accent: #f4f4f5; /* hover */
+  --placeholder: #71717a;
 
-  --success: #10b981;
+  /* Edges. */
+  --border: #e4e4e7; /* a card's outline */
+  --divider: #ededf0; /* hairlines inside a card */
+  --input: #d4d4d8; /* a button's outline */
+  --field-edge: #8a8a94; /* a field's outline: 3:1 on the card, so the box is findable */
+  --field-edge-hover: #68686f;
+  --ring: oklch(0.488 0.217 264);
+
+  /* Controls. */
+  --control: #ffffff; /* an outline button, a field */
+  --control-hover: #f7f7f8;
+  --track: #f1f1f3; /* the segmented control's trough, a progress bar's */
+  --track-thumb: #ffffff;
+  --switch-off: #8a8a94;
+  --switch-thumb: #ffffff;
+
+  --primary: oklch(0.488 0.217 264);
+  --primary-hover: oklch(0.44 0.21 264);
+  --primary-foreground: #ffffff;
+  /* Primary as text or a thin mark on a surface (icons, the waveform, badges). */
+  --primary-text: oklch(0.488 0.217 264);
+  --primary-tint: oklch(0.488 0.217 264 / 9%);
+  --primary-edge: oklch(0.488 0.217 264 / 28%);
+
+  /* Status: the solid colour, its text, a tinted fill and that fill's edge. */
   --success-foreground: #047857;
-  --warning: #f59e0b;
-  --warning-foreground: #b45309;
-  --info: #3b82f6;
+  --success-tint: rgb(16 185 129 / 10%);
+  --success-edge: rgb(16 185 129 / 32%);
+  --warning-foreground: #a84d08;
+  --warning-tint: rgb(245 158 11 / 11%);
+  --warning-edge: rgb(245 158 11 / 36%);
   --info-foreground: #1d4ed8;
+  --info-tint: rgb(59 130 246 / 9%);
   --destructive: #ef4444;
   --destructive-foreground: #b91c1c;
+  --destructive-tint: rgb(239 68 68 / 8%);
+  --destructive-edge: rgb(239 68 68 / 32%);
   --live: #e5484d;
   /* The Nightly build marker (ADR-0019): its own hue, never a state colour. */
   --nightly: #7c3aed;
   --nightly-foreground: #6d28d9;
+  --nightly-tint: rgb(124 58 237 / 10%);
+  --nightly-edge: rgb(124 58 237 / 45%);
 
   --sidebar: #fafafa;
   --sidebar-foreground: #18181b;
-  --sidebar-muted-foreground: #71717a;
-  --sidebar-row-hover: #f4f4f5;
+  --sidebar-muted-foreground: #65656d;
+  --sidebar-row-hover: #f1f1f3;
   --sidebar-row-selected: #ffffff;
+  --sidebar-row-edge: #e4e4e7; /* the selected row's outline; none in dark */
   --sidebar-border: #e4e4e7;
 
   --scrollbar-thumb: rgb(0 0 0 / 14%);
-  --scrollbar-thumb-hover: rgb(0 0 0 / 24%);
+
+  /* Elevation: a card barely lifts, a control a little, a popup clearly. */
+  --elev-card: 0 1px 2px rgb(0 0 0 / 4%);
+  --elev-control: 0 1px 2px rgb(0 0 0 / 5%);
+  --elev-popup: 0 16px 40px -18px rgb(0 0 0 / 40%), 0 2px 6px rgb(0 0 0 / 6%);
+  --bevel: inset 0 -1px rgb(0 0 0 / 4%); /* a control's lower lip */
+  --primary-bevel: inset 0 1px rgb(255 255 255 / 16%);
+  --backdrop: rgb(24 24 27 / 32%); /* behind a dialog */
 
   --pill-bg: rgb(255 255 255 / 0.94);
   --pill-border: rgb(0 0 0 / 0.08);
   --pill-track: rgb(0 0 0 / 0.08);
-  --pill-shadow: 0 12px 32px -8px rgb(0 0 0 / 0.22), 0 1px 3px rgb(0 0 0 / 0.08);
+  --pill-hot: rgb(0 0 0 / 0.16); /* a pill button under the mouse */
+  --pill-shadow: 0 6px 16px -6px rgb(0 0 0 / 0.24), 0 1px 3px rgb(0 0 0 / 0.08);
+  --pill-bar-shadow: 0 1px 4px rgb(0 0 0 / 0.16);
+
+  /* Weights. Dark mode sets these a little lighter: light text on black reads heavier. */
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #000000;
-    --foreground: #f5f5f5;
-    --card: #0d0d0d;
-    --popover: #111111;
-    --primary: oklch(0.571 0.21 264);
-    --primary-foreground: #ffffff;
-    --secondary: rgb(255 255 255 / 6%);
-    --secondary-foreground: #f5f5f5;
-    --muted: rgb(255 255 255 / 3%);
+    --foreground: #f2f2f2;
+    --card: #0e0e0e;
+    --popover: #141414;
+    --inset: #141414;
+    --muted: #1b1b1b;
     --muted-foreground: #a3a3a3;
-    --accent: rgb(255 255 255 / 6%);
-    --border: rgb(255 255 255 / 9%);
-    --input: rgb(255 255 255 / 13%);
-    --ring: oklch(0.62 0.19 264);
+    --accent: #1b1b1b;
+    --placeholder: #858585;
+
+    --border: #222222;
+    --divider: #1a1a1a;
+    --input: #2e2e2e;
+    --field-edge: #6b6b6b;
+    --field-edge-hover: #949494;
+    --ring: oklch(0.66 0.17 264);
+
+    --control: #171717;
+    --control-hover: #202020;
+    --track: #1b1b1b;
+    --track-thumb: #303030;
+    --switch-off: #6b6b6b;
+
+    --primary: oklch(0.55 0.21 264);
+    --primary-hover: oklch(0.5 0.2 264);
+    --primary-foreground: #ffffff;
     --primary-text: oklch(0.76 0.13 264);
+    --primary-tint: oklch(0.55 0.21 264 / 22%);
+    --primary-edge: oklch(0.55 0.21 264 / 46%);
 
     --success-foreground: #34d399;
+    --success-tint: rgb(16 185 129 / 15%);
+    --success-edge: rgb(16 185 129 / 30%);
     --warning-foreground: #fbbf24;
+    --warning-tint: rgb(245 158 11 / 14%);
+    --warning-edge: rgb(245 158 11 / 30%);
     --info-foreground: #60a5fa;
+    --info-tint: rgb(59 130 246 / 15%);
     --destructive-foreground: #f87171;
+    --destructive-tint: rgb(239 68 68 / 13%);
+    --destructive-edge: rgb(239 68 68 / 34%);
     --live: #ff5a5f;
     --nightly: #a78bfa;
     --nightly-foreground: #c4b5fd;
+    --nightly-tint: rgb(167 139 250 / 18%);
+    --nightly-edge: rgb(167 139 250 / 45%);
 
-    --sidebar: #0d0d0d;
-    --sidebar-foreground: #f5f5f5;
+    --sidebar: #0a0a0a;
+    --sidebar-foreground: #f2f2f2;
     --sidebar-muted-foreground: #a3a3a3;
-    --sidebar-row-hover: rgb(255 255 255 / 6%);
-    --sidebar-row-selected: rgb(255 255 255 / 9%);
-    --sidebar-border: rgb(255 255 255 / 8%);
+    --sidebar-row-hover: #171717;
+    --sidebar-row-selected: #1f1f1f;
+    --sidebar-row-edge: transparent;
+    --sidebar-border: #1c1c1c;
 
     --scrollbar-thumb: rgb(255 255 255 / 10%);
-    --scrollbar-thumb-hover: rgb(255 255 255 / 18%);
+
+    --elev-card: 0 0 0 transparent;
+    --elev-control: 0 0 0 transparent;
+    --elev-popup: 0 18px 44px -18px rgb(0 0 0 / 80%), 0 2px 8px rgb(0 0 0 / 50%);
+    --bevel: inset 0 1px rgb(255 255 255 / 5%);
+    --backdrop: rgb(0 0 0 / 60%);
 
     --pill-bg: rgb(17 17 17 / 0.94);
     --pill-border: rgb(255 255 255 / 0.1);
     --pill-track: rgb(255 255 255 / 0.12);
-    --pill-shadow: 0 12px 32px -8px rgb(0 0 0 / 0.7), 0 1px 3px rgb(0 0 0 / 0.5);
+    --pill-hot: rgb(255 255 255 / 0.22);
+    --pill-shadow: 0 6px 16px -6px rgb(0 0 0 / 0.7), 0 1px 3px rgb(0 0 0 / 0.5);
+    --pill-bar-shadow: 0 1px 4px rgb(0 0 0 / 0.5);
+
+    --weight-medium: 480;
+    --weight-semibold: 580;
   }
 }
 
@@ -112,46 +195,59 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
-  --color-popover: var(--popover);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-primary-text: var(--primary-text);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
+  --color-inset: var(--inset);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-border: var(--border);
+  --color-divider: var(--divider);
   --color-input: var(--input);
-  --color-ring: var(--ring);
-  --color-success: var(--success);
+  --color-field-edge: var(--field-edge);
+  --color-control: var(--control);
+  --color-control-hover: var(--control-hover);
+  --color-track: var(--track);
+  --color-track-thumb: var(--track-thumb);
+  --color-switch-off: var(--switch-off);
+  --color-switch-thumb: var(--switch-thumb);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-text: var(--primary-text);
+  --color-primary-tint: var(--primary-tint);
+  --color-primary-edge: var(--primary-edge);
   --color-success-foreground: var(--success-foreground);
-  --color-warning: var(--warning);
+  --color-success-tint: var(--success-tint);
+  --color-success-edge: var(--success-edge);
   --color-warning-foreground: var(--warning-foreground);
-  --color-info: var(--info);
+  --color-warning-tint: var(--warning-tint);
+  --color-warning-edge: var(--warning-edge);
   --color-info-foreground: var(--info-foreground);
-  --color-destructive: var(--destructive);
+  --color-info-tint: var(--info-tint);
   --color-destructive-foreground: var(--destructive-foreground);
-  --color-live: var(--live);
-  --color-nightly: var(--nightly);
+  --color-destructive-tint: var(--destructive-tint);
+  --color-destructive-edge: var(--destructive-edge);
   --color-nightly-foreground: var(--nightly-foreground);
+  --color-nightly-tint: var(--nightly-tint);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-muted-foreground: var(--sidebar-muted-foreground);
   --color-sidebar-row-hover: var(--sidebar-row-hover);
   --color-sidebar-row-selected: var(--sidebar-row-selected);
+  --color-sidebar-row-edge: var(--sidebar-row-edge);
   --color-sidebar-border: var(--sidebar-border);
-  --color-pill: var(--pill-bg);
-  --color-pill-border: var(--pill-border);
-  --color-pill-track: var(--pill-track);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
-  --radius-2xl: calc(var(--radius) + 8px);
 
-  --shadow-pill: var(--pill-shadow);
+  --shadow-card: var(--elev-card);
+  --shadow-control: var(--elev-control), var(--bevel);
+  --shadow-primary: var(--elev-control), var(--primary-bevel);
+
+  --font-weight-normal: var(--weight-normal);
+  --font-weight-medium: var(--weight-medium);
+  --font-weight-semibold: var(--weight-semibold);
 }
 
 @theme {
@@ -159,39 +255,43 @@
   --font-sans: "Inter Variable", "Segoe UI Variable Text", "Segoe UI", "Nirmala UI", system-ui, sans-serif;
   --font-mono: "Cascadia Mono", ui-monospace, Consolas, monospace;
 
-  /* Two steps below text-xs for dense metadata: 11 px and 10 px. */
-  --text-2xs: 0.6875rem;
-  --text-2xs--line-height: 1rem;
+  /* The type scale. `text-sm` (14/20) is the body and `text-xs` (12/18) everything
+     secondary. The three above carry their own weight and tracking. */
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.125rem;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.25rem;
+  --text-heading: 1rem;
+  --text-heading--line-height: 1.5rem;
+  --text-heading--letter-spacing: -0.011em;
+  --text-heading--font-weight: var(--weight-semibold);
+  --text-title: 1.25rem;
+  --text-title--line-height: 1.75rem;
+  --text-title--letter-spacing: -0.02em;
+  --text-title--font-weight: var(--weight-semibold);
+  --text-display: 1.5rem;
+  --text-display--line-height: 2rem;
+  --text-display--letter-spacing: -0.025em;
+  --text-display--font-weight: var(--weight-semibold);
 
-  /* Motion. */
+  /* Motion. One curve for the interface; durations are in `:root` below. */
   --ease-out-ui: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out-ui: cubic-bezier(0.77, 0, 0.175, 1);
-  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   --default-transition-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
   --default-transition-duration: 150ms;
 }
 
-/* Durations, used by the pill's CSS and timers. */
 :root {
-  --duration-fast: 120ms; /* press, hover */
-  --duration-base: 180ms; /* pill in, state crossfade */
-  --duration-exit: 140ms; /* pill out */
-  --duration-resize: 220ms; /* pill width */
-
-  /* Springs for the pill (damped spring sampled into linear()): `pop` overshoots about
-     12% for things that appear, `settle` about 3% for the pill changing size. */
-  --ease-spring-pop: linear(0, 0.054, 0.188, 0.362, 0.545, 0.715, 0.86, 0.973, 1.052, 1.1, 1.123, 1.125, 1.114, 1.095, 1.073, 1.05, 1.029, 1.012, 1, 0.991, 0.986, 0.984, 0.984, 0.986, 0.989, 0.992, 0.995, 0.997, 0.999, 1, 1.001, 1.002, 1);
-  --ease-spring-settle: linear(0, 0.029, 0.103, 0.202, 0.314, 0.427, 0.536, 0.635, 0.723, 0.798, 0.859, 0.909, 0.948, 0.977, 0.998, 1.012, 1.021, 1.026, 1.028, 1.028, 1.026, 1.024, 1.021, 1.017, 1.014, 1.011, 1.009, 1.006, 1.005, 1.003, 1.002, 1.001, 1);
-  --duration-pop: 520ms;
-  --duration-settle: 480ms;
+  /* Durations. Every transition in the settings window is `fast` (the Tailwind default
+     above); things that arrive use `base`, things that leave use `exit`. */
+  --duration-fast: 150ms; /* hover, press, focus */
+  --duration-base: 200ms; /* a page, a popup or the pill arriving; a state crossfade */
+  --duration-exit: 140ms; /* the same things leaving */
+  --duration-resize: 260ms; /* the pill changing width */
 
   /* Pill geometry and timing (M3 ticket 08). */
   --pill-height: 40px;
   --pill-max-width: 520px;
-  --pill-offset: 24px; /* above the monitor's work area */
-  --pill-hide-after: 600ms; /* after insert, or after the swap/skip */
-  --pill-notice-for: 4s; /* notice and error */
-  --pill-processing-after: 250ms; /* show "Transcribing" only past this */
 }
 
 @layer base {
@@ -209,11 +309,12 @@
     background: var(--background);
     color: var(--foreground);
     font-family: var(--font-sans);
-    font-size: 14px;
-    line-height: 20px;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    font-weight: var(--weight-normal);
   }
   ::selection {
-    background: color-mix(in srgb, var(--primary) 24%, transparent);
+    background: var(--primary-edge);
   }
   /* Thin overlay-style scrollbars, like T3 Code's. */
   * {
@@ -226,9 +327,47 @@
     cursor: pointer;
     touch-action: manipulation;
   }
+  kbd {
+    font-family: inherit;
+  }
+  p {
+    text-wrap: pretty;
+  }
   @media (pointer: fine) {
     html {
       overscroll-behavior: none;
     }
+  }
+}
+
+/* The one focus treatment for anything pressable: a 2 px ring, 2 px out, only for the
+   keyboard. Fields have their own (ui.css): the edge takes the ring's colour. */
+@utility focus-ring {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  &:focus-visible {
+    outline-color: var(--ring);
+  }
+}
+
+/* The one disabled treatment. */
+@utility disabled-dim {
+  &:disabled,
+  &[aria-disabled="true"] {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+/* Reduced motion: keep fades, drop movement and anything that loops. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    scroll-behavior: auto !important;
+  }
+  .animate-spin,
+  .animate-pulse {
+    animation: none !important;
   }
 }

@@ -1,48 +1,88 @@
 <script lang="ts" module>
-  export type ButtonVariant = "primary" | "outline" | "ghost" | "ghost-muted" | "ghost-destructive" | "destructive-outline" | "secondary";
-  export type ButtonSize = "default" | "sm" | "xs" | "icon" | "icon-sm" | "icon-xs";
+  /**
+   * Which variant for which job:
+   * - `primary`: a form's submit, or the one forward action of a step (Save, Add, Continue,
+   *   Update now).
+   * - `outline`: a row's own action (Download, Make primary, Replace…, Check now), and the
+   *   first action of an Alert or an Empty.
+   * - `ghost`: the lesser action beside one of those (Check, Cancel, Back), a section
+   *   header's action, and links out (label first, then `ExternalLink`).
+   * - `quiet`: an icon button, grey until hovered (Copy, Edit, the expand chevron, X).
+   * - `danger`: a destructive action being confirmed. Only ConfirmButton and
+   *   ConfirmDialog use it.
+   * - `quiet-danger`: a destructive icon button before it is confirmed (ConfirmButton).
+   */
+  export type ButtonVariant = "primary" | "outline" | "ghost" | "quiet" | "danger" | "quiet-danger";
+  /**
+   * `sm` (28 px) inside a card: a settings row, a section header, an Alert, an Empty, an
+   * Inset. `default` (32 px) in a page's own bar, a dialog, the onboarding footer, or
+   * beside a 32 px field. Icon buttons: `icon-sm` in a row, `icon` beside a 32 px
+   * field, `icon-xs` (24 px) only inside another control (a chip).
+   */
+  export type ButtonSize = "default" | "sm" | "icon" | "icon-sm" | "icon-xs";
 </script>
 
 <script lang="ts">
-  // A button in T3 Code's style: 8 px radius, a 0.97 press, an inset highlight on primary.
   import type { Snippet } from "svelte";
   import type { HTMLButtonAttributes } from "svelte/elements";
+  import { LoaderCircle } from "@lucide/svelte";
   import { cn } from "./cn";
+  import { tooltip as tip } from "./tooltip";
 
   let {
     variant = "outline",
     size = "default",
     class: className = "",
     type = "button",
+    tooltip,
+    loading = false,
+    disabled,
     children,
     ...rest
-  }: Omit<HTMLButtonAttributes, "class"> & { class?: string; variant?: ButtonVariant; size?: ButtonSize; children?: Snippet } = $props();
+  }: Omit<HTMLButtonAttributes, "class"> & {
+    class?: string;
+    variant?: ButtonVariant;
+    size?: ButtonSize;
+    /** Shown on hover and keyboard focus. An icon button shows its `aria-label` by itself. */
+    tooltip?: string;
+    /** The work this button started is still running: it spins and can't be pressed. */
+    loading?: boolean;
+    children?: Snippet;
+  } = $props();
 
   const base =
-    "relative inline-flex shrink-0 select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border font-medium text-sm outline-none transition-[background-color,border-color,color,box-shadow,scale] duration-150 ease-out-ui active:not-disabled:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-55 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
+    "focus-ring disabled-dim relative inline-flex shrink-0 select-none items-center justify-center gap-1.5 border text-sm font-medium whitespace-nowrap transition-[background-color,border-color,color,box-shadow,scale] motion-safe:active:not-disabled:scale-[0.97] [&_svg]:pointer-events-none [&_svg]:shrink-0";
 
   const sizes: Record<ButtonSize, string> = {
-    default: "h-8 px-[11px]",
-    sm: "h-7 gap-1 px-[9px] text-[13px] [&_svg:not([class*='size-'])]:size-3.5",
-    xs: "h-6 gap-1 rounded-md px-[7px] text-xs [&_svg:not([class*='size-'])]:size-3.5",
-    icon: "size-8",
-    "icon-sm": "size-7 [&_svg:not([class*='size-'])]:size-3.5",
-    "icon-xs": "size-6 rounded-md [&_svg:not([class*='size-'])]:size-3.5",
+    default: "h-8 rounded-lg px-3 [&_svg]:size-4",
+    sm: "h-7 rounded-lg px-2.5 [&_svg]:size-4",
+    icon: "size-8 rounded-lg [&_svg]:size-4",
+    "icon-sm": "size-7 rounded-lg [&_svg]:size-4",
+    "icon-xs": "size-6 rounded-md [&_svg]:size-3.5",
   };
 
   const variants: Record<ButtonVariant, string> = {
     primary:
-      "border-primary bg-primary text-primary-foreground shadow-xs shadow-primary/24 inset-shadow-[0_1px_rgb(255_255_255/16%)] hover:not-disabled:bg-primary/90 active:inset-shadow-[0_1px_rgb(0_0_0/8%)]",
-    outline:
-      "border-input bg-popover text-foreground shadow-xs/5 hover:not-disabled:bg-accent/60 dark:bg-input/32 dark:hover:not-disabled:bg-input/64 [&_svg]:text-muted-foreground",
-    secondary: "border-transparent bg-secondary text-secondary-foreground hover:not-disabled:bg-secondary/70",
+      "border-primary bg-primary text-primary-foreground shadow-primary hover:not-disabled:border-primary-hover hover:not-disabled:bg-primary-hover",
+    outline: "border-input bg-control text-foreground shadow-control hover:not-disabled:bg-control-hover [&_svg]:text-muted-foreground",
     ghost: "border-transparent text-foreground hover:not-disabled:bg-accent [&_svg]:text-muted-foreground",
-    "ghost-muted": "border-transparent text-muted-foreground hover:not-disabled:bg-accent hover:not-disabled:text-foreground",
-    "ghost-destructive":
-      "border-transparent text-muted-foreground hover:not-disabled:bg-destructive/8 hover:not-disabled:text-destructive-foreground",
-    "destructive-outline":
-      "border-input bg-popover text-destructive-foreground shadow-xs/5 hover:not-disabled:border-destructive/32 hover:not-disabled:bg-destructive/6 dark:bg-input/32",
+    quiet: "border-transparent text-muted-foreground hover:not-disabled:bg-accent hover:not-disabled:text-foreground",
+    danger: "border-destructive-edge bg-control text-destructive-foreground shadow-control hover:not-disabled:bg-destructive-tint",
+    "quiet-danger":
+      "border-transparent text-muted-foreground hover:not-disabled:bg-destructive-tint hover:not-disabled:text-destructive-foreground",
   };
+
+  const iconOnly = $derived(size === "icon" || size === "icon-sm" || size === "icon-xs");
+  const tipText = $derived(tooltip ?? (iconOnly ? (rest["aria-label"] ?? undefined) : undefined));
 </script>
 
-<button {type} class={cn(base, sizes[size], variants[variant], className)} {...rest}>{@render children?.()}</button>
+<button
+  {type}
+  class={cn(base, sizes[size], variants[variant], loading && "[&>svg~svg]:hidden", className)}
+  disabled={disabled || loading}
+  aria-busy={loading || undefined}
+  use:tip={tipText}
+  {...rest}
+>
+  {#if loading}<LoaderCircle class="animate-spin" aria-hidden="true" />{/if}{@render children?.()}
+</button>
