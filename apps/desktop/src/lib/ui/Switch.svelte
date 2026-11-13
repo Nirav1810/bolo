@@ -1,5 +1,6 @@
 <script lang="ts">
-  // T3 Code's switch: 30 × 18, primary when on, the thumb stretches while pressed.
+  // A switch: 30 × 18, primary when on, the thumb stretches while pressed. Its hit area
+  // reaches 6 px past the track on every side, so it is an easy 42 × 30 target.
   import type { HTMLButtonAttributes } from "svelte/elements";
 
   let {
@@ -15,15 +16,15 @@
   role="switch"
   aria-checked={checked}
   {disabled}
-  class="group/switch inline-flex h-[18px] w-[30px] shrink-0 items-center rounded-full p-[2px] outline-none transition-[background-color] duration-200 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-55 {checked
+  class="group/switch focus-ring disabled-dim relative inline-flex h-4.5 w-7.5 shrink-0 items-center rounded-full p-0.5 transition-[background-color] after:absolute after:-inset-1.5 {checked
     ? 'bg-primary'
-    : 'bg-input'}"
+    : 'bg-switch-off'}"
   onclick={() => onchange(!checked)}
   {...rest}
 >
   <span
-    class="pointer-events-none block size-[14px] rounded-full bg-white shadow-sm transition-[translate,scale] duration-150 ease-out-ui group-active/switch:scale-x-115 {checked
-      ? 'origin-right translate-x-[12px]'
-      : 'origin-left translate-x-0 dark:bg-neutral-300'}"
+    class="pointer-events-none block size-3.5 rounded-full bg-switch-thumb shadow-control transition-[translate,scale] group-active/switch:scale-x-115 {checked
+      ? 'origin-right translate-x-3'
+      : 'origin-left translate-x-0'}"
   ></span>
 </button>

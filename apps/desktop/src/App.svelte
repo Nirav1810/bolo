@@ -3,11 +3,12 @@
   // `#settings`, a settings tab (`#history`, `#engines`, ...), `#onboarding` and `#debug`.
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { api } from "./lib/api";
+  import { PAGE_IDS } from "./lib/pages";
   import Settings from "./settings/Settings.svelte";
   import Debug from "./Debug.svelte";
   import Onboarding from "./onboarding/Onboarding.svelte";
 
-  const TABS = ["general", "engines", "polish", "apps", "dictionary", "history", "usage", "about"];
+  const TABS: string[] = PAGE_IDS;
   const initial = location.hash.slice(1) || "settings";
   let route = $state(initial);
   let tab = $state(TABS.includes(initial) ? initial : "general");
@@ -21,7 +22,7 @@
     return () => removeEventListener("hashchange", onHash);
   });
 
-  // "Bolo Nightly Settings" on a Nightly-channel build, so it is never taken for a release.
+  // "Bolo Nightly settings" on a Nightly-channel build, so it is never taken for a release.
   let product = $state("Bolo");
   $effect(() => {
     api
@@ -32,7 +33,7 @@
 
   $effect(() => {
     const titles: Record<string, string> = { debug: `${product} debug`, onboarding: `Welcome to ${product}` };
-    getCurrentWindow().setTitle(titles[route] ?? `${product} Settings`);
+    getCurrentWindow().setTitle(titles[route] ?? `${product} settings`);
   });
 </script>
 

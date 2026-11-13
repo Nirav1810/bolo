@@ -1,17 +1,18 @@
 <script lang="ts">
-  // One choice out of a few: a muted track with the chosen segment raised.
+  // One choice out of a few: a trough with the chosen segment raised and outlined.
+  // 28 px inside a card, like every control there; `default` (32 px) in a page's own bar.
   let {
     label,
     value,
     options,
     onchange,
-    size = "default",
+    size = "sm",
   }: {
     label: string;
     value: string;
     options: [string, string][];
     onchange: (value: string) => void;
-    size?: "default" | "sm";
+    size?: "sm" | "default";
   } = $props();
 
   /** Arrow keys move the choice, as in any radio group; only the chosen one is a tab stop. */
@@ -27,18 +28,18 @@
   }
 </script>
 
-<div class="inline-flex shrink-0 gap-0.5 rounded-lg bg-accent p-0.5 dark:bg-input/40" role="radiogroup" aria-label={label} tabindex="-1" {onkeydown}>
+<div class="inline-flex shrink-0 gap-0.5 rounded-lg bg-track p-0.5 {size === 'sm' ? 'h-7' : 'h-8'}" role="radiogroup" aria-label={label} tabindex="-1" {onkeydown}>
   {#each options as [v, text] (v)}
     <button
       type="button"
       role="radio"
       aria-checked={value === v}
       tabindex={value === v ? 0 : -1}
-      class="rounded-md px-3 font-medium outline-none transition-[background-color,color,box-shadow] duration-150 focus-visible:ring-2 focus-visible:ring-ring {size === 'sm'
-        ? 'h-6 text-xs'
-        : 'h-7 text-[13px]'} {value === v
-        ? 'bg-card text-foreground shadow-xs/10 ring-1 ring-black/5 dark:bg-white/12 dark:ring-white/6'
-        : 'text-muted-foreground hover:text-foreground'}"
+      class="focus-ring rounded-md border text-sm font-medium transition-[background-color,border-color,color,box-shadow] {size === 'sm'
+        ? 'h-6 px-2.5'
+        : 'h-7 px-3'} {value === v
+        ? 'border-field-edge bg-track-thumb text-foreground shadow-control'
+        : 'border-transparent text-muted-foreground hover:text-foreground'}"
       onclick={() => value !== v && onchange(v)}>{text}</button
     >
   {/each}

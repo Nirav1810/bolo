@@ -1,22 +1,28 @@
 <script lang="ts">
-  import { Keyboard } from "@lucide/svelte";
-  import { api, keyFromCode, keyLabel, type Form, type Microphones, type SettingsView } from "../lib/api";
+  import { LANGUAGE_NAMES, api, keyFromCode, type Form, type Microphones, type SettingsView } from "../lib/api";
   import Button from "../lib/ui/Button.svelte";
+  import Kbd from "../lib/ui/Kbd.svelte";
   import Segmented from "../lib/ui/Segmented.svelte";
+  import Select from "../lib/ui/Select.svelte";
   import SettingsRow from "../lib/ui/SettingsRow.svelte";
   import SettingsSection from "../lib/ui/SettingsSection.svelte";
   import Switch from "../lib/ui/Switch.svelte";
-  import Kbd from "../lib/ui/Kbd.svelte";
 
   let { view, update }: { view: SettingsView; update: (change: (f: Form) => void) => Promise<void> } = $props();
 
   let capturing = $state(false);
   let captureNote = $state("");
+  let captureButton: HTMLElement | null = null;
 
   // The microphones plugged in now, read again each time the list opens (hot-plug).
   let mics = $state<Microphones | null>(null);
   const chosenMic = $derived(view.form.input_device);
   const micMissing = $derived(mics !== null && chosenMic !== null && !mics.devices.includes(chosenMic));
+  const micOptions = $derived<[string, string][]>([
+    ["", "Windows default"],
+    ...(mics?.devices ?? []).map((name): [string, string] => [name, name]),
+    ...(chosenMic !== null && (mics === null || micMissing) ? [[chosenMic, micMissing ? `${chosenMic} (not plugged in)` : chosenMic] as [string, string]] : []),
+  ]);
 
   async function refreshMics() {
     try {
@@ -30,7 +36,8 @@
     refreshMics();
   });
 
-  async function startCapture() {
+  async function startCapture(e: MouseEvent) {
+    captureButton = e.currentTarget as HTMLElement;
     captureNote = "";
     capturing = true;
     // Bolo lets go of its key while the window listens for the new one.
@@ -39,6 +46,7 @@
 
   async function endCapture() {
     capturing = false;
+    captureButton?.focus();
     await api.capture(false);
   }
 
@@ -51,7 +59,7 @@
     }
     const key = keyFromCode(e.code);
     if (!key) {
-      captureNote = "That key can't be used. Press Caps Lock, Right Ctrl, Right Alt or F13–F24.";
+      captureNote = "That key can’t be used. Press Caps Lock, Right Ctrl, Right Alt or F13–F24.";
       return;
     }
     capturing = false;
@@ -70,31 +78,22 @@
 <svelte:window onkeydown={onKey} />
 
 <SettingsSection title="Basics">
-  <SettingsRow title="Push-to-talk key" titleId="ptt">
+  <SettingsRow title="Push-to-talk key" titleId="ptt-title" status={captureNote ? { tone: "warning", text: captureNote } : null}>
     {#snippet description()}
       {#if capturing}
-        Press the key you want, or <Kbd>Esc</Kbd> to keep {keyLabel(view.form.push_to_talk)}.
+        Press the key you want, or <Kbd>Esc</Kbd> to keep {view.key_name}.
       {:else if view.form.push_to_talk === "caps-lock"}
-        Hold to talk, release to insert. A quick tap still toggles Caps Lock. <Kbd>Esc</Kbd> cancels.
+        Hold to dictate, let go to insert. A quick tap still toggles Caps Lock. <Kbd>Esc</Kbd> cancels.
       {:else}
-        Hold to talk, release to insert. <Kbd>Esc</Kbd> cancels.
+        Hold to dictate, let go to insert. <Kbd>Esc</Kbd> cancels.
       {/if}
-    {/snippet}
-    {#snippet status()}
-      {#if captureNote}<span class="text-warning-foreground" role="status">{captureNote}</span>{/if}
     {/snippet}
     {#snippet control()}
       {#if capturing}
-        <Button variant="ghost-muted" size="sm" onclick={endCapture}>Cancel</Button>
+        <Button variant="ghost" size="sm" onclick={endCapture}>Cancel</Button>
       {/if}
-      <Button
-        variant={capturing ? "primary" : "outline"}
-        class="min-w-32 justify-between"
-        aria-describedby="ptt"
-        onclick={startCapture}
-      >
-        <Keyboard aria-hidden="true" />
-        <span class="flex-1 text-center">{capturing ? "Press a key…" : keyLabel(view.form.push_to_talk)}</span>
+      <Button variant={capturing ? "primary" : "outline"} size="sm" class="min-w-28" aria-describedby="ptt-title" onclick={startCapture}>
+        {capturing ? "Press a key…" : view.key_name}
       </Button>
     {/snippet}
   </SettingsRow>
@@ -103,32 +102,23 @@
       {#if micMissing}
         Not plugged in. Bolo uses the Windows default until it’s back.
       {:else if chosenMic === null && mics?.default}
-        Follows Windows, now {mics.default}.
+        Windows default, now {mics.default}.
       {:else}
         The microphone Bolo listens on.
       {/if}
     {/snippet}
     {#snippet control()}
-      <select
+      <Select
         id="microphone"
-        class="select max-w-64 truncate"
+        class="w-56"
         value={chosenMic ?? ""}
-        onfocus={refreshMics}
-        onpointerdown={refreshMics}
-        onchange={(e) => {
-          const v = e.currentTarget.value;
-          update((f) => (f.input_device = v === "" ? null : v));
-        }}
-      >
-        <option value="">Windows default</option>
-        {#each mics?.devices ?? [] as name (name)}<option value={name}>{name}</option>{/each}
-        {#if chosenMic !== null && (mics === null || micMissing)}
-          <option value={chosenMic}>{chosenMic}{micMissing ? " (not plugged in)" : ""}</option>
-        {/if}
-      </select>
+        options={micOptions}
+        onopen={refreshMics}
+        onchange={(v) => update((f) => (f.input_device = v === "" ? null : v))}
+      />
     {/snippet}
   </SettingsRow>
-  <SettingsRow title="Start with Windows" labelFor="autostart" description="Bolo waits in the tray, ready for your key.">
+  <SettingsRow title="Start with Windows" labelFor="autostart" description="Bolo waits in the tray, ready for your push-to-talk key.">
     {#snippet control()}
       <Switch id="autostart" checked={view.form.autostart} onchange={(on) => update((f) => (f.autostart = on))} />
     {/snippet}
@@ -141,11 +131,7 @@
       <Segmented
         label="Language mode"
         value={view.form.language}
-        options={[
-          ["auto", "Auto"],
-          ["english", "English"],
-          ["hinglish", "Hinglish"],
-        ]}
+        options={Object.entries(LANGUAGE_NAMES)}
         onchange={(v) => update((f) => (f.language = v as Form["language"]))}
       />
     {/snippet}

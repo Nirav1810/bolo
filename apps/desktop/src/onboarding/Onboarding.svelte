@@ -1,82 +1,113 @@
 <script lang="ts">
-  // First-run onboarding (M3 ticket 10, design approved in ticket 04): welcome → mic
+  // First-run onboarding (M3 ticket 10, design approved in ticket 04): welcome → microphone
   // check → model → try it. Each step is saved, so quitting partway resumes there.
+  // One frame for every step: the header and footer stay put and each step's content
+  // starts at the same place, in the settings column, so nothing jumps between steps.
+  import { tick } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import {
-    ArrowLeft,
-    ArrowRight,
-    AudioLines,
-    Check,
-    CircleAlert,
-    CircleCheck,
-    Cloud,
-    Cpu,
-    Download,
-    ExternalLink,
-    Keyboard,
-    Mic,
-    Pause,
-    RefreshCw,
-  } from "@lucide/svelte";
+  import { ArrowLeft, ArrowRight, Cloud, Cpu, Download, ExternalLink, Keyboard, Mic, RefreshCw, TextCursorInput } from "@lucide/svelte";
   import Alert from "../lib/ui/Alert.svelte";
+  import AppMark from "../lib/ui/AppMark.svelte";
   import Badge from "../lib/ui/Badge.svelte";
   import Button from "../lib/ui/Button.svelte";
+  import Card from "../lib/ui/Card.svelte";
+  import IconTile from "../lib/ui/IconTile.svelte";
+  import KeyField from "../lib/ui/KeyField.svelte";
   import Kbd from "../lib/ui/Kbd.svelte";
-  import releaseIcon from "../../src-tauri/icons/128x128.png?no-inline";
-  import nightlyIcon from "../../src-tauri/icons-nightly/128x128.png?no-inline";
+  import LevelMeter from "../lib/ui/LevelMeter.svelte";
+  import PageHeader from "../lib/ui/PageHeader.svelte";
+  import Progress from "../lib/ui/Progress.svelte";
+  import Select from "../lib/ui/Select.svelte";
+  import SettingsRow from "../lib/ui/SettingsRow.svelte";
+  import SettingsSection from "../lib/ui/SettingsSection.svelte";
+  import Skeleton from "../lib/ui/Skeleton.svelte";
   import {
     api,
-    keyLabel,
+    downloadCaption,
+    downloadPercent,
     megabytes,
-    meter,
     onDownload,
     onMicLevel,
+    saveCheckedKey,
+    sentence,
     type DownloadEvent,
     type MicCheck,
+    type Microphones,
     type SettingsView,
-    variant,
   } from "../lib/api";
   import { onAppEvent } from "../lib/events";
+  import { PAGES } from "../lib/pages";
+  import { loudness } from "../lib/waveform";
 
   let { ondone }: { ondone: () => void } = $props();
+
+  type Problem = { title: string; detail: string };
+  type RowStatus = { tone: "success" | "warning" | "error" | "busy"; text: string };
 
   const STEPS = 4;
   let step = $state(0);
   let view = $state<SettingsView | null>(null);
+  let loadError = $state<Problem | null>(null);
+  let column: HTMLElement | undefined = $state();
 
-  // Mic check.
+  // Microphone check.
   let checking = $state(false);
   let level = $state(0);
   let mic = $state<MicCheck | null>(null);
-  let micError = $state("");
+  let micError = $state<Problem | null>(null);
+  // The microphones plugged in now, read again each time the list opens (hot-plug).
+  let mics = $state<Microphones | null>(null);
 
   // Model.
   let download = $state<DownloadEvent | null>(null);
   let started = 0;
-  let modelError = $state("");
-  let cloudKey = $state("");
-  let cloudError = $state("");
+  let modelError = $state<Problem | null>(null);
+  let cloudNote = $state<string | null>(null);
 
   // Try it.
   let practice = $state("");
   let latency = $state<number | null>(null);
   let tryError = $state("");
+  let finishing = $state(false);
 
   const model = $derived(view?.models.find((m) => m.recommended) ?? null);
   const primary = $derived(view?.form.engines[0] ?? "");
   const cloudReady = $derived(!!view && !primary.startsWith("local:") && !!view.keys.deepgram);
   const modelReady = $derived(!!model?.installed && primary === model.spec);
-  const nightly = $derived(!!view && variant(view.version).nightly);
-  const key = $derived(view ? keyLabel(view.form.push_to_talk) : "Caps Lock");
+  const key = $derived(view?.key_name ?? "Caps Lock");
+  const ready = $derived(view !== null || loadError !== null);
+
+  const chosenMic = $derived(view?.form.input_device ?? null);
+  const micMissing = $derived(mics !== null && chosenMic !== null && !mics.devices.includes(chosenMic));
+  const micOptions = $derived<[string, string][]>([
+    ["", "Windows default"],
+    ...(mics?.devices ?? []).map((name): [string, string] => [name, name]),
+    ...(chosenMic !== null && (mics === null || micMissing) ? [[chosenMic, micMissing ? `${chosenMic} (not plugged in)` : chosenMic] as [string, string]] : []),
+  ]);
+  const settingsGeneral = `Settings › ${PAGES.general.label}`;
 
   async function load() {
-    for (let attempt = 0; attempt < 20; attempt++) {
+    // The webview loads with the app, before the app's state is ready: try a few times.
+    for (let attempt = 0; ; attempt++) {
       try {
         view = await api.settings();
+        loadError = null;
         return;
-      } catch {
+      } catch (e) {
+        if (attempt >= 20) {
+          loadError = { title: "Couldn’t load settings", detail: sentence(String(e)) };
+          return;
+        }
         await new Promise((r) => setTimeout(r, 250));
       }
+    }
+  }
+
+  async function refreshMics() {
+    try {
+      mics = await api.microphones();
+    } catch {
+      // Keep the last list; the select still shows the choice.
     }
   }
 
@@ -86,6 +117,7 @@
       if (view?.downloading.length && model) download = { id: model.id, phase: "downloading", downloaded: 0, total: 0, error: null };
       if (step === 1) runMicCheck();
     });
+    refreshMics();
     const unlisten = [
       onMicLevel((rms) => (level = rms)),
       onDownload(onDownloadEvent),
@@ -100,27 +132,47 @@
 
   async function go(to: number) {
     step = to;
+    // The pressed button may be gone; put focus on the new step (its field, or its title).
+    await tick();
+    const target = column?.querySelector<HTMLElement>("[autofocus]") ?? column?.querySelector<HTMLElement>("h1");
+    if (target?.tagName === "H1") target.tabIndex = -1;
+    target?.focus({ preventScroll: true });
     await api.onboardingSave(to);
     if (to === 1 && !mic) runMicCheck();
   }
 
   async function runMicCheck() {
     checking = true;
-    micError = "";
+    micError = null;
     mic = null;
     try {
       mic = await api.micCheck();
     } catch (e) {
-      micError = String(e);
+      micError = { title: "Couldn’t open the microphone", detail: sentence(String(e)) };
     }
     checking = false;
     level = 0;
   }
 
+  /** Saves the microphone picked here, as General does, and checks it again. */
+  async function chooseMic(value: string) {
+    if (!view) return;
+    const form = $state.snapshot(view.form);
+    form.input_device = value === "" ? null : value;
+    view.form = form;
+    try {
+      view = await api.save(form);
+    } catch (e) {
+      micError = { title: "Couldn’t save the microphone", detail: sentence(String(e)) };
+      return;
+    }
+    runMicCheck();
+  }
+
   async function onDownloadEvent(e: DownloadEvent) {
     if (e.id !== model?.id) return;
     download = e;
-    if (e.phase === "failed") modelError = e.error ?? "The download failed.";
+    if (e.phase === "failed") modelError = { title: `Couldn’t download ${model.name}`, detail: sentence(e.error ?? "The download failed.") };
     if (e.phase === "done" || e.phase === "cancelled" || e.phase === "failed") {
       if (e.phase !== "failed") download = null;
       view = await api.settings();
@@ -130,14 +182,14 @@
 
   async function startDownload() {
     if (!model) return;
-    modelError = "";
+    modelError = null;
     started = Date.now();
     download = { id: model.id, phase: "downloading", downloaded: 0, total: model.download_bytes, error: null };
     try {
       await api.download(model.id);
     } catch (e) {
       download = null;
-      modelError = String(e);
+      modelError = { title: `Couldn’t download ${model.name}`, detail: sentence(String(e)) };
     }
   }
 
@@ -148,256 +200,260 @@
     view = await api.save({ ...$state.snapshot(view.form), engines });
   }
 
-  async function useCloud() {
-    if (!view) return;
-    cloudError = "";
+  /** Checks and saves the Deepgram API key and makes Deepgram the primary engine; resolves to what went wrong, for the KeyField. */
+  async function useCloud(pasted: string): Promise<string | null> {
+    if (!view) return null;
+    const r = await saveCheckedKey("deepgram", pasted);
+    if (!r.saved) return r.error;
+    view.keys.deepgram = r.hint;
     try {
-      const tested = await api.testKey("deepgram", cloudKey);
-      if (tested.result === "refused") {
-        cloudError = "Deepgram refused this key.";
-        return;
-      }
-      view.keys.deepgram = await api.saveKey("deepgram", cloudKey);
       const engines = ["deepgram-stream", ...view.form.engines.filter((e) => e !== "deepgram-stream")];
       view = await api.save({ ...$state.snapshot(view.form), engines });
-      cloudKey = "";
     } catch (e) {
-      cloudError = String(e);
+      return `Couldn’t use Deepgram: ${sentence(String(e))}`;
     }
+    cloudNote = r.note;
+    return null;
   }
 
-  function percent(d: DownloadEvent): number {
-    return d.total ? Math.round((d.downloaded / d.total) * 100) : 0;
-  }
-
+  /** " · about 2 min left", once the download has run long enough to tell. */
   function timeLeft(d: DownloadEvent): string {
     const secs = (Date.now() - started) / 1000;
-    if (!started || secs < 2 || !d.downloaded) return "";
-    const rate = d.downloaded / secs;
-    const left = (d.total - d.downloaded) / rate;
+    if (d.phase !== "downloading" || !started || secs < 2 || !d.downloaded || !d.total) return "";
+    const left = (d.total - d.downloaded) / (d.downloaded / secs);
     return left < 60 ? ` · about ${Math.max(1, Math.round(left))} s left` : ` · about ${Math.round(left / 60)} min left`;
   }
 
   async function finish() {
+    finishing = true;
     await api.onboardingSave(null);
     // Closing destroys the window and its webview; the tray builds it again.
     await getCurrentWindow().close();
     ondone();
   }
+
+  const forward = $derived(step === 0 ? "Get started" : step === STEPS - 1 ? "Finish" : "Continue");
+  const blocked = $derived(!ready || (step === 1 && checking) || (step === 2 && !modelReady && !cloudReady));
+
+  const micStatus = $derived.by((): RowStatus | null => {
+    if (checking) return { tone: "busy", text: loudness(level) > 0 ? "Hearing you…" : "Listening…" };
+    if (mic && mic.heard && !mic.late)
+      return { tone: "success", text: mic.leading_ms === null ? "Bolo hears you." : `Bolo hears you from the first moment (${Math.round(mic.leading_ms)} ms).` };
+    return null;
+  });
+  const modelStatus = $derived.by((): RowStatus | null => {
+    if (!model?.installed) return null;
+    return modelReady ? { tone: "success", text: "Downloaded and ready." } : { tone: "success", text: "Downloaded." };
+  });
 </script>
 
-{#snippet stepIcon(Icon: typeof Mic)}
-  <div class="grid size-11 place-items-center rounded-xl border border-border bg-card shadow-xs/5">
-    <Icon class="size-5 text-foreground" aria-hidden="true" />
-  </div>
-{/snippet}
-
-{#snippet ok(text: string)}
-  <p class="flex items-center gap-2 text-sm text-foreground" role="status">
-    <CircleCheck class="size-4 shrink-0 text-success-foreground" aria-hidden="true" />{text}
-  </p>
-{/snippet}
-
 <div class="flex h-screen flex-col bg-background">
-  <header class="flex items-center justify-between px-6 pt-5">
-    <div class="flex items-center gap-2">
-      <img src={nightly ? nightlyIcon : releaseIcon} width="22" height="22" alt="" class="rounded-md" />
-      <span class="text-sm font-semibold tracking-[-0.01em]">{nightly ? "Bolo Nightly" : "Bolo"}</span>
-    </div>
-    <div class="flex items-center gap-3">
-      <span class="text-xs text-muted-foreground tabular-nums">Step {step + 1} of {STEPS}</span>
-      <ol class="flex gap-1" aria-label="Step {step + 1} of {STEPS}">
-        {#each Array(STEPS) as _, i (i)}
-          <li class="h-1 w-6 overflow-hidden rounded-full bg-accent dark:bg-input/60">
-            <div class="h-full rounded-full bg-primary transition-[width] duration-300 ease-out-ui" style:width={i <= step ? "100%" : "0%"}></div>
-          </li>
-        {/each}
-      </ol>
+  <header class="flex-none">
+    <div class="mx-auto flex w-full max-w-3xl items-center justify-between gap-4 px-8 pt-5">
+      <AppMark version={view?.version ?? null} />
+      {#if ready}
+        <div class="flex items-center gap-3">
+          <p class="text-xs text-muted-foreground tabular-nums">Step {step + 1} of {STEPS}</p>
+          <div class="flex gap-1" aria-hidden="true">
+            {#each Array(STEPS) as _, i (i)}
+              <span class="h-1 w-6 rounded-full transition-colors {i <= step ? 'bg-primary' : 'bg-border'}"></span>
+            {/each}
+          </div>
+        </div>
+      {/if}
     </div>
   </header>
 
-  <main class="flex flex-1 flex-col overflow-y-auto px-8">
+  <main class="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
     {#key step}
-      <div class="enter mx-auto my-auto flex w-full max-w-[520px] flex-col gap-5 py-8">
-        {#if step === 0}
-          {@render stepIcon(AudioLines)}
-          <div class="flex flex-col gap-2">
-            <h1 class="text-2xl font-semibold tracking-[-0.025em]">Talk in any app. Bolo types it.</h1>
-            <p class="text-[15px] leading-6 text-muted-foreground">
-              English, Hinglish, or both in one sentence. It runs on this PC, so your voice stays here unless you pick a
-              cloud engine.
-            </p>
-          </div>
-          <ol class="overflow-hidden rounded-xl border border-border/80 bg-card shadow-xs/5 dark:border-border [&>*+*]:border-t [&>*+*]:border-border/60">
-            {#each [["Hold", "the key, anywhere you can type"], ["Speak", "naturally, in English or Hinglish"], ["Let go", "and the text lands where your cursor is"]] as [verb, rest], i (verb)}
-              <li class="flex items-center gap-3 px-4 py-3">
-                <span class="grid size-6 shrink-0 place-items-center rounded-full bg-accent text-xs font-semibold text-muted-foreground tabular-nums">{i + 1}</span>
-                <span class="text-sm">
-                  <span class="font-medium">{verb}</span>
-                  {#if i === 0}<Kbd class="mx-0.5">{key}</Kbd>{/if}
-                  <span class="text-muted-foreground">{rest}</span>
-                </span>
-              </li>
-            {/each}
-          </ol>
-          {#if key === "Caps Lock"}<p class="text-xs text-muted-foreground">A quick tap of Caps Lock still types capitals.</p>{/if}
-        {:else if step === 1}
-          {@render stepIcon(Mic)}
-          <div class="flex flex-col gap-2">
-            <h1 class="text-2xl font-semibold tracking-[-0.025em]">Check your microphone</h1>
-            <p class="text-[15px] leading-6 text-muted-foreground">
-              Say anything for three seconds. Bolo checks that it hears the very start of what you say.
-            </p>
-          </div>
-          <div class="flex flex-col gap-3 rounded-xl border border-border/80 bg-card px-4 py-3.5 shadow-xs/5 dark:border-border">
-            <div class="flex items-center gap-2">
-              <Mic class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-              <span class="min-w-0 flex-1 truncate text-sm font-medium">{mic?.device ?? "Default microphone"}</span>
-              {#if checking}
-                <Badge variant={level > 0.003 ? "success" : "secondary"}>{level > 0.003 ? "Hearing you" : "Listening…"}</Badge>
-              {:else if mic}
-                <Badge variant={mic.heard && !mic.late ? "success" : "warning"}>{mic.heard ? "Heard you" : "Nothing heard"}</Badge>
-              {/if}
-            </div>
-            <div class="flex h-6 items-end gap-[3px]" aria-hidden="true">
-              {#each Array(32) as _, i (i)}
-                <span
-                  class="flex-1 rounded-full transition-colors duration-75 {i / 32 < meter(level) ? 'bg-primary' : 'bg-accent dark:bg-input/50'}"
-                  style:height="{30 + 70 * Math.sin((i / 31) * Math.PI) ** 0.6}%"
-                ></span>
-              {/each}
-            </div>
-          </div>
-          {#if micError}
-            <Alert variant="error" title="Couldn’t open the microphone">{micError}</Alert>
-          {:else if mic && mic.late}
-            <Alert variant="warning" title={mic.leading_ms === null ? "Your mic sent only silence" : `Your mic starts ${mic.leading_ms} ms late`}>
-              {mic.leading_ms === null
-                ? "Check that it isn't muted, and that Windows lets apps use the microphone."
-                : "Windows Audio enhancements are muting the first moment of sound, so your first word gets clipped. Turn them off: Sound settings › your microphone › Audio enhancements › Off."}
-              {#snippet actions()}
-                <Button variant="outline" size="sm" onclick={() => api.openLink("ms-settings:sound")}><ExternalLink aria-hidden="true" />Sound settings</Button>
-                <Button variant="ghost" size="sm" onclick={runMicCheck}><RefreshCw aria-hidden="true" />Check again</Button>
-              {/snippet}
-            </Alert>
-          {:else if mic && !mic.heard}
-            <Alert variant="warning" title="Bolo didn’t hear anything">
-              {mic.fell_back
-                ? "The microphone chosen in Settings isn’t plugged in, so Bolo listened on the Windows default."
-                : "Is the right microphone the Windows default? You can also pick one in Settings › General."}
-              {#snippet actions()}
-                <Button variant="outline" size="sm" onclick={() => api.openLink("ms-settings:sound")}><ExternalLink aria-hidden="true" />Sound settings</Button>
-                <Button variant="ghost" size="sm" onclick={runMicCheck}><RefreshCw aria-hidden="true" />Check again</Button>
-              {/snippet}
-            </Alert>
-          {:else if mic}
-            {@render ok(`Bolo hears you from the first moment (${mic.leading_ms} ms).`)}
-          {/if}
-        {:else if step === 2}
-          {@render stepIcon(Cpu)}
-          <div class="flex flex-col gap-2">
-            <h1 class="text-2xl font-semibold tracking-[-0.025em]">Get the speech model</h1>
-            <p class="text-[15px] leading-6 text-muted-foreground">
-              {#if model}
-                Picked for this PC ({Math.round((view?.ram_mb ?? 0) / 1024)} GB RAM, {model.hinglish ? "English and Hinglish" : "English"}).
-                It downloads once, then works offline.
-              {:else}
-                This PC doesn't have the memory for an offline model. Use a cloud engine instead.
-              {/if}
-            </p>
-          </div>
-          {#if model}
-            <div class="flex flex-col gap-3 rounded-xl border border-primary/40 bg-card px-4 py-3.5 shadow-xs/5 ring-3 ring-primary/8">
-              <div class="flex items-center gap-2">
-                <span class="text-sm font-medium">{model.name}</span>
-                <Badge variant="primary">Recommended</Badge>
-                <span class="flex-1"></span>
-                <span class="text-xs text-muted-foreground tabular-nums">{megabytes(model.download_bytes)}</span>
-              </div>
-              {#if model.installed}
-                {@render ok("Downloaded and ready.")}
-              {:else if download && download.phase !== "failed"}
-                <div class="progress" role="progressbar" aria-label="Download progress" aria-valuenow={percent(download)} aria-valuemin="0" aria-valuemax="100">
-                  <div style:width="{download.phase === 'downloading' ? percent(download) : 100}%"></div>
-                </div>
-                <div class="flex items-center justify-between gap-4">
-                  <span class="text-xs text-muted-foreground tabular-nums">
-                    {download.phase === "downloading"
-                      ? `${percent(download)}%${timeLeft(download)}`
-                      : download.phase === "verifying"
-                        ? "Checking the download…"
-                        : "Unpacking…"}
-                  </span>
-                  <Button variant="ghost-muted" size="xs" onclick={() => api.cancelDownload(model.id)}><Pause aria-hidden="true" />Pause</Button>
-                </div>
-                <span class="-mt-1 text-2xs text-muted-foreground">Resumes if you close this window.</span>
-              {:else}
-                {#if modelError}<p class="flex items-center gap-1.5 text-xs text-destructive-foreground" role="alert"><CircleAlert class="size-3.5" aria-hidden="true" />{modelError}</p>{/if}
-                <div><Button variant="primary" onclick={startDownload}><Download aria-hidden="true" />{modelError ? "Try again" : "Download"}</Button></div>
-              {/if}
-            </div>
-            <div class="flex items-center gap-3 text-xs text-muted-foreground" aria-hidden="true">
-              <span class="h-px flex-1 bg-border"></span>or<span class="h-px flex-1 bg-border"></span>
-            </div>
-          {/if}
-          <div class="flex flex-col gap-2.5 rounded-xl border border-border/80 bg-card px-4 py-3.5 shadow-xs/5 dark:border-border">
-            <div class="flex items-center gap-2">
-              <Cloud class="size-4 text-muted-foreground" aria-hidden="true" />
-              <span class="text-sm font-medium">Use a cloud engine</span>
-            </div>
-            <span class="text-xs text-muted-foreground">No download. Audio goes to Deepgram. Needs an API key, kept in Windows Credential Manager.</span>
-            {#if cloudReady}
-              {@render ok("Using Deepgram.")}
-            {:else}
-              <form
-                class="flex gap-2"
-                onsubmit={(e) => {
-                  e.preventDefault();
-                  useCloud();
-                }}
-              >
-                <label for="cloud-key" class="sr-only">Deepgram API key</label>
-                <input id="cloud-key" class="input mono text-xs!" type="password" autocomplete="off" spellcheck="false" placeholder="Deepgram API key…" bind:value={cloudKey} />
-                <Button type="submit" variant="outline" disabled={!cloudKey.trim()}>Use Deepgram</Button>
-              </form>
-              {#if cloudError}<p class="flex items-center gap-1.5 text-xs text-destructive-foreground" role="alert"><CircleAlert class="size-3.5" aria-hidden="true" />{cloudError}</p>{/if}
-            {/if}
-          </div>
+      <div bind:this={column} class="enter mx-auto flex w-full max-w-3xl flex-col gap-8 px-8 pt-9 pb-16 [&_h1]:outline-none">
+        {#if !ready}
+          <Skeleton />
         {:else}
-          {@render stepIcon(Keyboard)}
-          <div class="flex flex-col gap-2">
-            <h1 class="text-2xl font-semibold tracking-[-0.025em]">Try it</h1>
-            <p class="text-[15px] leading-6 text-muted-foreground">
-              Click in the box, hold <Kbd>{key}</Kbd> and say “Hello, this is my first dictation.”
-            </p>
-          </div>
-          <label for="practice" class="sr-only">Practice box</label>
-          <!-- svelte-ignore a11y_autofocus -->
-          <textarea id="practice" class="textarea h-32 text-[15px]" placeholder="Your words land here…" autofocus bind:value={practice}></textarea>
-          {#if latency !== null}
-            <Alert variant="success" title="It works">Text in {Math.round(latency)} ms after you let go.</Alert>
-          {:else if tryError}
-            <Alert variant="error">{tryError}</Alert>
+          {#if step === 0}
+            <PageHeader
+              size="hero"
+              title="Talk in any app. Bolo types it."
+              blurb="English, Hinglish or both in one sentence. It runs on this PC, so your voice stays here unless you pick a cloud engine."
+            />
+          {:else if step === 1}
+            <PageHeader size="hero" title="Check your microphone" blurb="Say anything for three seconds. Bolo checks that it hears the very start of what you say." />
+          {:else if step === 2}
+            <PageHeader
+              size="hero"
+              title="Get the speech model"
+              blurb={model
+                ? `Picked for this PC (${Math.round((view?.ram_mb ?? 0) / 1024)} GB RAM, ${model.hinglish ? "English and Hinglish" : "English"}). It downloads once, then works offline.`
+                : "This PC doesn’t have the memory for an offline model. Use a cloud engine instead."}
+            />
+          {:else}
+            <PageHeader size="hero" title="Try it">
+              {#snippet blurb()}Click in the box, hold <Kbd>{key}</Kbd> and say “Hello, this is my first dictation.”{/snippet}
+            </PageHeader>
           {/if}
-          <p class="text-xs text-muted-foreground">Bolo lives in the tray. Click its icon for settings and history; right-click to pause.</p>
+
+          {#if loadError}<Alert variant="error" title={loadError.title}>{loadError.detail}</Alert>{/if}
+
+          {#if step === 0}
+            <Card as="ol" divided aria-label="How it works">
+              <SettingsRow as="li" description={key === "Caps Lock" ? "A quick tap of Caps Lock still types capitals." : undefined}>
+                {#snippet leading()}<IconTile icon={Keyboard} />{/snippet}
+                {#snippet title()}Hold <Kbd>{key}</Kbd> anywhere you can type{/snippet}
+              </SettingsRow>
+              <SettingsRow as="li" title="Speak naturally, in English or Hinglish">
+                {#snippet leading()}<IconTile icon={Mic} />{/snippet}
+              </SettingsRow>
+              <SettingsRow as="li" title="Let go, and the text is inserted where your cursor is">
+                {#snippet leading()}<IconTile icon={TextCursorInput} />{/snippet}
+              </SettingsRow>
+            </Card>
+          {:else if step === 1}
+            <SettingsSection>
+              <SettingsRow title="Microphone" labelFor="microphone" status={micStatus}>
+                {#snippet leading()}
+                  <IconTile icon={Mic} tone={micError ? "error" : mic && (mic.late || !mic.heard) ? "warning" : mic ? "success" : "neutral"} />
+                {/snippet}
+                {#snippet description()}
+                  {#if micMissing}
+                    Not plugged in. Bolo uses the Windows default until it’s back.
+                  {:else}
+                    You can change it later in {settingsGeneral}.
+                  {/if}
+                {/snippet}
+                {#snippet control()}
+                  <Select
+                    id="microphone"
+                    class="w-56"
+                    value={chosenMic ?? ""}
+                    options={micOptions}
+                    disabled={!view || checking}
+                    onopen={refreshMics}
+                    onchange={chooseMic}
+                  />
+                {/snippet}
+                <LevelMeter rms={level} />
+              </SettingsRow>
+              {#snippet footer()}
+                {#if micError}
+                  <Alert variant="error" title={micError.title}>
+                    {micError.detail}
+                    {#snippet actions()}
+                      <Button variant="outline" size="sm" onclick={runMicCheck}><RefreshCw aria-hidden="true" />Try again</Button>
+                    {/snippet}
+                  </Alert>
+                {:else if mic && (mic.late || !mic.heard)}
+                  <Alert
+                    variant="warning"
+                    live
+                    title={!mic.heard
+                      ? "Bolo didn’t hear anything"
+                      : mic.leading_ms === null
+                        ? "Your microphone sent only silence"
+                        : `Your microphone starts ${Math.round(mic.leading_ms)} ms late`}
+                  >
+                    {#if !mic.heard}
+                      {mic.fell_back
+                        ? "The microphone you chose isn’t plugged in, so Bolo listened on the Windows default. Pick another above."
+                        : "Is the right microphone chosen above? Check that it isn’t muted."}
+                    {:else if mic.leading_ms === null}
+                      Check that it isn’t muted, and that Windows lets apps use the microphone.
+                    {:else}
+                      Windows Audio enhancements are muting the first moment of sound, so your first word gets clipped. Turn them off: Sound
+                      settings › your microphone › Audio enhancements › Off.
+                    {/if}
+                    {#snippet actions()}
+                      <Button variant="outline" size="sm" onclick={runMicCheck}><RefreshCw aria-hidden="true" />Check</Button>
+                      <Button variant="ghost" size="sm" onclick={() => api.openLink("ms-settings:sound")}>Sound settings<ExternalLink aria-hidden="true" /></Button>
+                    {/snippet}
+                  </Alert>
+                {/if}
+              {/snippet}
+            </SettingsSection>
+          {:else if step === 2}
+            {#if model}
+              <SettingsSection title="On this PC" description="Private and offline. Your audio never leaves this PC.">
+                <SettingsRow title={model.name} status={modelStatus}>
+                  {#snippet leading()}<IconTile icon={Cpu} tone={modelReady ? "primary" : "neutral"} />{/snippet}
+                  {#snippet badges()}<Badge variant="primary">Recommended</Badge>{/snippet}
+                  {#snippet description()}
+                    {model.hinglish ? "English and Hinglish" : "English only"} · <span class="tabular-nums">{megabytes(model.download_bytes)}</span>
+                  {/snippet}
+                  {#snippet control()}
+                    {#if download && download.phase !== "failed"}
+                      <Button variant="ghost" size="sm" onclick={() => api.cancelDownload(model.id)}>Cancel</Button>
+                    {:else if !model.installed}
+                      <Button variant="outline" size="sm" onclick={startDownload}><Download aria-hidden="true" />{modelError ? "Try again" : "Download"}</Button>
+                    {:else if !modelReady}
+                      <Button variant="outline" size="sm" onclick={useModel}>Make primary</Button>
+                    {/if}
+                  {/snippet}
+                  {#if download && download.phase !== "failed" && !model.installed}
+                    <Progress
+                      label="Downloading {model.name}"
+                      value={downloadPercent(download)}
+                      caption="{downloadCaption(download, model.download_bytes)}{timeLeft(download)} · Resumes if you close this window."
+                    />
+                  {/if}
+                </SettingsRow>
+                {#snippet footer()}
+                  {#if modelError}<Alert variant="error" title={modelError.title}>{modelError.detail}</Alert>{/if}
+                {/snippet}
+              </SettingsSection>
+            {/if}
+            <SettingsSection title="Cloud" description="No download. Your audio is sent to Deepgram.">
+              <SettingsRow
+                title="Deepgram"
+                labelFor={cloudReady ? undefined : "deepgram-key"}
+                status={cloudReady ? (cloudNote ? { tone: "warning", text: cloudNote } : { tone: "success", text: "Using Deepgram." }) : null}
+                description="Needs an API key, kept in Windows Credential Manager."
+              >
+                {#snippet leading()}<IconTile icon={Cloud} tone={cloudReady ? "primary" : "neutral"} />{/snippet}
+                {#if !cloudReady}
+                  <KeyField
+                    id="deepgram-key"
+                    size="default"
+                    label="Deepgram API key"
+                    placeholder="Paste Deepgram API key…"
+                    submit="Use Deepgram"
+                    disabled={!view?.keystore}
+                    onsave={useCloud}
+                  />
+                {/if}
+              </SettingsRow>
+              {#snippet footer()}
+                {#if view && !view.keystore}
+                  <Alert variant="warning" title="API keys can’t be saved">Windows Credential Manager couldn’t be opened.</Alert>
+                {/if}
+              {/snippet}
+            </SettingsSection>
+          {:else}
+            <div class="flex flex-col gap-2.5">
+              <label for="practice" class="sr-only">Practice box</label>
+              <!-- svelte-ignore a11y_autofocus -->
+              <textarea id="practice" class="field h-32" placeholder="Your words are inserted here…" autofocus bind:value={practice}></textarea>
+              {#if latency !== null}
+                <Alert variant="success" live title="It works">Text inserted {Math.round(latency)} ms after you let go.</Alert>
+              {:else if tryError}
+                <Alert variant="error" title="Couldn’t dictate">{sentence(tryError)}</Alert>
+              {/if}
+            </div>
+            <Alert title="Bolo lives in the tray">Click its icon for settings and history. Right-click it to pause.</Alert>
+          {/if}
         {/if}
       </div>
     {/key}
   </main>
 
-  <footer class="flex items-center gap-2 border-t border-border px-6 py-3.5">
-    {#if step > 0}<Button variant="ghost" onclick={() => go(step - 1)}><ArrowLeft aria-hidden="true" />Back</Button>{/if}
-    <span class="flex-1"></span>
-    {#if step === 0}
-      <Button variant="primary" onclick={() => go(1)}>Get started<ArrowRight aria-hidden="true" /></Button>
-    {:else if step === 1}
-      <Button variant={!!mic && !mic.late && mic.heard ? "primary" : "outline"} disabled={checking} onclick={() => go(2)}>
-        {mic && (mic.late || !mic.heard) ? "Continue anyway" : "Continue"}<ArrowRight aria-hidden="true" />
+  <footer class="flex-none border-t border-border">
+    <div class="mx-auto flex w-full max-w-3xl items-center gap-2 px-8 py-3.5">
+      {#if step > 0}<Button variant="ghost" onclick={() => go(step - 1)}><ArrowLeft aria-hidden="true" />Back</Button>{/if}
+      <span class="flex-1"></span>
+      {#if step === 2 && ready && !modelReady && !cloudReady}
+        <p class="pr-2 text-xs text-muted-foreground">Download the model or add a Deepgram API key to continue.</p>
+      {/if}
+      <Button variant="primary" disabled={blocked} loading={finishing} onclick={() => (step === STEPS - 1 ? finish() : go(step + 1))}>
+        {forward}<ArrowRight aria-hidden="true" />
       </Button>
-    {:else if step === 2}
-      <Button variant="primary" disabled={!modelReady && !cloudReady} onclick={() => go(3)}>Next<ArrowRight aria-hidden="true" /></Button>
-    {:else}
-      <Button variant="primary" onclick={finish}>Finish<Check aria-hidden="true" /></Button>
-    {/if}
+    </div>
   </footer>
 </div>

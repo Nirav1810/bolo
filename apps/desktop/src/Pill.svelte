@@ -9,7 +9,8 @@
   // back which one the mouse is over (the `hover` event).
   import { getVersion } from "@tauri-apps/api/app";
   import { invoke } from "@tauri-apps/api/core";
-  import { variant } from "./lib/api";
+  import { Check, CircleAlert, Mic, Sparkles, TriangleAlert, X } from "@lucide/svelte";
+  import { sentence, variant } from "./lib/api";
   import { onAppEvent, type AppEvent, type PillView } from "./lib/events";
   import { BARS, MAX, MIN, loudness, resting, step } from "./lib/waveform";
 
@@ -30,6 +31,7 @@
   let open = $state(false);
   /** Bolo Nightly's pill is violet, like its icon, so it's never taken for Bolo's. */
   let nightly = $state(false);
+  let product = $state("Bolo");
   let timer: ReturnType<typeof setTimeout> | undefined;
   const OPEN_AFTER = 180;
   const CLOSE_AFTER = 260;
@@ -116,7 +118,9 @@
   $effect(() => {
     const unlisten = onAppEvent(apply);
     getVersion()
-      .then((v) => (nightly = variant(v).nightly))
+      .then((v) => {
+        ({ nightly, product } = variant(v));
+      })
       .catch(() => {});
     // The view may have gone out before this page loaded (the idle button at startup).
     invoke<PillView>("pill_view").then((v) => {
@@ -162,7 +166,6 @@
     return () => ro.disconnect();
   });
 
-  const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
   /** The idle button at rest: a small bar with no content. */
   const bar = $derived(shown.state === "idle" && !open);
   /** What the content crossfades on. Idle's hint stays mounted and fades with `open`. */
@@ -181,17 +184,14 @@
       style:width
       bind:this={pillEl}
       role={shown.state === "error" ? "alert" : "status"}
-      aria-label={bar ? "Bolo is ready" : undefined}
+      aria-label={bar ? `${product} is ready` : undefined}
     >
       {#key contentKey}
         <div class="content" class:hint={shown.state === "idle"} bind:offsetWidth={contentWidth}>
           {#if shown.state === "idle"}
-            <svg class="ic" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <rect x="5.5" y="1.75" width="5" height="8" rx="2.5" stroke="currentColor" stroke-width="1.4" />
-              <path d="M3.25 7.75a4.75 4.75 0 0 0 9.5 0M8 12.5v1.75" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-            </svg>
-            <span class="say">Click or hold <kbd>{shown.key}</kbd> to dictate</span>
-            {#if nightly}<span class="tag">Nightly</span>{/if}
+            <Mic class="ic muted" size={14} aria-hidden="true" />
+            <span class="muted">Click or hold <kbd class="key">{shown.key}</kbd> to dictate</span>
+            {#if nightly}<span class="badge">Nightly</span>{/if}
           {:else if shown.state === "listening"}
             <span class="dot"></span>
             <span class="wave" aria-hidden="true">
@@ -203,55 +203,40 @@
               <span class="muted">Listening…</span>
             {/if}
             {#if shown.hands_free}
+              <!-- Not real buttons: the window is click-through and Rust's mouse hook
+                   presses them (data-hit) and reports hover (`hot`). -->
               <span class="buttons">
                 <span class="button" class:hot={hovered === "cancel"} data-hit="cancel" aria-label="Cancel">
-                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                    <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                  </svg>
+                  <X size={12} aria-hidden="true" />
                 </span>
                 <span class="button primary" class:hot={hovered === "stop"} data-hit="stop" aria-label="Stop and insert">
-                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                    <path d="M3.5 8.5l3 3 6-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
+                  <Check size={12} aria-hidden="true" />
                 </span>
               </span>
             {/if}
           {:else if shown.state === "transcribing"}
             <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="muted">Transcribing…</span>
           {:else if shown.state === "inserted"}
-            <svg class="ic" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path class="draw" pathLength="1" d="M3.5 8.5l3 3 6-7" stroke="var(--color-success-foreground)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+            <!-- Drawn by hand so the tick can draw itself in. -->
+            <svg class="ic success" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path class="draw" pathLength="1" d="M3.5 8.5l3 3 6-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
             <span>Inserted</span>
           {:else if shown.state === "polishing"}
-            <svg class="ic breathe" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M8 2l1.4 3.6L13 7l-3.6 1.4L8 12 6.6 8.4 3 7l3.6-1.4L8 2z" fill="var(--color-primary-text)" />
-            </svg>
+            <Sparkles class="ic primary breathe" size={14} aria-hidden="true" />
             <span class="muted">Polishing…</span>
           {:else if shown.state === "polished"}
-            <svg class="ic" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M8 2l1.4 3.6L13 7l-3.6 1.4L8 12 6.6 8.4 3 7l3.6-1.4L8 2z" fill="var(--color-primary-text)" />
-            </svg>
+            <Sparkles class="ic primary" size={14} aria-hidden="true" />
             <span>Polished</span>
           {:else if shown.state === "notice"}
-            <svg class="ic" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <rect x="4" y="3" width="8" height="10.5" rx="1.5" stroke="var(--color-warning-foreground)" stroke-width="1.4" />
-              <path d="M6.2 3V2.2h3.6V3" stroke="var(--color-warning-foreground)" stroke-width="1.4" stroke-linecap="round" />
-              <path d="M6.5 7h3M6.5 9.5h3" stroke="var(--color-warning-foreground)" stroke-width="1.4" stroke-linecap="round" />
-            </svg>
-            <span class="msg">{shown.message}</span>
-            {#if shown.hint}<kbd>{shown.hint}</kbd>{/if}
+            <TriangleAlert class="ic warning" size={14} aria-hidden="true" />
+            <span class="msg">{sentence(shown.message)}</span>
+            {#if shown.hint}<kbd class="key">{shown.hint}</kbd>{/if}
           {:else if shown.state === "error"}
-            <svg class="ic" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M8 2.2l6 10.6H2L8 2.2z" stroke="var(--color-destructive-foreground)" stroke-width="1.4" stroke-linejoin="round" />
-              <path d="M8 6.5v3" stroke="var(--color-destructive-foreground)" stroke-width="1.5" stroke-linecap="round" />
-              <circle cx="8" cy="11.2" r=".8" fill="var(--color-destructive-foreground)" />
-            </svg>
+            <CircleAlert class="ic error" size={14} aria-hidden="true" />
             <span class="msg">{sentence(shown.message)}</span>
           {:else if shown.state === "cancelled"}
-            <svg class="ic" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="var(--color-muted-foreground)" stroke-width="1.5" stroke-linecap="round" />
-            </svg>
+            <X class="ic muted" size={14} aria-hidden="true" />
             <span class="muted">Cancelled</span>
           {/if}
         </div>
@@ -261,7 +246,9 @@
 </div>
 
 <style>
-  /* The window is transparent and click-through; only the pill is drawn. */
+  /* The window is transparent and click-through; only the pill is drawn. Every colour,
+     size and duration here is a token from theme.css, so the pill speaks the windows'
+     language. */
   :global(html.pill-page),
   :global(html.pill-page body) {
     background: transparent;
@@ -271,8 +258,6 @@
 
   /* One curve for everything: fast start, long soft landing, no overshoot. */
   .stage {
-    --pill-ease: var(--ease-out-ui);
-    --pill-resize: 260ms;
     display: flex;
     align-items: flex-end;
     justify-content: center;
@@ -287,15 +272,15 @@
   .pw {
     transform-origin: 50% 100%;
     transition:
-      opacity var(--duration-base) var(--pill-ease),
-      transform 240ms var(--pill-ease);
+      opacity var(--duration-base) var(--ease-out-ui),
+      transform var(--duration-resize) var(--ease-out-ui);
   }
   .pw.out {
     opacity: 0;
     transform: translateY(6px) scale(0.97);
     transition:
-      opacity var(--duration-exit) var(--pill-ease),
-      transform var(--duration-exit) var(--pill-ease);
+      opacity var(--duration-exit) var(--ease-out-ui),
+      transform var(--duration-exit) var(--ease-out-ui);
   }
 
   .pill {
@@ -308,43 +293,36 @@
     box-sizing: border-box;
     overflow: hidden;
     border-radius: 999px;
-    background: var(--color-pill);
-    border: 1px solid var(--color-pill-border);
-    box-shadow: var(--shadow-pill);
-    color: var(--color-foreground);
+    background: var(--pill-bg);
+    border: 1px solid var(--pill-border);
+    box-shadow: var(--pill-shadow);
+    color: var(--foreground);
     font-family: var(--font-sans);
-    font-size: 13px;
-    line-height: 18px;
-    font-weight: 500;
-    letter-spacing: -0.005em;
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    font-weight: var(--weight-medium);
     white-space: nowrap;
     transition:
-      width var(--pill-resize) var(--pill-ease),
-      height var(--pill-resize) var(--pill-ease),
-      padding var(--pill-resize) var(--pill-ease),
-      border-color var(--duration-base) var(--pill-ease),
-      box-shadow var(--duration-base) var(--pill-ease);
+      width var(--duration-resize) var(--ease-out-ui),
+      height var(--duration-resize) var(--ease-out-ui),
+      padding var(--duration-resize) var(--ease-out-ui),
+      border-color var(--duration-base) var(--ease-out-ui),
+      box-shadow var(--duration-base) var(--ease-out-ui);
   }
 
   /* The idle button at rest: a slim, quiet capsule. */
   .pill.bar {
     height: 8px;
     padding: 0;
-    box-shadow: 0 1px 4px rgb(0 0 0 / 0.16);
+    box-shadow: var(--pill-bar-shadow);
   }
   /* Bolo Nightly: a violet edge in every state, and a violet bar at rest. */
   .pill.nightly {
-    border-color: color-mix(in srgb, var(--color-nightly) 45%, transparent);
+    border-color: var(--nightly-edge);
   }
   .pill.nightly.bar {
-    background: color-mix(in srgb, var(--color-nightly) 70%, var(--color-pill));
+    background: var(--nightly);
     border-color: transparent;
-  }
-  .tag {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--color-nightly-foreground);
-    flex: none;
   }
 
   /* Measured for the pill's width, so the width can animate. */
@@ -355,7 +333,7 @@
     gap: 8px;
     width: max-content;
     max-width: calc(min(var(--pill-max-width), 100vw - 40px) - 28px);
-    animation: content-in var(--duration-base) var(--pill-ease);
+    animation: content-in var(--duration-base) var(--ease-out-ui);
   }
   @keyframes content-in {
     from {
@@ -368,30 +346,51 @@
      once when it closes. */
   .content.hint {
     opacity: 0;
-    transition: opacity 100ms var(--pill-ease);
+    transition: opacity var(--duration-exit) var(--ease-out-ui);
     animation: none;
   }
   .open .content.hint {
     opacity: 1;
-    transition: opacity var(--duration-base) var(--pill-ease) 80ms;
+    transition: opacity var(--duration-base) var(--ease-out-ui) 80ms;
   }
-  .hint .ic {
-    color: var(--color-muted-foreground);
-  }
-  .say {
-    color: var(--color-muted-foreground);
-  }
-  kbd {
-    display: inline-block;
-    padding: 0 5px;
-    margin: 0 1px;
-    border-radius: 4px;
-    border: 1px solid var(--color-pill-border);
-    background: var(--color-pill-track);
-    color: var(--color-foreground);
+
+  /* A key, drawn as Kbd.svelte draws it. */
+  .key {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    height: 20px;
+    min-width: 20px;
+    padding: 0 6px;
+    margin: 0 2px;
+    vertical-align: baseline; /* its text sits on the same line as the label beside it */
+    border-radius: var(--radius-md);
+    border: 1px solid var(--input);
+    background: var(--control);
+    box-shadow: var(--elev-control), var(--bevel);
+    color: var(--foreground);
     font: inherit;
-    font-size: 11.5px;
-    line-height: 16px;
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+    font-weight: var(--weight-medium);
+    flex: none;
+  }
+
+  /* The Nightly marker, drawn as Badge's `nightly` variant. */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: var(--radius-md);
+    border: 1px solid transparent;
+    background: var(--nightly-tint);
+    color: var(--nightly-foreground);
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+    font-weight: var(--weight-medium);
     flex: none;
   }
 
@@ -409,22 +408,22 @@
     width: 24px;
     height: 24px;
     border-radius: 999px;
-    color: var(--color-muted-foreground);
-    background: var(--color-pill-track);
+    color: var(--muted-foreground);
+    background: var(--pill-track);
     transition:
-      background-color var(--duration-fast) var(--pill-ease),
-      color var(--duration-fast) var(--pill-ease);
+      background-color var(--duration-fast) var(--ease-out-ui),
+      color var(--duration-fast) var(--ease-out-ui);
   }
   .button.hot {
-    color: var(--color-foreground);
-    background: color-mix(in srgb, var(--color-foreground) 18%, transparent);
+    color: var(--foreground);
+    background: var(--pill-hot);
   }
   .button.primary {
-    color: var(--color-primary-foreground);
-    background: var(--color-primary);
+    color: var(--primary-foreground);
+    background: var(--primary);
   }
   .button.primary.hot {
-    background: color-mix(in oklch, var(--color-primary), white 14%);
+    background: var(--primary-hover);
   }
 
   /* The live dot swells a little with the voice. */
@@ -432,7 +431,7 @@
     width: 7px;
     height: 7px;
     border-radius: 999px;
-    background: var(--color-live);
+    background: var(--live);
     flex: none;
     transform: scale(calc(1 + var(--lvl) * 0.3));
   }
@@ -450,16 +449,17 @@
     width: 2.5px;
     height: 3px;
     border-radius: 999px;
-    background: var(--color-foreground);
+    background: var(--primary-text);
   }
 
-  /* One line; older words fade off the left edge, the newest stays in view. */
+  /* One line; older words fade off the left edge, the newest stays in view. The mask
+     reads only alpha, so any opaque colour does. */
   .tail {
     display: flex;
     justify-content: flex-end;
     overflow: hidden;
     min-width: 0;
-    mask-image: linear-gradient(to right, transparent, #000 28px);
+    mask-image: linear-gradient(to right, transparent, var(--foreground) 28px);
   }
   .tail span {
     white-space: nowrap;
@@ -471,19 +471,36 @@
     text-overflow: ellipsis;
   }
   .muted {
-    color: var(--color-muted-foreground);
+    color: var(--muted-foreground);
     flex: none;
   }
-  .ic {
+
+  /* State icons (lucide components, so their classes are global). */
+  .content :global(.ic) {
     flex: none;
     display: block;
+  }
+  .content :global(.ic.muted) {
+    color: var(--muted-foreground);
+  }
+  .content :global(.ic.primary) {
+    color: var(--primary-text);
+  }
+  .content :global(.ic.success) {
+    color: var(--success-foreground);
+  }
+  .content :global(.ic.warning) {
+    color: var(--warning-foreground);
+  }
+  .content :global(.ic.error) {
+    color: var(--destructive-foreground);
   }
 
   /* Inserted: the tick draws itself in. */
   .draw {
     stroke-dasharray: 1;
     stroke-dashoffset: 1;
-    animation: draw 260ms var(--pill-ease) 60ms forwards;
+    animation: draw var(--duration-resize) var(--ease-out-ui) 60ms forwards;
   }
   @keyframes draw {
     to {
@@ -501,7 +518,7 @@
     width: 4px;
     height: 4px;
     border-radius: 999px;
-    background: var(--color-muted-foreground);
+    background: var(--muted-foreground);
     animation: fade 1s var(--ease-in-out-ui) infinite;
   }
   .dots i:nth-child(2) {
@@ -520,7 +537,7 @@
     }
   }
 
-  .breathe {
+  .content :global(.breathe) {
     animation: breathe 1.4s var(--ease-in-out-ui) infinite;
   }
   @keyframes breathe {
@@ -545,7 +562,7 @@
       animation: none;
     }
     .dots i,
-    .breathe {
+    .content :global(.breathe) {
       animation: none;
     }
     .draw {
