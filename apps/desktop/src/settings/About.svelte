@@ -1,8 +1,9 @@
 <script lang="ts">
   import { ExternalLink, FolderOpen, RefreshCw, LoaderCircle, CircleCheck, ArrowUpCircle, CircleAlert } from "@lucide/svelte";
-  import { api, megabytes, type Form, type SettingsView, type UpdateView } from "../lib/api";
+  import { api, megabytes, variant, type Form, type SettingsView, type UpdateView } from "../lib/api";
   import Badge from "../lib/ui/Badge.svelte";
   import Button from "../lib/ui/Button.svelte";
+  import Segmented from "../lib/ui/Segmented.svelte";
   import SettingsRow from "../lib/ui/SettingsRow.svelte";
   import SettingsSection from "../lib/ui/SettingsSection.svelte";
   import Switch from "../lib/ui/Switch.svelte";
@@ -24,6 +25,12 @@
     status.state === "downloading" && status.total ? Math.round((status.downloaded / status.total) * 100) : null,
   );
   const product = $derived(updates?.product ?? "Bolo");
+  // One app, two channels (ADR-0019). Picking the other channel reinstalls Bolo from its
+  // feed, so the name, icon and features change together once it restarts.
+  const nightlyBuild = $derived(updates ? updates.variant === "nightly" : variant(view.version).nightly);
+  const switching = $derived((view.form.channel === "nightly") !== nightlyBuild);
+  const target = $derived(view.form.channel === "nightly" ? "Bolo Nightly" : "Bolo Beta");
+  const switched = $derived(status.state === "updated" && variant(status.from).nightly !== nightlyBuild);
 </script>
 
 <div class="flex items-center gap-4 rounded-xl border border-border/80 bg-card px-5 py-5 shadow-xs/5 dark:border-border">
@@ -45,10 +52,12 @@
 
 <SettingsSection title="Updates">
   <SettingsRow
-    title={status.state === "available"
+    title={status.state === "available" && status.switch
+      ? `${target} ${status.version} is ready`
+      : status.state === "available"
       ? `Version ${status.version} is available`
       : status.state === "downloading"
-        ? "Downloading the update…"
+        ? switching ? `Switching to ${target}…` : "Downloading the update…"
         : status.state === "installing"
           ? "Installing…"
           : status.state === "checking"
@@ -56,7 +65,9 @@
             : status.state === "up-to-date"
               ? `${product} is up to date`
               : status.state === "updated"
-                ? `Updated to version ${updates?.version ?? view.version}`
+                ? switched
+                  ? `Switched to ${product}`
+                  : `Updated to version ${updates?.version ?? view.version}`
               : status.state === "error" && status.manual
                 ? "Couldn’t check for updates"
                 : view.form.auto_update_check
@@ -82,7 +93,9 @@
       </div>
     {/snippet}
     {#snippet description()}
-      {#if status.state === "available"}
+      {#if status.state === "available" && status.switch}
+        Bolo reinstalls from that channel and restarts. Your settings, models and history stay.
+      {:else if status.state === "available"}
         Bolo restarts to finish. Your settings and history stay.
       {:else if status.state === "downloading"}
         {megabytes(status.downloaded)}{status.total ? ` of ${megabytes(status.total)}` : ""}
@@ -91,7 +104,7 @@
       {:else if status.state === "error" && status.manual}
         {status.message}
       {:else if status.state === "updated"}
-        {product} restarted after updating from {status.from}, and is ready: hold your key to dictate.
+        {product} restarted after {switched ? "switching" : "updating"} from {status.from}, and is ready: hold your key to dictate.
       {:else if view.form.auto_update_check}
         {product} checks when it starts and once a day.
       {:else}
@@ -100,7 +113,7 @@
     {/snippet}
     {#snippet control()}
       {#if status.state === "available"}
-        <Button variant="primary" onclick={() => api.installUpdate()}>Update now</Button>
+        <Button variant="primary" onclick={() => api.installUpdate()}>{status.switch ? "Switch now" : "Update now"}</Button>
       {:else}
         <Button variant="outline" disabled={busy} onclick={() => api.checkUpdate()}>
           <RefreshCw class={status.state === "checking" ? "animate-spin" : ""} aria-hidden="true" />
@@ -130,7 +143,7 @@
   <SettingsRow
     title="Check for updates automatically"
     labelFor="auto-update-check"
-    description="It never installs without your click. Bolo and Bolo Nightly share this switch."
+    description="It never installs without your click."
   >
     {#snippet control()}
       <Switch
@@ -140,39 +153,34 @@
       />
     {/snippet}
   </SettingsRow>
-  {#if updates}
-    <SettingsRow
-      title={updates.variant === "nightly" ? "Bolo Nightly gets a new build with every change" : "Try what’s next with Bolo Nightly"}
-      description={updates.variant === "nightly"
-        ? "Newest features, less tested. Install Bolo next to it for the release: they share your settings, models and history, and only the one you started last listens for the key."
-        : "A separate app with a violet icon, built from every change. It installs next to Bolo and shares your settings, models and history. Only the one you started last listens for the key."}
-    >
-      {#snippet control()}
-        <Button variant="ghost" size="sm" onclick={() => updates && api.openLink(updates.other.url)}>
-          Get {updates.other.product}
-          <ExternalLink aria-hidden="true" />
-        </Button>
-      {/snippet}
-    </SettingsRow>
-  {/if}
 </SettingsSection>
 
-<SettingsSection title="Bolo and Bolo Nightly">
-  {#each [["release_on", "Bolo", "The Beta: the releases."], ["nightly_on", "Bolo Nightly", "A new build with every change."]] as const as [field, name, what] (field)}
-    <SettingsRow
-      title="{name} is {view.form[field] ? 'on' : 'off'}"
-      labelFor="switch-{field}"
-      description="{what} Off, it stays in the tray but never listens for your key or shows the pill, even after a restart.{product === name ? ' This is the app you’re in.' : ''}"
-    >
-      {#snippet control()}
-        <Switch
-          id="switch-{field}"
-          checked={view.form[field]}
-          onchange={(on) => update((f) => (f[field] = on))}
-        />
-      {/snippet}
-    </SettingsRow>
-  {/each}
+<SettingsSection title="Channel">
+  <SettingsRow title="Update channel">
+    {#snippet description()}
+      {#if switching}
+        Switching to {target}: Bolo reinstalls from that channel and restarts in a few seconds.
+      {:else if nightlyBuild}
+        Nightly gets a build of every change, with a violet icon: newest features, less tested. Beta gets the
+        releases.
+      {:else}
+        Beta gets the releases. Nightly gets a build of every change, with a violet icon: newest features, less
+        tested.
+      {/if}
+      Switching keeps your settings, models and history.
+    {/snippet}
+    {#snippet control()}
+      <Segmented
+        label="Update channel"
+        value={view.form.channel}
+        options={[
+          ["beta", "Beta"],
+          ["nightly", "Nightly"],
+        ]}
+        onchange={(v) => update((f) => (f.channel = v as Form["channel"]))}
+      />
+    {/snippet}
+  </SettingsRow>
 </SettingsSection>
 
 <SettingsSection title="Files">

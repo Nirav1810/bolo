@@ -1,6 +1,18 @@
-# Self-update, and Bolo Nightly as a separate app next to Bolo
+# Self-update, and Beta and Nightly as channels of one app
 
 Amends ADR-0013's channel model. The one-product-version rule, the squash-merged trunk and the release script stay as they are.
+
+*Amended 2026-11-13 (one app, two channels):* Bolo Nightly is no longer a separate app. The user asked for T3 Code's model: one app with an **update channel** (Beta or Nightly) in Settings → About.
+- A nightly build is the same app as a release: same product name, identifier (`dev.bolo.desktop`) and install folder. `tauri.nightly.conf.json` now only swaps in the violet icons.
+- `[updates] channel` (`beta` or `nightly`) holds the pick; unpicked, Bolo follows the channel of the build that runs.
+- Picking the other channel checks that channel's feed and installs its newest build straight away, even when it is older (Nightly → Beta steps down in semver). Bolo restarts as that build, so the name ("Bolo" or "Bolo Nightly" in titles and the tray), icon, pill colour and features all change together. The branding always follows the build that runs, never the pick alone: a Beta exe with a violet icon would pass for a nightly.
+- On the build's own channel, updates still only go forward.
+- The step-aside events and the per-app on/off switches (`[variants]`) are gone with the second app. `[variants]` stays in the file for older builds; the merged app resets it to on, so switching to a Beta from before the merge doesn't start paused.
+- On launch, the merged app removes the old separate Bolo Nightly install, if there is one: it asks it to step aside, then runs its uninstaller quietly (`/S`). Tauri's uninstaller closes only the exe at its own path (Restart Manager), removes its shortcuts and start-with-Windows entry, and leaves the shared settings, models and history alone.
+- The old app's last update (to a merged nightly) installs over Bolo, since the installer goes by product name. The merged app also reads the old app's `updating-from-nightly.txt`, so that launch still opens About.
+- A Beta from before the merge (v0.5.1 and older) has no channel picker. Switching to Beta lands on it until the next release, which has the picker.
+
+The text below describes the two-app design this replaces, kept for the record.
 
 There are two **release channels**, and each ships as its own Windows app (like a browser's stable and canary builds):
 
@@ -31,7 +43,7 @@ The installers are signed with a Tauri updater key (minisign). The private key a
 
 ## Considered Options
 
-- **One app with a channel picker** (first version of this ADR): rejected. The user wanted to see at a glance which build runs. One install that changes its name and icon on update leaves Windows shortcuts and the uninstall entry behind the rename.
+- **One app with a channel picker** (first version of this ADR): rejected at first. The user wanted to see at a glance which build runs. One install that changes its name and icon on update leaves Windows shortcuts and the uninstall entry behind the rename. *Taken in the 2026-11-13 amendment:* the product name no longer changes, so the shortcuts and uninstall entry stay "Bolo". The build that runs still shows its channel through its icon, title and pill.
 - **Keep stable + beta (`-beta.N`) and add nightly**: rejected. Three channels for a pre-1.0 app with one maintainer is more to cut and explain. "Beta until 1.0" carries the same meaning.
 - **Hand-cut alpha tags instead of nightly**: rejected. Every merge already passes CI, and an automatic build is what the UI work needs for fast try-it-yourself loops.
 - **Separate settings per app**: rejected. Trying a nightly shouldn't mean setting Bolo up again. The settings file is versioned and keeps unknown keys, so the two apps can share it across versions.

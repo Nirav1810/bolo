@@ -1,14 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Bolo Nightly",
-  "identifier": "dev.bolo.desktop.nightly",
-  "plugins": {
-    "updater": {
-      "endpoints": ["https://github.com/Nirav1810/bolo/releases/download/nightly/latest.json"]
-    }
-  },
   "bundle": {
-    "shortDescription": "Bolo Nightly: a build of every change, installed next to Bolo",
+    "shortDescription": "Bolo on the Nightly channel: a build of every change",
     "icon": ["icons-nightly/32x32.png", "icons-nightly/128x128.png", "icons-nightly/icon.ico"]
   }
 }

@@ -3,8 +3,9 @@
 ; Bolo keeps its files outside Tauri's own app-data folders, so the uninstaller handles
 ; them here. None of this runs when the uninstaller runs as part of an update.
 ;
-; Bolo Nightly (tauri.nightly.conf.json, ADR-0019) installs next to Bolo and shares these
-; folders with it, so its uninstaller leaves them alone and removes only its own autostart.
+; Nightly builds are the same app (ADR-0019, amended), so this covers them too. The check
+; on PRODUCTNAME stays for the old separate "Bolo Nightly" app, whose uninstaller must
+; leave these shared folders alone.
 ;   %LOCALAPPDATA%\Bolo   speech models, dictation history, logs: asked about (No when silent)
 ;   %APPDATA%\Bolo        settings, and the API keys in Credential Manager: removed only
 ;                         when "Delete the application data" is ticked

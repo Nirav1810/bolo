@@ -13,8 +13,8 @@
 //! - [`form`] is what the settings window edits, [`models`] the local models and their
 //!   downloads, [`keys`] the API key check, [`mic`] onboarding's mic check; [`commands`]
 //!   are the windows' calls.
-//! - [`variant`] says whether this is Bolo or Bolo Nightly, and [`updates`] keeps it up
-//!   to date from its own feed (ADR-0019).
+//! - [`variant`] says which channel built this Bolo (Beta or Nightly), and [`updates`]
+//!   keeps it up to date from the channel picked in About (ADR-0019).
 //!
 //! The app lives in the tray, runs as a single instance and keeps running when its
 //! windows close. Holding the push-to-talk key (Caps Lock by default, ADR-0017) dictates;
@@ -162,9 +162,6 @@ struct Bolo {
     hook_thread: Arc<AtomicU32>,
     /// The settings window let go of the hook to capture a new key ([`commands::ptt_capture`]).
     capturing: AtomicBool,
-    /// This app is turned on in settings (`[variants]`), as last applied. Off, it stays
-    /// paused: no hook, no pill, no model, until it is turned on again.
-    on: AtomicBool,
     /// The self-updater's state (ADR-0019).
     updates: Arc<Updates>,
 }
@@ -342,11 +339,6 @@ impl Bolo {
             return;
         }
         let key = *lock(&self.push_to_talk);
-        // Bolo and Bolo Nightly never both hold the key: the other one pauses.
-        let other = Variant::current().other();
-        if variant::ask_to_step_aside(other) {
-            tracing::info!(other = other.product_name(), "asked the other Bolo to pause");
-        }
         match KeyHook::install(key, self.flags.clone(), PushToTalk(app.clone())) {
             Ok(h) => {
                 tracing::info!(?key, "push-to-talk on");
@@ -375,54 +367,24 @@ impl Bolo {
         drop(lock(&self.engine).take());
     }
 
-    /// This app's on/off switch is now `on`: pause it for good, or resume it. Nothing
-    /// happens unless the switch itself changed, so a pause from the tray stays.
-    fn apply_switch(&self, app: &AppHandle, on: bool) {
-        if self.on.swap(on, Ordering::AcqRel) == on {
-            return;
-        }
-        tracing::info!(on, "turned {} in settings", if on { "on" } else { "off" });
-        let paused = lock(&self.session).paused();
-        if on == paused {
-            self.set_paused(!on, app);
-        }
+    /// The channel Bolo follows: picked in About, else this build's own.
+    fn channel(&self) -> Variant {
+        Variant::followed(lock(&self.settings).updates.channel)
     }
 
-    /// The other app changed the on/off switches: read them from the file again.
-    fn reload_switches(&self, app: &AppHandle) {
-        let variants = match Settings::default_path().and_then(|p| Settings::load(&p)) {
-            Ok(loaded) => loaded.settings.variants,
-            Err(e) => {
-                tracing::warn!(%e, "could not read the switches the other Bolo changed");
-                return;
-            }
-        };
-        let on = Variant::current().is_on(&variants);
-        lock(&self.settings).variants = variants;
-        self.apply_switch(app, on);
-    }
-
-    /// The other Bolo started or resumed: pause, and say why.
-    fn step_aside(&self, app: &AppHandle) {
-        if lock(&self.session).paused() {
-            return;
-        }
-        let other = Variant::current().other().product_name();
-        tracing::info!(other, "pausing: the other Bolo took push-to-talk");
-        self.set_paused(true, app);
-        self.emit.emit(AppEvent::Notice {
-            message: format!("Paused while {other} runs"),
-            hint: Some("Resume from the tray".into()),
-        });
-    }
-
-    /// Look for an update on a thread of its own.
-    fn check_for_update(&self, app: &AppHandle, manual: bool) {
+    /// Look for an update on the followed channel, on a thread of its own. With
+    /// `then_install` (the user just picked another channel in About), install what it
+    /// finds straight away: that is the switch.
+    fn check_for_update(&self, app: &AppHandle, manual: bool, then_install: bool) {
         let app = app.clone();
         let spawned = std::thread::Builder::new().name("bolo-update-check".into()).spawn(move || {
             let exit_app = app.clone();
             let before_exit: updates::BeforeExit = Arc::new(move || exit_app.state::<Bolo>().shut_down());
-            updates::check(&app, &app.state::<Bolo>().updates, manual, before_exit);
+            let bolo = app.state::<Bolo>();
+            updates::check(&app, &bolo.updates, bolo.channel(), manual, before_exit);
+            if then_install && bolo.updates.status().available().is_some() {
+                updates::install(&app, &bolo.updates);
+            }
         });
         if let Err(e) = spawned {
             tracing::warn!(%e, "could not start an update check");
@@ -441,21 +403,6 @@ impl Bolo {
     }
 
     fn toggle_paused(&self, app: &AppHandle) {
-        // Turned off in settings: Resume turns it back on, so it stays on after a restart.
-        if !self.on.load(Ordering::Acquire) {
-            let turned_on = self.change_settings(app, |s| {
-                let mut s = s.clone();
-                match Variant::current() {
-                    Variant::Release => s.variants.release = true,
-                    Variant::Nightly => s.variants.nightly = true,
-                }
-                s
-            });
-            if let Err(e) = turned_on {
-                tracing::warn!(%e, "could not turn Bolo on");
-            }
-            return;
-        }
         let paused = lock(&self.session).paused();
         self.set_paused(!paused, app);
     }
@@ -527,9 +474,11 @@ impl Bolo {
             self.retention_days.store(settings.history.retention_days, Ordering::Relaxed);
             self.journal.with_history(|h| prune(h, settings.history.retention_days));
         }
-        if changes.variants {
-            self.apply_switch(app, Variant::current().is_on(&settings.variants));
-            variant::ask_to_reload(Variant::current().other());
+        if changes.channel {
+            // Picked in About: switch now to that channel's build, or back to this one's.
+            let channel = Variant::followed(settings.updates.channel);
+            tracing::info!(?channel, "update channel changed");
+            self.check_for_update(app, true, true);
         }
         if changes.warm {
             self.warm(settings);
@@ -872,7 +821,6 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         hook: Mutex::new(None),
         hook_thread,
         capturing: AtomicBool::new(false),
-        on: AtomicBool::new(Variant::current().is_on(&settings.variants)),
         updates,
     };
     if let Err(e) = bolo.engine() {
@@ -888,34 +836,35 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
         return Ok(());
     }
+    // Bolo Nightly is a channel of this app now, not an app of its own: remove the old
+    // separate install, which asks it to let go of the key first.
+    variant::retire_old_nightly();
     let bolo = app.state::<Bolo>();
-    if bolo.on.load(Ordering::Acquire) {
-        bolo.install_hook(app.handle());
-        // After the hook, which may ask the other Bolo to pause (and so free its model).
-        let settings = lock(&bolo.settings).clone();
-        bolo.warm(&settings);
-    } else {
-        // Turned off in settings: stay paused, and leave the key to the other Bolo.
-        tracing::info!("turned off in settings; staying paused");
-        bolo.set_paused(true, app.handle());
+    // The per-app on/off switches went with the separate app. Turn both back on, so a
+    // switch to a Beta from before the merge doesn't start paused.
+    if lock(&bolo.settings).variants != bolo_store::VariantSettings::default() {
+        let reset = bolo.change_settings(app.handle(), |s| Settings { variants: Default::default(), ..s.clone() });
+        if let Err(e) = reset {
+            tracing::warn!(%e, "could not reset the old on/off switches");
+        }
     }
+    bolo.install_hook(app.handle());
+    let settings = lock(&bolo.settings).clone();
+    bolo.warm(&settings);
     keep_checking_for_updates(app.handle().clone());
-    let handle = app.handle().clone();
-    if let Err(e) = variant::listen_for_step_aside(Variant::current(), move || {
-        handle.state::<Bolo>().step_aside(&handle);
-    }) {
-        tracing::warn!(%e, "could not listen for the other Bolo");
-    }
-    let handle = app.handle().clone();
-    if let Err(e) = variant::listen_for_reload(Variant::current(), move || {
-        handle.state::<Bolo>().reload_switches(&handle);
-    }) {
-        tracing::warn!(%e, "could not listen for the other Bolo's switches");
-    }
+    // The update before this launch: this app's, or the separate Bolo Nightly's last one,
+    // which installed this app.
+    let updated_from = [updates::marker_path(), updates::old_nightly_marker_path()]
+        .into_iter()
+        .flatten()
+        .filter_map(|m| updates::take_updated(&m, variant::VERSION))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .next();
     // First run (or onboarding left unfinished): open it.
     if onboarding {
         show_window(app.handle(), "onboarding");
-    } else if let Some(from) = updates::marker_path().and_then(|m| updates::take_updated(&m, variant::VERSION)) {
+    } else if let Some(from) = updated_from {
         // The restart after an update: the installer starts Bolo hidden in the tray, which
         // looks as if it never came back. Show About, which says what changed.
         tracing::info!(%from, "updated");
@@ -1054,7 +1003,7 @@ fn keep_checking_for_updates(app: AppHandle) {
             let on = lock(&bolo.settings).updates.auto_check;
             if updates::check_due(on, last.map(|at| at.elapsed())) {
                 last = Some(Instant::now());
-                bolo.check_for_update(&app, false);
+                bolo.check_for_update(&app, false, false);
             }
             std::thread::sleep(updates::SCHEDULE_TICK);
         }

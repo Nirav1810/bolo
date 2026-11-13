@@ -410,13 +410,13 @@ pub fn onboarding_save(app: AppHandle, bolo: State<'_, Bolo>, step: Option<u32>)
 /// The About page's update section (ADR-0019).
 #[tauri::command]
 pub fn update_view(bolo: State<'_, Bolo>) -> updates::View {
-    updates::View::now(bolo.updates.status())
+    updates::View::now(bolo.updates.status(), bolo.channel())
 }
 
 /// Check now; the result arrives as an `update` event.
 #[tauri::command]
 pub fn update_check(app: AppHandle, bolo: State<'_, Bolo>) {
-    bolo.check_for_update(&app, true);
+    bolo.check_for_update(&app, true, false);
 }
 
 /// Download and install the available update; Bolo restarts.

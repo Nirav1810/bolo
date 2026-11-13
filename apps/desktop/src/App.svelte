@@ -21,7 +21,7 @@
     return () => removeEventListener("hashchange", onHash);
   });
 
-  // "Bolo Nightly Settings" for the nightly app, so it is never taken for Bolo.
+  // "Bolo Nightly Settings" on a Nightly-channel build, so it is never taken for a release.
   let product = $state("Bolo");
   $effect(() => {
     api
