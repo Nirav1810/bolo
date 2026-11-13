@@ -3,7 +3,7 @@
   // in the footer) and one centred column of setting sections. Every change is saved
   // and applied at once by Rust (src-tauri/src/commands.rs); there is no Save button.
   import { AppWindow, ArrowUpCircle, AudioLines, BookA, Gauge, History as HistoryIcon, Info, SlidersHorizontal, Sparkles } from "@lucide/svelte";
-  import { api, sentence, type Form, type SettingsView, type UpdateView } from "../lib/api";
+  import { api, sentence, variant, type Form, type SettingsView, type UpdateView } from "../lib/api";
   import { onAppEvent } from "../lib/events";
   import { PAGES, PAGE_IDS, type Page } from "../lib/pages";
   import Alert from "../lib/ui/Alert.svelte";
@@ -96,7 +96,15 @@
   });
 
   const page = $derived((PAGE_IDS as string[]).includes(tab) ? (tab as Page) : "general");
-  const available = $derived(updates?.status.state === "available" ? updates.status.version : null);
+  /** The sidebar's notice when an update waits: a channel switch names the channel, and a
+   *  Nightly version is too long to read there, so it gets no number. */
+  const notice = $derived.by(() => {
+    const s = updates?.status;
+    if (s?.state !== "available") return null;
+    const nightly = variant(s.version).nightly;
+    if (s.switch) return `Switch to ${nightly ? "Bolo Nightly" : "Bolo Beta"}`;
+    return nightly ? "Update available" : `Update to ${s.version}`;
+  });
 
   /** Up, Down, Home and End move through the nav, as in a list. */
   function onNavKey(e: KeyboardEvent) {
@@ -130,8 +138,8 @@
     </nav>
 
     <div class="flex flex-col gap-1 p-2">
-      {#if available}
-        <NavItem icon={ArrowUpCircle} label="Update to {available}" notice onclick={() => (tab = "about")} />
+      {#if notice}
+        <NavItem icon={ArrowUpCircle} label={notice} notice onclick={() => (tab = "about")} />
       {/if}
       {#if view}
         <p class="truncate px-2.5 py-1 text-xs text-sidebar-muted-foreground tabular-nums">Version {view.version}</p>

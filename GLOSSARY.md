@@ -75,9 +75,9 @@ The single version number shared by the Windows app, the Android app and the cor
 _Avoid_: App version, build number (Android's versionCode is derived from it)
 
 **Release channel**:
-Which builds an install receives (ADR-0019): **Bolo**, the `vX.Y.Z` releases (tagged Beta until 1.0), or **Bolo Nightly**, built from every push to `main` and versioned like `0.4.0-nightly.20261111.7`. Each channel is its own app; they install side by side.
+Which builds an install receives (ADR-0019): **Beta**, the `vX.Y.Z` releases (tagged Beta until 1.0), or **Nightly**, built from every push to `main` and versioned like `0.4.0-nightly.20261111.7`. One app, one install: the channel is picked in Settings → About, and switching reinstalls Bolo from that channel's feed.
 _Avoid_: Track (Play Store term), ring, alpha
 
 **Bolo Nightly**:
-The separate Windows app built from `main` (violet icon, own install folder), published to the rolling `nightly` GitHub prerelease. It shares settings, models and history with Bolo; its version is never committed.
+Bolo while it runs a Nightly-channel build (violet icon, "Bolo Nightly" in titles and the tray), published to the rolling `nightly` GitHub prerelease; its version is never committed. Until v0.5.1 it was a separate app installed next to Bolo; the merged app removes that old install.
 _Avoid_: Dev build, alpha, canary

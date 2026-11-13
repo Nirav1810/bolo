@@ -9,7 +9,8 @@
 
   SignPath Foundation requires metadata restrictions: the installer's ProductName and
   ProductVersion (which Tauri's NSIS template sets to productName and the app version) must
-  match the parameters each workflow passes, "Bolo" or "Bolo Nightly" and the build's version.
+  match the parameters each workflow passes: "Bolo" (a nightly is the same app) and the
+  build's version.
 
   The app exe inside the installer (bolo-desktop.exe) is not signed: SignPath can't open
   NSIS installers to deep-sign their contents, and SmartScreen judges the downloaded file.

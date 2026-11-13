@@ -1,6 +1,8 @@
-//! Self-update (ADR-0019). Each app follows its own feed: Bolo the releases, Bolo Nightly
-//! the nightlies ([`crate::variant`]). [`check`] and [`install`] run
-//! `tauri-plugin-updater`; the state above them is pure and tested.
+//! Self-update (ADR-0019). Bolo follows the channel picked in About (else its build's
+//! own, [`crate::variant`]): the releases or the nightlies. Picking the other channel
+//! makes the next check offer that channel's newest build, older or not, and installing
+//! it switches the app. [`check`] and [`install`] run `tauri-plugin-updater`; the state
+//! above them is pure and tested.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -35,6 +37,13 @@ pub fn is_newer(current: &Version, offered: &Version) -> bool {
     offered > current
 }
 
+/// Whether to offer `offered` from the followed channel's feed. On the build's own
+/// channel, only a newer one. After a switch, the other channel's build whatever its
+/// version: going from a nightly back to the release is a step down in semver.
+pub fn accepts(current: &Version, offered: &Version, switching: bool) -> bool {
+    if switching { offered != current } else { is_newer(current, offered) }
+}
+
 /// Where the updater is, for the settings window and the tray.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "kebab-case")]
@@ -46,6 +55,8 @@ pub enum Status {
     Available {
         version: String,
         notes: Option<String>,
+        /// It comes from the other channel: installing it switches Bolo.
+        switch: bool,
     },
     /// `total` is `None` when the server didn't say.
     Downloading {
@@ -84,28 +95,23 @@ impl Status {
 pub struct View {
     pub version: String,
     pub product: &'static str,
+    /// The running build's channel.
     pub variant: Variant,
     pub badge: Option<&'static str>,
-    /// The other app, to install next to this one.
-    pub other: Other,
+    /// The channel Bolo follows: picked in About, else the build's own.
+    pub channel: Variant,
     pub status: Status,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct Other {
-    pub product: &'static str,
-    pub url: String,
-}
-
 impl View {
-    pub fn now(status: Status) -> Self {
+    pub fn now(status: Status, channel: Variant) -> Self {
         let variant = Variant::current();
         Self {
             version: variant::VERSION.into(),
             product: variant.product_name(),
             variant,
             badge: variant::badge(variant::VERSION),
-            other: Other { product: variant.other().product_name(), url: variant.other().download_page() },
+            channel,
             status,
         }
     }
@@ -114,13 +120,18 @@ impl View {
 /// Where [`install`] notes the version it is updating from, just before the installer
 /// runs. The installer starts the new Bolo hidden in the tray like any launch, so the new
 /// Bolo reads this ([`take_updated`]) to know it should open its window and say so.
-/// One per app, since Bolo and Bolo Nightly share the data folder.
 pub fn marker_path() -> Option<PathBuf> {
-    let name = match Variant::current() {
-        Variant::Release => "updating-from.txt",
-        Variant::Nightly => "updating-from-nightly.txt",
-    };
-    bolo_models::default_models_root().and_then(|m| m.parent().map(|d| d.join(name)))
+    data_dir().map(|d| d.join("updating-from.txt"))
+}
+
+/// The marker the separate Bolo Nightly app wrote, back when there was one: its last
+/// update is the one that brought it into this app.
+pub fn old_nightly_marker_path() -> Option<PathBuf> {
+    data_dir().map(|d| d.join("updating-from-nightly.txt"))
+}
+
+fn data_dir() -> Option<PathBuf> {
+    bolo_models::default_models_root().and_then(|m| m.parent().map(Path::to_path_buf))
 }
 
 /// Note that this app, at version `from`, is about to be replaced.
@@ -148,7 +159,7 @@ type OnAvailable = Box<dyn Fn(Option<&str>) + Send + Sync>;
 pub struct Updates {
     status: Mutex<Status>,
     /// The update the last check found, ready to install.
-    pending: Mutex<Option<tauri_plugin_updater::Update>>,
+    pending: Mutex<Option<(tauri_plugin_updater::Update, Variant)>>,
     emit: Arc<dyn Emit>,
     /// The version the last check offered, for the tray.
     offered: Mutex<Option<String>>,
@@ -209,15 +220,16 @@ impl Updates {
 /// let go of the keyboard and the mic.
 pub type BeforeExit = Arc<dyn Fn() + Send + Sync>;
 
-/// Check this app's feed now. Blocking; run it off the main thread. A failed background
+/// Check `channel`'s feed now. Blocking; run it off the main thread. A failed background
 /// check is logged only; a `manual` one is shown.
-pub fn check(app: &AppHandle, updates: &Updates, manual: bool, before_exit: BeforeExit) {
+pub fn check(app: &AppHandle, updates: &Updates, channel: Variant, manual: bool, before_exit: BeforeExit) {
     use tauri_plugin_updater::UpdaterExt;
 
     if !updates.begin_check() {
         return;
     }
-    let variant = Variant::current();
+    let switching = channel != Variant::current();
+    let variant = channel;
     let url = variant.feed();
     let found = tauri::async_runtime::block_on(async {
         let endpoint = url.parse().map_err(|e| format!("bad feed URL {url}: {e}"))?;
@@ -225,7 +237,7 @@ pub fn check(app: &AppHandle, updates: &Updates, manual: bool, before_exit: Befo
             .updater_builder()
             .endpoints(vec![endpoint])
             .map_err(|e| e.to_string())?
-            .version_comparator(|current, remote| is_newer(&current, &remote.version))
+            .version_comparator(move |current, remote| accepts(&current, &remote.version, switching))
             .on_before_exit(move || before_exit())
             .build()
             .map_err(|e| e.to_string())?;
@@ -234,9 +246,10 @@ pub fn check(app: &AppHandle, updates: &Updates, manual: bool, before_exit: Befo
     match found {
         Ok(Some(update)) => {
             tracing::info!(version = %update.version, ?variant, "update available");
-            let status = Status::Available { version: update.version.clone(), notes: update.body.clone() };
+            let status =
+                Status::Available { version: update.version.clone(), notes: update.body.clone(), switch: switching };
             updates.offer(Some(&update.version));
-            *lock(&updates.pending) = Some(update);
+            *lock(&updates.pending) = Some((update, channel));
             updates.set(status);
         }
         Ok(None) => {
@@ -247,13 +260,25 @@ pub fn check(app: &AppHandle, updates: &Updates, manual: bool, before_exit: Befo
         }
         Err(message) => {
             tracing::warn!(%message, ?variant, manual, "update check failed");
-            // A quiet re-check that fails keeps the update the last one found.
-            let pending = lock(&updates.pending)
-                .as_ref()
-                .map(|u| Status::Available { version: u.version.clone(), notes: u.body.clone() });
-            match pending {
+            // A quiet re-check that fails keeps the update the last one found, if it is
+            // from this channel; one from the channel left behind is dropped.
+            let mut pending = lock(&updates.pending);
+            if pending.as_ref().is_some_and(|(_, from)| *from != channel) {
+                *pending = None;
+            }
+            let kept = pending.as_ref().map(|(u, _)| Status::Available {
+                version: u.version.clone(),
+                notes: u.body.clone(),
+                switch: switching,
+            });
+            drop(pending);
+            match kept {
                 Some(available) if !manual => updates.set(available),
-                _ => updates.set(Status::Error { message, manual }),
+                Some(_) => updates.set(Status::Error { message, manual }),
+                None => {
+                    updates.offer(None);
+                    updates.set(Status::Error { message, manual });
+                }
             }
         }
     }
@@ -263,7 +288,7 @@ pub fn check(app: &AppHandle, updates: &Updates, manual: bool, before_exit: Befo
 /// (the installer relaunches it, and the new Bolo opens About: [`take_updated`]).
 /// Blocking; run it off the main thread.
 pub fn install(app: &AppHandle, updates: &Updates) {
-    let Some(update) = lock(&updates.pending).clone() else { return };
+    let Some((update, _)) = lock(&updates.pending).clone() else { return };
     tracing::info!(version = %update.version, "installing update");
     let mut downloaded = 0u64;
     let mut shown = 0u64;
@@ -302,11 +327,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_about_view_names_this_app_and_the_other() {
-        let view = View::now(Status::Idle);
+    fn the_about_view_names_this_build_and_the_followed_channel() {
+        let view = View::now(Status::Idle, Variant::Nightly);
         assert_eq!(view.version, variant::VERSION);
-        assert_ne!(view.product, view.other.product);
-        assert!(view.other.url.starts_with("https://github.com/Nirav1810/bolo/releases/"));
+        assert_eq!(view.variant, Variant::current());
+        assert_eq!(view.channel, Variant::Nightly);
+        let json = serde_json::to_value(&view).unwrap();
+        assert_eq!(json["channel"], "nightly");
     }
 
     const HOUR: Duration = Duration::from_secs(60 * 60);
@@ -365,6 +392,18 @@ mod tests {
     }
 
     #[test]
+    fn switching_channels_takes_the_other_build_even_when_older() {
+        let v = |s: &str| Version::parse(s).unwrap();
+        // Nightly back to Beta: 0.5.1 is below 0.6.0-nightly.*, but it's the switch.
+        assert!(accepts(&v("0.6.0-nightly.20261113.4"), &v("0.5.1"), true));
+        assert!(!accepts(&v("0.6.0-nightly.20261113.4"), &v("0.5.1"), false));
+        // Beta to Nightly: newer anyway.
+        assert!(accepts(&v("0.5.1"), &v("0.6.0-nightly.20261113.4"), true));
+        // Never the build that runs.
+        assert!(!accepts(&v("0.5.1"), &v("0.5.1"), true));
+    }
+
+    #[test]
     fn a_launch_after_an_update_knows_the_old_version_once() {
         let dir = tempfile::tempdir().unwrap();
         let marker = dir.path().join("updating-from.txt");
@@ -395,7 +434,7 @@ mod tests {
         assert!(updates.begin_check());
         assert!(!updates.begin_check(), "one check at a time");
         updates.offer(Some("0.4.1"));
-        updates.set(Status::Available { version: "0.4.1".into(), notes: None });
+        updates.set(Status::Available { version: "0.4.1".into(), notes: None, switch: false });
         updates.offer(Some("0.4.1"));
         updates.set(Status::Downloading { downloaded: 10, total: Some(100) });
         assert!(!updates.begin_check(), "no check while downloading");

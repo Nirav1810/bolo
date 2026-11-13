@@ -5,7 +5,6 @@
     CircleArrowUp,
     CircleCheck,
     ExternalLink,
-    FlaskConical,
     FolderClock,
     FolderCog,
     FolderDown,
@@ -20,6 +19,7 @@
   import Card from "../lib/ui/Card.svelte";
   import IconTile from "../lib/ui/IconTile.svelte";
   import Progress from "../lib/ui/Progress.svelte";
+  import Segmented from "../lib/ui/Segmented.svelte";
   import SettingsRow from "../lib/ui/SettingsRow.svelte";
   import SettingsSection from "../lib/ui/SettingsSection.svelte";
   import Switch from "../lib/ui/Switch.svelte";
@@ -41,6 +41,12 @@
   /** This installed app's name, known from its version before the updater has answered. */
   const product = $derived(updates?.product ?? variant(view.version).product);
   const failed = $derived(status.state === "error" && status.manual);
+  // One app, two channels (ADR-0019). Picking the other channel reinstalls Bolo from its
+  // feed, so the name, icon and features change together once it restarts.
+  const nightlyBuild = $derived(updates ? updates.variant === "nightly" : variant(view.version).nightly);
+  const switching = $derived((view.form.channel === "nightly") !== nightlyBuild);
+  const target = $derived(view.form.channel === "nightly" ? "Bolo Nightly" : "Bolo Beta");
+  const switched = $derived(status.state === "updated" && variant(status.from).nightly !== nightlyBuild);
 
   type Tone = "neutral" | "primary" | "success" | "warning" | "error";
   /** The status row's tile: its icon and tone follow the updater's state. */
@@ -55,9 +61,13 @@
 
   const title = $derived(
     status.state === "available"
-      ? `Version ${status.version} is available`
+      ? status.switch
+        ? `${target} ${status.version} is ready`
+        : `Version ${status.version} is available`
       : status.state === "downloading"
-        ? "Downloading the update…"
+        ? switching
+          ? `Switching to ${target}…`
+          : "Downloading the update…"
         : status.state === "installing"
           ? "Installing…"
           : status.state === "checking"
@@ -65,24 +75,37 @@
             : status.state === "up-to-date"
               ? `${product} is up to date`
               : status.state === "updated"
-                ? `Updated to version ${version}`
+                ? switched
+                  ? `Switched to ${product}`
+                  : `Updated to version ${version}`
                 : failed
                   ? "Couldn’t check for updates"
                   : "No update check yet",
   );
 
   const description = $derived(
-    status.state === "available" || status.state === "downloading"
-      ? `${product} restarts to finish. Your settings and history stay.`
-      : status.state === "installing"
-        ? `${product} restarts in a few seconds.`
-        : status.state === "updated"
-          ? `${product} restarted after updating from ${status.from}, and is ready: hold ${keyLabel(view.form.push_to_talk)} to dictate.`
-          : failed
-            ? undefined
-            : view.form.auto_update_check
-              ? `${product} checks for updates when it starts and once a day.`
-              : "Automatic update checks are off. Check now to look for an update.",
+    (status.state === "available" && status.switch) || (status.state === "downloading" && switching)
+      ? "Bolo reinstalls from that channel and restarts. Your settings, models and history stay."
+      : status.state === "available" || status.state === "downloading"
+        ? `${product} restarts to finish. Your settings and history stay.`
+        : status.state === "installing"
+          ? `${product} restarts in a few seconds.`
+          : status.state === "updated"
+            ? `${product} restarted after ${switched ? "switching" : "updating"} from ${status.from}, and is ready: hold ${keyLabel(view.form.push_to_talk)} to dictate.`
+            : failed
+              ? undefined
+              : view.form.auto_update_check
+                ? `${product} checks for updates when it starts and once a day.`
+                : "Automatic update checks are off. Check now to look for an update.",
+  );
+
+  const channelNote = $derived(
+    (switching
+      ? `Switching to ${target}: Bolo reinstalls from that channel and restarts in a few seconds.`
+      : nightlyBuild
+        ? "Nightly gets a build of every change, with a violet icon: newest features, less tested. Beta gets the releases."
+        : "Beta gets the releases. Nightly gets a build of every change, with a violet icon: newest features, less tested.") +
+      " Switching keeps your settings, models and history.",
   );
 
   const files = $derived([
@@ -90,11 +113,6 @@
     { which: "models", title: "Models", detail: view.paths.models, icon: FolderDown },
     { which: "logs", title: "Logs", detail: "For a bug report.", icon: FolderClock },
   ] as const);
-
-  const SWITCHES = [
-    ["release_on", "Bolo", "Tested releases."],
-    ["nightly_on", "Bolo Nightly", "A new build with every change."],
-  ] as const;
 </script>
 
 <Card>
@@ -121,7 +139,7 @@
     {#snippet leading()}<IconTile icon={tile.icon} tone={tile.tone} spin={tile.spin} />{/snippet}
     {#snippet control()}
       {#if status.state === "available"}
-        <Button variant="primary" size="sm" onclick={() => api.installUpdate()}>Update now</Button>
+        <Button variant="primary" size="sm" onclick={() => api.installUpdate()}>{status.switch ? "Switch now" : "Update now"}</Button>
       {:else}
         <Button variant="outline" size="sm" loading={status.state === "checking"} disabled={busy} onclick={() => api.checkUpdate()}>
           <RefreshCw aria-hidden="true" />Check now
@@ -145,44 +163,29 @@
   <SettingsRow
     title="Check for updates automatically"
     labelFor="auto-update-check"
-    description="It never installs without your click. Bolo and Bolo Nightly share this switch."
+    description="It never installs without your click."
   >
     {#snippet leading()}<IconTile icon={CalendarClock} />{/snippet}
     {#snippet control()}
       <Switch id="auto-update-check" checked={view.form.auto_update_check} onchange={(on) => update((f) => (f.auto_update_check = on))} />
     {/snippet}
   </SettingsRow>
-  {#if updates}
-    <SettingsRow
-      title={updates.variant === "nightly" ? "Bolo Nightly gets a new build with every change" : "Try what’s next with Bolo Nightly"}
-      description={updates.variant === "nightly"
-        ? "Newest features, less tested. Install Bolo next to it for tested releases: they share your settings, models and history, and only the one you started last listens for the push-to-talk key."
-        : "A separate app with a violet icon, built from every change. It installs next to Bolo and shares your settings, models and history. Only the one you started last listens for the push-to-talk key."}
-    >
-      {#snippet leading()}<IconTile icon={FlaskConical} />{/snippet}
-      {#snippet control()}
-        <Button variant="ghost" size="sm" onclick={() => updates && api.openLink(updates.other.url)}>
-          Get {updates.other.product}<ExternalLink aria-hidden="true" />
-        </Button>
-      {/snippet}
-    </SettingsRow>
-  {/if}
 </SettingsSection>
 
-<SettingsSection title="Bolo and Bolo Nightly">
-  {#each SWITCHES as [field, name, what] (field)}
-    <SettingsRow
-      title={name}
-      labelFor="switch-{field}"
-      description="{what} Off, it stays in the tray but never listens for the push-to-talk key or shows the pill, even after a restart.{product === name
-        ? ' This is the app you’re in.'
-        : ''}"
-    >
-      {#snippet control()}
-        <Switch id="switch-{field}" checked={view.form[field]} onchange={(on) => update((f) => (f[field] = on))} />
-      {/snippet}
-    </SettingsRow>
-  {/each}
+<SettingsSection title="Channel">
+  <SettingsRow title="Update channel" description={channelNote}>
+    {#snippet control()}
+      <Segmented
+        label="Update channel"
+        value={view.form.channel}
+        options={[
+          ["beta", "Beta"],
+          ["nightly", "Nightly"],
+        ]}
+        onchange={(v) => update((f) => (f.channel = v as Form["channel"]))}
+      />
+    {/snippet}
+  </SettingsRow>
 </SettingsSection>
 
 <SettingsSection title="Files">

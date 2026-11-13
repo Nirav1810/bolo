@@ -46,10 +46,9 @@ export interface Form {
   input_device: string | null;
   /** Check for updates at launch and once a day (`[updates] auto_check`). */
   auto_update_check: boolean;
-  /** Bolo (the Beta) listens for the key and shows the pill (`[variants] release`). */
-  release_on: boolean;
-  /** The same for Bolo Nightly (`[variants] nightly`). */
-  nightly_on: boolean;
+  /** The update channel Bolo follows (`[updates] channel`; unpicked, the build's own).
+   *  Picking the other one switches Bolo to that channel's build (ADR-0019). */
+  channel: "beta" | "nightly";
 }
 
 export interface ModelView {
@@ -222,19 +221,21 @@ export interface DownloadEvent {
 export type UpdateStatus =
   | { state: "idle" | "checking" | "up-to-date" | "installing" }
   | { state: "updated"; from: string }
-  | { state: "available"; version: string; notes: string | null }
+  | { state: "available"; version: string; notes: string | null; switch: boolean }
   | { state: "downloading"; downloaded: number; total: number | null }
   | { state: "error"; message: string; manual: boolean };
 
-/** About's update section (src-tauri/src/updates.rs, `View`). Bolo and Bolo Nightly are
- *  separate apps, each updating from its own feed (ADR-0019). */
+/** About's update section (src-tauri/src/updates.rs, `View`). One app with two channels
+ *  (ADR-0019): the build that runs names it, and the followed channel says where it
+ *  updates from. */
 export interface UpdateView {
   version: string;
   product: "Bolo" | "Bolo Nightly";
+  /** The running build's channel. */
   variant: "release" | "nightly";
   badge: "Beta" | "Nightly" | null;
-  /** The other app, to install next to this one. */
-  other: { product: string; url: string };
+  /** The channel Bolo follows. */
+  channel: "release" | "nightly";
   status: UpdateStatus;
 }
 

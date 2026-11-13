@@ -416,9 +416,9 @@ PACKAGING = ROOT / "packaging" / "windows"
 
 
 def installer_name(version: str) -> str:
-    """The desktop installer as published. A nightly is the separate app "Bolo Nightly"
-    (ADR-0019); Tauri names its installer `Bolo Nightly_...`, and the space becomes a dash
-    because GitHub would turn it into a dot."""
+    """The desktop installer as published. A nightly is the same app on its Nightly
+    channel (ADR-0019); its installer is published as `Bolo-Nightly_...` so the download
+    says which channel it is."""
     product = "Bolo-Nightly" if NIGHTLY_RE.match(version) else "Bolo"
     return f"{product}_{version}_x64-setup.exe"
 

@@ -17,7 +17,7 @@ The Windows installer is Authenticode-signed by [SignPath](https://signpath.io) 
 | SignPath project | `bolo` | `bolo` |
 | Signing policy | `release-signing` (Foundation certificate, manual approval) | `test-signing` (test certificate) |
 | Artifact configuration | `default` | `default` |
-| `productName` parameter | `Bolo` | `Bolo Nightly` |
+| `productName` parameter | `Bolo` | `Bolo` (the same app, on the Nightly channel) |
 | `version` parameter | the tag without `v` | the nightly version |
 
 The artifact configuration is checked in at [`.signpath/artifact-configurations/default.xml`](../.signpath/artifact-configurations/default.xml). It signs the one `*_x64-setup.exe` in the zip and restricts its ProductName and ProductVersion to the parameters above, as SignPath Foundation requires. The release job waits up to an hour for approval; an unanswered request fails the run, and re-running the job submits a new one.

@@ -180,26 +180,43 @@ impl AudioSettings {
     }
 }
 
-/// The self-updater (ADR-0019). Bolo and Bolo Nightly share this file, so the switch
-/// covers both.
+/// The self-updater (ADR-0019).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UpdateSettings {
     /// Check for updates at launch and once a day. Off leaves only the manual check.
     pub auto_check: bool,
+    /// The channel the user picked; `None` until they pick one, and then Bolo follows the
+    /// channel of the build that runs. A value this version doesn't know reads as `None`,
+    /// so it never makes the whole file bad.
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient_channel")]
+    pub channel: Option<Channel>,
     #[serde(flatten)]
     pub unknown: Table,
 }
 
 impl Default for UpdateSettings {
     fn default() -> Self {
-        Self { auto_check: true, unknown: Table::new() }
+        Self { auto_check: true, channel: None, unknown: Table::new() }
     }
 }
 
-/// Which of the two apps is on (ADR-0019). An app that is off stays in the tray, but it
-/// doesn't listen for the push-to-talk key or show the pill, even after a restart. Both
-/// apps share this file, so each can turn either one off.
+/// An update channel (ADR-0019): the releases (Beta until 1.0), or a build of every change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Channel {
+    Beta,
+    Nightly,
+}
+
+fn lenient_channel<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Channel>, D::Error> {
+    let value = Option::<toml::Value>::deserialize(d)?;
+    Ok(value.and_then(|v| v.try_into().ok()))
+}
+
+/// Which of the two apps was on, from when Bolo Nightly was a separate app (before
+/// ADR-0019's amendment). Bolo no longer reads it; it is kept so a file still read by an
+/// older Bolo keeps its value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VariantSettings {
@@ -627,7 +644,25 @@ nightly = false
         s.save(&path).unwrap();
         let t: Table = fs::read_to_string(&path).unwrap().parse().unwrap();
         assert_eq!(t["updates"]["auto_check"].as_bool(), Some(false));
-        assert_eq!(t["updates"]["channel"].as_str(), Some("beta"), "unknown keys in [updates] are kept");
+        assert_eq!(t["updates"]["channel"].as_str(), Some("beta"));
+        assert_eq!(s.updates.channel, Some(Channel::Beta));
+    }
+
+    #[test]
+    fn the_channel_is_unset_until_picked_and_never_spoils_the_file() {
+        let (s, _) = Settings::parse("version = 2\n").ok().unwrap();
+        assert_eq!(s.updates.channel, None);
+        assert!(
+            !toml::to_string(&Table::try_from(&s).unwrap()).unwrap().contains("channel"),
+            "an unpicked channel isn't written"
+        );
+        let (s, _) = Settings::parse("version = 2\n[updates]\nchannel = \"nightly\"\n").ok().unwrap();
+        assert_eq!(s.updates.channel, Some(Channel::Nightly));
+        // A channel a newer Bolo added: read as unpicked, not as a bad file.
+        let (s, _) =
+            Settings::parse("version = 2\n[updates]\nchannel = \"canary\"\nauto_check = false\n").ok().unwrap();
+        assert_eq!(s.updates.channel, None);
+        assert!(!s.updates.auto_check);
     }
 
     #[test]

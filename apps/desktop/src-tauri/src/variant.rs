@@ -1,13 +1,12 @@
-//! Which Bolo this is (ADR-0019): **Bolo**, the releases, or **Bolo Nightly**, a build of
-//! every push to `main`. They are separate apps, like a browser's stable and canary
-//! builds:
-//! - each has its own name, icon, install folder, Start menu entry and update feed;
-//! - they share the settings, models, history and API keys;
-//! - only one holds the push-to-talk key at a time. Starting or resuming one asks the
-//!   other to pause ([`ask_to_step_aside`], [`listen_for_step_aside`]);
-//! - each can be turned off in settings (`[variants]`), and stays off across restarts.
-//!   Changing the switches tells the other app to read them again ([`ask_to_reload`]).
+//! Which Bolo this is (ADR-0019). There is one app, with two **channels**: the releases
+//! (Beta until 1.0) and Nightly, a build of every push to `main`. The build that runs
+//! decides the name, icon and pill colour; picking the other channel in About reinstalls
+//! Bolo from that channel's feed ([`crate::updates`]), so they all change together.
+//!
+//! Bolo Nightly used to be a separate app installed next to Bolo. [`retire_old_nightly`]
+//! removes that install, whose job this app's Nightly channel now does.
 
+use bolo_store::Channel;
 use serde::Serialize;
 
 /// This build's version; a nightly's carries `-nightly.<date>.<run>`.
@@ -15,6 +14,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const REPO: &str = "https://github.com/Nirav1810/bolo";
 
+/// A build's channel, from its version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Variant {
@@ -32,14 +32,23 @@ impl Variant {
         Self::of(VERSION)
     }
 
-    pub fn other(self) -> Self {
-        match self {
-            Variant::Release => Variant::Nightly,
-            Variant::Nightly => Variant::Release,
+    /// The channel the user follows: the one picked in About, else this build's own.
+    pub fn followed(picked: Option<Channel>) -> Self {
+        match picked {
+            Some(Channel::Beta) => Variant::Release,
+            Some(Channel::Nightly) => Variant::Nightly,
+            None => Self::current(),
         }
     }
 
-    /// The app's name, as in `tauri.conf.json` and `tauri.nightly.conf.json`.
+    pub fn channel(self) -> Channel {
+        match self {
+            Variant::Release => Channel::Beta,
+            Variant::Nightly => Channel::Nightly,
+        }
+    }
+
+    /// The name the app goes by while this build runs: window titles, the tray.
     pub fn product_name(self) -> &'static str {
         match self {
             Variant::Release => "Bolo",
@@ -56,43 +65,11 @@ impl Variant {
         }
     }
 
-    /// Where to download this variant by hand.
-    pub fn download_page(self) -> String {
-        match self {
-            Variant::Release => format!("{REPO}/releases/latest"),
-            Variant::Nightly => format!("{REPO}/releases/tag/nightly"),
-        }
-    }
-
-    /// The log file in `%LOCALAPPDATA%\Bolo\data\logs`, one per variant.
+    /// The log file in `%LOCALAPPDATA%\Bolo\data\logs`, one per channel.
     pub fn log_file(self) -> &'static str {
         match self {
             Variant::Release => "desktop.log",
             Variant::Nightly => "desktop-nightly.log",
-        }
-    }
-
-    /// The named event the other variant sets to ask this one to pause.
-    fn step_aside_event(self) -> &'static str {
-        match self {
-            Variant::Release => "Local\\dev.bolo.desktop.step-aside",
-            Variant::Nightly => "Local\\dev.bolo.desktop.nightly.step-aside",
-        }
-    }
-
-    /// The named event the other variant sets when it changed the on/off switches.
-    fn reload_event(self) -> &'static str {
-        match self {
-            Variant::Release => "Local\\dev.bolo.desktop.switches-changed",
-            Variant::Nightly => "Local\\dev.bolo.desktop.nightly.switches-changed",
-        }
-    }
-
-    /// Whether this app is turned on in `settings`.
-    pub fn is_on(self, settings: &bolo_store::VariantSettings) -> bool {
-        match self {
-            Variant::Release => settings.release,
-            Variant::Nightly => settings.nightly,
         }
     }
 }
@@ -116,72 +93,57 @@ pub fn title(version: &str) -> String {
     }
 }
 
-/// Ask the other variant, if it runs, to pause and let go of the push-to-talk key.
-/// Returns whether it was running.
-pub fn ask_to_step_aside(other: Variant) -> bool {
+/// The quoted uninstaller path an `UninstallString` names, without its quotes.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn uninstaller(uninstall_string: &str) -> Option<&str> {
+    let s = uninstall_string.trim();
+    let s = match s.strip_prefix('"') {
+        Some(rest) => rest.split('"').next().unwrap_or(""),
+        None => s,
+    };
+    (!s.is_empty()).then_some(s)
+}
+
+/// Remove the separate Bolo Nightly app, if it is still installed: ask it to let go of
+/// the push-to-talk key now, then run its uninstaller quietly. The uninstaller closes it
+/// (only that exe: Windows' Restart Manager goes by path) and removes its shortcuts and
+/// its start-with-Windows entry; the shared settings, models and history stay. Returns
+/// whether it found one.
+pub fn retire_old_nightly() -> bool {
     #[cfg(windows)]
     {
-        win::signal(other.step_aside_event())
+        let Some(command) = win::uninstall_string("Bolo Nightly") else { return false };
+        let Some(exe) = uninstaller(&command) else { return false };
+        let exe = std::path::Path::new(exe);
+        // Never the install that runs.
+        let here = std::env::current_exe().ok().and_then(|p| p.parent().map(std::path::Path::to_path_buf));
+        if !exe.exists() || here.as_deref() == exe.parent() {
+            return false;
+        }
+        win::signal("Local\\dev.bolo.desktop.nightly.step-aside");
+        match std::process::Command::new(exe).arg("/S").spawn() {
+            Ok(_) => tracing::info!(uninstaller = %exe.display(), "removing the separate Bolo Nightly app"),
+            Err(e) => tracing::warn!(%e, "could not remove the separate Bolo Nightly app"),
+        }
+        true
     }
     #[cfg(not(windows))]
     {
-        let _ = other;
         false
-    }
-}
-
-/// Tell the other variant, if it runs, that the on/off switches changed.
-pub fn ask_to_reload(other: Variant) -> bool {
-    #[cfg(windows)]
-    {
-        win::signal(other.reload_event())
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = other;
-        false
-    }
-}
-
-/// Run `on_request` each time the other variant changed the on/off switches.
-pub fn listen_for_reload(me: Variant, on_request: impl Fn() + Send + 'static) -> std::io::Result<()> {
-    #[cfg(windows)]
-    {
-        win::listen(me.reload_event(), on_request)
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (me, on_request);
-        Ok(())
-    }
-}
-
-/// Run `on_request` each time the other variant asks this one to step aside.
-pub fn listen_for_step_aside(me: Variant, on_request: impl Fn() + Send + 'static) -> std::io::Result<()> {
-    #[cfg(windows)]
-    {
-        win::listen(me.step_aside_event(), on_request)
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (me, on_request);
-        Ok(())
     }
 }
 
 #[cfg(windows)]
 mod win {
-    use std::io;
-
-    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
-    use windows_sys::Win32::System::Threading::{
-        CreateEventW, EVENT_MODIFY_STATE, INFINITE, OpenEventW, SetEvent, WaitForSingleObject,
-    };
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS};
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
+    use windows_sys::Win32::System::Threading::{EVENT_MODIFY_STATE, OpenEventW, SetEvent};
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(Some(0)).collect()
     }
 
+    /// Set a named event if anyone made it; whether someone had.
     pub fn signal(name: &str) -> bool {
         let name = wide(name);
         // SAFETY: `name` is a NUL-terminated UTF-16 string that outlives the call; the
@@ -197,27 +159,30 @@ mod win {
         true
     }
 
-    pub fn listen(name: &str, on_request: impl Fn() + Send + 'static) -> io::Result<()> {
-        let name = wide(name);
-        // SAFETY: as above. Auto-reset, initially unset; the handle lives as long as the
-        // process (the thread below waits on it forever).
-        let event = unsafe { CreateEventW(std::ptr::null(), 0, 0, name.as_ptr()) };
-        if event.is_null() {
-            return Err(io::Error::last_os_error());
+    /// `UninstallString` of a per-user app in Apps & features.
+    pub fn uninstall_string(product: &str) -> Option<String> {
+        let key = wide(&format!("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{product}"));
+        let value = wide("UninstallString");
+        let mut buf = vec![0u16; 1024];
+        let mut bytes = (buf.len() * 2) as u32;
+        // SAFETY: the strings are NUL-terminated and outlive the call; `buf` holds `bytes`
+        // bytes, and RRF_RT_REG_SZ makes the result NUL-terminated within them.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                value.as_ptr(),
+                RRF_RT_REG_SZ,
+                std::ptr::null_mut(),
+                buf.as_mut_ptr().cast(),
+                &mut bytes,
+            )
+        };
+        if status != ERROR_SUCCESS {
+            return None;
         }
-        let handle = event as usize;
-        std::thread::Builder::new().name("bolo-step-aside".into()).spawn(move || {
-            loop {
-                // SAFETY: the handle is never closed while this thread runs.
-                let woke = unsafe { WaitForSingleObject(handle as _, INFINITE) };
-                if woke != WAIT_OBJECT_0 {
-                    tracing::warn!(woke, "stopped listening for the other Bolo");
-                    return;
-                }
-                on_request();
-            }
-        })?;
-        Ok(())
+        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        Some(String::from_utf16_lossy(&buf[..len]))
     }
 }
 
@@ -226,27 +191,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_version_says_which_app_this_is() {
+    fn the_version_says_which_channel_built_it() {
         assert_eq!(Variant::of("0.4.0"), Variant::Release);
         assert_eq!(Variant::of("0.5.0-nightly.20261111.7"), Variant::Nightly);
-        assert_eq!(Variant::Nightly.other(), Variant::Release);
         assert_eq!(Variant::Nightly.product_name(), "Bolo Nightly");
         assert!(Variant::Nightly.feed().ends_with("/releases/download/nightly/latest.json"));
         assert!(Variant::Release.feed().ends_with("/releases/latest/download/latest.json"));
         assert_ne!(Variant::Release.log_file(), Variant::Nightly.log_file());
-        assert_ne!(Variant::Release.reload_event(), Variant::Nightly.reload_event());
-        assert_ne!(Variant::Release.reload_event(), Variant::Release.step_aside_event());
     }
 
     #[test]
-    fn each_app_reads_its_own_switch() {
-        let s = bolo_store::VariantSettings { nightly: false, ..Default::default() };
-        assert!(Variant::Release.is_on(&s));
-        assert!(!Variant::Nightly.is_on(&s));
+    fn the_picked_channel_wins_over_the_build() {
+        assert_eq!(Variant::followed(Some(Channel::Nightly)), Variant::Nightly);
+        assert_eq!(Variant::followed(Some(Channel::Beta)), Variant::Release);
+        assert_eq!(Variant::followed(None), Variant::current(), "unpicked: the build's own");
+        for v in [Variant::Release, Variant::Nightly] {
+            assert_eq!(Variant::followed(Some(v.channel())), v);
+        }
     }
 
     #[test]
-    fn badges_and_titles_name_the_variant() {
+    fn badges_and_titles_name_the_channel() {
         assert_eq!(badge("0.4.0"), Some("Beta"));
         assert_eq!(badge("0.5.0-nightly.20261111.7"), Some("Nightly"));
         assert_eq!(badge("1.0.0"), None);
@@ -255,20 +220,13 @@ mod tests {
         assert_eq!(title("0.5.0-nightly.20261111.7"), "Bolo Nightly 0.5.0-nightly.20261111.7");
     }
 
-    #[cfg(windows)]
     #[test]
-    fn asking_the_other_variant_reaches_its_listener() {
-        use std::sync::mpsc;
-        use std::time::Duration;
-
-        // A test-only name, so a running Bolo on this machine isn't asked.
-        let name = format!("Local\\dev.bolo.desktop.test-{}", std::process::id());
-        assert!(!win::signal(&name), "nobody listens yet");
-        let (tx, rx) = mpsc::channel();
-        win::listen(&name, move || tx.send(()).unwrap()).unwrap();
-        assert!(win::signal(&name));
-        rx.recv_timeout(Duration::from_secs(5)).expect("the listener was asked");
-        assert!(win::signal(&name));
-        rx.recv_timeout(Duration::from_secs(5)).expect("and again");
+    fn the_uninstaller_is_read_from_its_uninstall_string() {
+        let quoted = r#""C:\Users\me\AppData\Local\Bolo Nightly\uninstall.exe""#;
+        assert_eq!(uninstaller(quoted), Some(r"C:\Users\me\AppData\Local\Bolo Nightly\uninstall.exe"));
+        assert_eq!(uninstaller(r"C:\Bolo\uninstall.exe"), Some(r"C:\Bolo\uninstall.exe"));
+        assert_eq!(uninstaller(r#"  "C:\B N\uninstall.exe" /S"#), Some(r"C:\B N\uninstall.exe"));
+        assert_eq!(uninstaller("  "), None);
+        assert_eq!(uninstaller(r#""""#), None);
     }
 }

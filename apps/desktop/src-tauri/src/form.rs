@@ -10,8 +10,10 @@
 //! [`reset_app`], [`add_app`]).
 
 use bolo_core::{HinglishScript, LanguageMode, OutputFormat, Snippet};
-use bolo_store::{AppProfile, PushToTalkKey, Settings, SnippetRow};
+use bolo_store::{AppProfile, Channel, PushToTalkKey, Settings, SnippetRow};
 use serde::{Deserialize, Serialize};
+
+use crate::variant::Variant;
 
 /// The tones polish knows.
 pub const TONES: [&str; 3] = ["neutral", "casual", "formal"];
@@ -40,10 +42,8 @@ pub struct Form {
     pub input_device: Option<String>,
     /// `[updates] auto_check`: check for updates at launch and once a day.
     pub auto_update_check: bool,
-    /// `[variants] release`: Bolo (the Beta) listens for the key and shows the pill.
-    pub release_on: bool,
-    /// `[variants] nightly`: the same for Bolo Nightly.
-    pub nightly_on: bool,
+    /// `[updates] channel`: the channel Bolo follows (unpicked, the build's own).
+    pub channel: Channel,
 }
 
 impl Form {
@@ -62,8 +62,7 @@ impl Form {
             retention_days: s.history.retention_days,
             input_device: s.audio.input_device.clone(),
             auto_update_check: s.updates.auto_check,
-            release_on: s.variants.release,
-            nightly_on: s.variants.nightly,
+            channel: Variant::followed(s.updates.channel).channel(),
         }
     }
 
@@ -74,7 +73,8 @@ impl Form {
     ///   already used (ignoring case), dropped; the text kept as written;
     /// - an unknown tone becomes `neutral`;
     /// - retention at least one day;
-    /// - a blank microphone is the Windows default.
+    /// - a blank microphone is the Windows default;
+    /// - the channel is stored once it differs from the one followed so far.
     pub fn apply(self, settings: &Settings) -> Settings {
         let mut s = settings.clone();
         s.push_to_talk = self.push_to_talk;
@@ -94,8 +94,9 @@ impl Form {
         s.history.retention_days = self.retention_days.max(1);
         s.audio.input_device = self.input_device.map(|d| d.trim().to_owned()).filter(|d| !d.is_empty());
         s.updates.auto_check = self.auto_update_check;
-        s.variants.release = self.release_on;
-        s.variants.nightly = self.nightly_on;
+        if self.channel != Variant::followed(settings.updates.channel).channel() {
+            s.updates.channel = Some(self.channel);
+        }
         s
     }
 }
@@ -223,8 +224,8 @@ pub struct Changes {
     pub history: bool,
     /// Prune now with the new retention.
     pub retention: bool,
-    /// Which app is on changed: this one turns on or off, and the other is told.
-    pub variants: bool,
+    /// The channel Bolo follows changed: switch to that channel's build.
+    pub channel: bool,
     /// Load the model now, ready for the next push-to-talk: the engine config changed,
     /// or onboarding just finished (the first time a model is surely there).
     pub warm: bool,
@@ -252,7 +253,7 @@ pub fn changes(old: &Settings, new: &Settings) -> Changes {
         autostart: old.autostart != new.autostart,
         history: old.history.enabled != new.history.enabled,
         retention: old.history.retention_days != new.history.retention_days,
-        variants: old.variants != new.variants,
+        channel: Variant::followed(old.updates.channel) != Variant::followed(new.updates.channel),
         warm: engine || (old.onboarding_step.is_some() && new.onboarding_step.is_none()),
     }
 }
@@ -274,7 +275,9 @@ pub fn provider_of(spec: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use bolo_core::{HinglishScript, LanguageMode};
-    use bolo_store::{PushToTalkKey, Settings};
+    use bolo_store::{Channel, PushToTalkKey, Settings};
+
+    use crate::variant::Variant;
 
     use bolo_core::{OutputFormat, Snippet};
     use bolo_store::{AppProfile, SnippetRow};
@@ -363,7 +366,17 @@ mod tests {
         assert_eq!(with(|f| f.autostart = true), Changes { autostart: true, ..Default::default() });
         assert_eq!(with(|f| f.history = false), Changes { history: true, ..Default::default() });
         assert_eq!(with(|f| f.retention_days = 7), Changes { retention: true, ..Default::default() });
-        assert_eq!(with(|f| f.nightly_on = false), Changes { variants: true, ..Default::default() });
+        assert_eq!(
+            with(|f| {
+                f.channel = match Variant::current() {
+                    Variant::Release => Channel::Nightly,
+                    Variant::Nightly => Channel::Beta,
+                }
+            }),
+            Changes { channel: true, ..Default::default() },
+            "picking the other channel switches"
+        );
+        assert!(!with(|f| f.channel = Variant::current().channel()).any(), "the channel already followed");
         let onboarding = Settings { onboarding_step: Some(2), ..old.clone() };
         assert_eq!(changes(&onboarding, &old), Changes { warm: true, ..Default::default() }, "onboarding done: load");
         assert!(!changes(&old, &onboarding).any(), "starting onboarding loads nothing");
@@ -462,7 +475,6 @@ mod tests {
         assert_eq!(json["retention_days"], 30);
         assert_eq!(json["input_device"], serde_json::Value::Null);
         assert_eq!(json["auto_update_check"], true);
-        assert_eq!(json["release_on"], true);
-        assert_eq!(json["nightly_on"], true);
+        assert_eq!(json["channel"], if Variant::current() == Variant::Nightly { "nightly" } else { "beta" });
     }
 }
