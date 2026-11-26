@@ -172,7 +172,7 @@ class MainActivity : ComponentActivity() {
         try {
             val b = engineFor(engine.trim())
             // PowerShell pipes start with a byte order mark.
-            val stored = file.readText().removePrefix("﻿").lines().mapNotNull { line ->
+            val stored = file.readText().removePrefix("\uFEFF").lines().mapNotNull { line ->
                 val (provider, key) = line.split('=', limit = 2).takeIf { it.size == 2 } ?: return@mapNotNull null
                 b.setApiKey(provider.trim(), key.trim())
                 provider.trim()
