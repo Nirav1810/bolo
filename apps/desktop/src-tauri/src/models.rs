@@ -10,50 +10,13 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use bolo_models::{DownloadProgress, Downloader, Manifest, ModelEntry, ModelKind, ModelStatus, Phase, Platform, Tier};
+use bolo_models::{DownloadProgress, Downloader, Manifest, ModelEntry, Phase, Platform, Tier};
+pub use bolo_models::{ModelView, VAD_MODEL};
 use serde::Serialize;
-
-/// The pause detector's model, downloaded alongside the first ASR model.
-pub const VAD_MODEL: &str = "silero-vad";
-
-/// One model as the window lists it.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct ModelView {
-    pub id: String,
-    pub name: String,
-    /// `local:<id>`, the engine spec that uses it.
-    pub spec: String,
-    pub languages: Vec<String>,
-    /// The download, in bytes.
-    pub download_bytes: u64,
-    /// On disk once unpacked, if the manifest knows.
-    pub disk_bytes: Option<u64>,
-    pub installed: bool,
-    pub recommended: bool,
-    /// Speaks Hindi (and so Hinglish).
-    pub hinglish: bool,
-}
 
 /// The ASR models a Windows PC can download, recommended first, then by size.
 pub fn views(manifest: &Manifest, root: &Path, recommended: Option<&str>) -> Vec<ModelView> {
-    let mut v: Vec<ModelView> = manifest
-        .models
-        .iter()
-        .filter(|m| m.kind == ModelKind::Asr && m.status == ModelStatus::Available && m.tiers.contains(&Tier::Desktop))
-        .map(|m| ModelView {
-            id: m.id.clone(),
-            name: m.name.clone(),
-            spec: format!("local:{}", m.id),
-            languages: m.languages.clone(),
-            download_bytes: m.download.as_ref().map_or(0, |d| d.size_bytes),
-            disk_bytes: m.unpacked_size_bytes,
-            installed: m.is_installed(root),
-            recommended: recommended == Some(m.id.as_str()),
-            hinglish: m.languages.iter().any(|l| l == "hi"),
-        })
-        .collect();
-    v.sort_by_key(|m| (!m.recommended, m.download_bytes));
-    v
+    bolo_models::views(manifest, Tier::Desktop, root, recommended)
 }
 
 /// The model to suggest for a PC with `total_ram_mb` of memory.
@@ -126,14 +89,8 @@ impl Downloads {
                     report(DownloadEvent::progress(&id, p));
                 }
             };
-            let mut result = dl.install(&entry, &progress).await.map(drop);
-            if result.is_ok()
-                && let Some(vad) = vad.filter(|v| !v.is_installed(dl.root()))
-            {
-                result = dl.install(&vad, &|_| {}).await.map(drop);
-            }
-            match result {
-                Ok(()) => report(DownloadEvent::end(&id, "done", None)),
+            match dl.install_with_vad(&entry, vad.as_ref(), &progress).await {
+                Ok(_) => report(DownloadEvent::end(&id, "done", None)),
                 Err(e) => {
                     tracing::warn!(model = %id, %e, "model download failed");
                     report(DownloadEvent::end(&id, "failed", Some(e.to_string())));

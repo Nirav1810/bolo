@@ -4,10 +4,13 @@
 //! Models are never bundled with the app. The manifest compiled into the binary is the
 //! default; a newer signed manifest can be fetched later (M4).
 
+pub mod catalog;
 pub mod download;
 pub mod manifest;
 
-pub use download::{DownloadProgress, Downloader, Phase};
+pub use catalog::{ModelView, VAD_MODEL, views};
+pub use download::{DownloadProgress, Downloader, Phase, partial_bytes, uninstall};
+pub use manifest::ANDROID_HIGH_MB;
 pub use manifest::{Download, Family, License, Manifest, ModelEntry, ModelKind, ModelStatus, Platform, Tier};
 
 #[derive(Debug, thiserror::Error)]

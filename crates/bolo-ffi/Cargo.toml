@@ -24,13 +24,14 @@ bindgen = ["uniffi/cli"]
 
 [dependencies]
 bolo-core = { workspace = true }
+bolo-models = { workspace = true }
 bolo-store = { workspace = true }
 bolo-stt = { workspace = true }
 keyring-core = "1"
+# Runtimes for model downloads (`models::run`) and probe_https (the engine runs its own).
+tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 uniffi = "0.33"
 thiserror = { workspace = true }
-# probe_https's runtime (the engine runs its own).
-tokio = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
@@ -40,7 +41,14 @@ tracing-android = "0.2"
 jni = "0.22"
 rustls-platform-verifier = { workspace = true }
 
+# `statvfs` for the free-space check before a model download.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 async-trait = { workspace = true }
+hex = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
 tempfile = "3"
 toml = { workspace = true }

@@ -307,5 +307,5 @@
     "android-low": "moonshine-tiny",
     "android-low-hinglish": "whisper-base-hinglish"
   },
-  "tier_thresholds_mb": { "android-high": 6000 }
+  "tier_thresholds_mb": { "android-high": 5000 }
 }
