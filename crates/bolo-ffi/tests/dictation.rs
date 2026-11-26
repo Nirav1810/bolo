@@ -235,9 +235,7 @@ fn a_save_reaches_every_bolo_on_the_file_and_the_engine() {
         .unwrap();
     assert_eq!((saved.engines.as_slice(), saved.tone.as_str()), (["fake".to_owned()].as_slice(), "casual"));
     for r in [&a, &b] {
-        let Ok(Event::Settings(s)) = r.events.recv_timeout(Duration::from_secs(1)) else {
-            panic!("no settings event")
-        };
+        let Ok(Event::Settings(s)) = r.events.recv_timeout(Duration::from_secs(1)) else { panic!("no settings event") };
         assert_eq!(s, saved);
         assert_eq!(r.bolo.settings(), saved);
         assert_eq!(r.bolo.engine_config().engines, ["fake"]);
@@ -284,7 +282,9 @@ fn another_process_s_save_is_picked_up_on_reload() {
     std::fs::File::options().write(true).open(&file).unwrap().set_modified(later).unwrap();
     assert!(r.bolo.reload_settings().unwrap());
     assert_eq!(r.bolo.settings().language, Language::Hinglish);
-    assert!(matches!(r.events.recv_timeout(Duration::from_secs(1)), Ok(Event::Settings(s)) if s.language == Language::Hinglish));
+    assert!(
+        matches!(r.events.recv_timeout(Duration::from_secs(1)), Ok(Event::Settings(s)) if s.language == Language::Hinglish)
+    );
     assert!(!r.bolo.reload_settings().unwrap());
 }
 

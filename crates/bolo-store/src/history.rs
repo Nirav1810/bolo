@@ -6,7 +6,7 @@
 //! history off ([`History::set_enabled`]) stops writes and keeps the existing rows;
 //! [`History::clear`] deletes them and vacuums the file.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OptionalExtension, params};
@@ -74,7 +74,7 @@ impl std::fmt::Debug for History {
 impl History {
     /// `%LOCALAPPDATA%\Bolo\history.sqlite`.
     #[cfg(not(target_os = "android"))]
-    pub fn default_path() -> Result<PathBuf> {
+    pub fn default_path() -> Result<std::path::PathBuf> {
         Ok(crate::Paths::desktop()?.history_file())
     }
 

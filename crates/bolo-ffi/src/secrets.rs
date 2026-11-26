@@ -42,7 +42,8 @@ pub trait SecretStore: Send + Sync {
 pub struct ForeignStore(Arc<dyn SecretStore>);
 
 impl ForeignStore {
-    pub fn new(store: Arc<dyn SecretStore>) -> Arc<CredentialStore> {
+    /// `store` as a credential store for `bolo_store::Secrets::with_store`.
+    pub fn wrap(store: Arc<dyn SecretStore>) -> Arc<CredentialStore> {
         Arc::new(Self(store))
     }
 }
@@ -189,7 +190,7 @@ mod tests {
     #[test]
     fn secrets_round_trip_through_the_foreign_store() {
         let backing = MockBacked::new();
-        let store = ForeignStore::new(backing.clone());
+        let store = ForeignStore::wrap(backing.clone());
         let mut s = Secrets::with_store(store.clone()).unwrap();
         assert!(!s.has(ANTHROPIC));
         s.set(ANTHROPIC, " sk-ant-123 ").unwrap();
@@ -197,7 +198,7 @@ mod tests {
 
         // Stored under `bolo/<provider>` in the Kotlin store, trimmed.
         assert_eq!(backing.get(format!("{SERVICE}/{ANTHROPIC}")).unwrap().as_deref(), Some("sk-ant-123"));
-        let again = Secrets::with_store(ForeignStore::new(backing.clone())).unwrap();
+        let again = Secrets::with_store(ForeignStore::wrap(backing.clone())).unwrap();
         assert_eq!(again.api_keys().get("deepgram"), Some("dg-456"));
         assert_eq!(again.api_keys().get("groq"), None);
 
@@ -211,7 +212,7 @@ mod tests {
     #[test]
     fn store_failures_are_errors_without_the_value() {
         let backing = MockBacked::new();
-        let mut s = Secrets::with_store(ForeignStore::new(backing.clone())).unwrap();
+        let mut s = Secrets::with_store(ForeignStore::wrap(backing.clone())).unwrap();
         s.set("groq", "gsk-kept").unwrap();
         *backing.fail.lock().unwrap() = true;
         let err = s.set("groq", "gsk-SECRET").unwrap_err();
@@ -221,14 +222,14 @@ mod tests {
         assert!(text.contains("keystore unavailable"), "{text}");
 
         // An unreadable key is skipped at load, not fatal.
-        let loaded = Secrets::with_store(ForeignStore::new(backing)).unwrap();
+        let loaded = Secrets::with_store(ForeignStore::wrap(backing)).unwrap();
         assert!(!loaded.has("groq"));
     }
 
     #[test]
     fn entries_say_what_they_are_and_never_show_values() {
         let backing = MockBacked::new();
-        let store = ForeignStore::new(backing);
+        let store = ForeignStore::wrap(backing);
         let entry = store.build("bolo", "anthropic", None).unwrap();
         assert!(matches!(entry.get_password(), Err(KeyringError::NoEntry)));
         assert!(matches!(entry.delete_credential(), Err(KeyringError::NoEntry)));

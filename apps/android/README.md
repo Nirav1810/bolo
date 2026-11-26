@@ -2,7 +2,7 @@
 
 A Kotlin + Jetpack Compose voice keyboard (`InputMethodService`, ticket 06) that loads `libbolo_ffi.so` through UniFFI (ADR-0023). It targets minSdk 28 and ships arm64-v8a, plus x86_64 in debug builds for the emulator. The plan is in `.scratch/m5-android/`.
 
-Today (ticket 01) the app is a debug screen. Hold the button to dictate with the engine, or replay a WAV file.
+Today the app is a debug screen. Hold the button to dictate with the engine, or replay a WAV file. Since ticket 04, `Bolo` reads `filesDir/settings.toml` (the desktop's schema), records history in `filesDir/history.sqlite`, and keeps API keys in `KeystoreSecretStore` (AES-GCM, key in the Android Keystore). The engine field writes the settings' engine chain.
 
 ## Build
 
@@ -64,3 +64,17 @@ adb logcat -c
 adb shell am start -S -n dev.bolo.android/.MainActivity --es replay /data/local/tmp/en02.wav --es engine local:nemotron-stream
 adb logcat -s bolo:*      # ... replay text [ENGLISH]: Can you send me the report by Friday.
 ```
+
+## Instrumented tests (emulator only)
+
+`KeystoreSecretStoreTest` needs a real Keystore, so it runs on a device; CI runs only the JVM tests. `connectedDebugAndroidTest` uninstalls the app afterwards, which deletes the models in `no_backup`. Either pass `-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true` (and `ANDROID_SERIAL=<serial>` when more than one device is attached), or install and run the test APK by hand:
+
+```sh
+./gradlew assembleDebug assembleDebugAndroidTest
+adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk
+adb -s <serial> install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb -s <serial> shell am instrument -w dev.bolo.android.test/androidx.test.runner.AndroidJUnitRunner
+adb -s <serial> uninstall dev.bolo.android.test
+```
+
+The test uses its own Keystore alias and preferences file, so the app's stored keys are never touched.

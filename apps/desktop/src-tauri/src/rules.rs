@@ -6,9 +6,9 @@
 //! multi-line swap safety).
 
 use bolo_core::{Polish, TargetContext};
+use bolo_store::AppProfile;
 use bolo_store::apps::{self, AppKey, AppKind, Paste};
 pub use bolo_store::apps::{AppRules, AppView, Defaults, PolishPrefs};
-use bolo_store::AppProfile;
 
 use crate::insert::{Chord, Target};
 

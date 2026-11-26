@@ -31,9 +31,7 @@ pub mod records;
 pub mod secrets;
 
 use push::PushRing;
-pub use records::{
-    AppEntry, AppProfileEntry, BoloSettings, Format, HistoryEntry, Language, Script, SnippetEntry,
-};
+pub use records::{AppEntry, AppProfileEntry, BoloSettings, Format, HistoryEntry, Language, Script, SnippetEntry};
 pub use secrets::{SecretError, SecretStore};
 
 uniffi::setup_scaffolding!();
@@ -540,7 +538,7 @@ impl Bolo {
             tracing::warn!(backup = %backup.display(), "the settings file was bad; using the defaults");
         }
         let settings = loaded.settings;
-        let secrets = Secrets::with_store(secrets::ForeignStore::new(secret_store))?;
+        let secrets = Secrets::with_store(secrets::ForeignStore::wrap(secret_store))?;
         let history = match History::open(&paths.history_file()) {
             Ok(mut h) => {
                 h.set_enabled(settings.history.enabled);

@@ -7,8 +7,8 @@
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use bolo_core::{FormattedOutput, LanguageMode, OutputFormat, Usage};
 use crate::{Dictation, History, UsageEvent, provider_of};
+use bolo_core::{FormattedOutput, LanguageMode, OutputFormat, Usage};
 
 #[derive(Debug, Default)]
 struct Current {
@@ -76,8 +76,7 @@ impl Journal {
     /// A paid cloud request finished: add it to the usage meter. Recorded with history
     /// off too, since it holds no text.
     pub fn usage(&self, usage: &Usage) {
-        if let Some(Err(e)) = self.with_history(|h| h.record_usage(&usage_event(usage, crate::history::now_ms())))
-        {
+        if let Some(Err(e)) = self.with_history(|h| h.record_usage(&usage_event(usage, crate::history::now_ms()))) {
             tracing::warn!(%e, "could not record usage");
         }
     }
@@ -120,8 +119,8 @@ fn language(l: LanguageMode) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use bolo_core::{FormattedOutput, LanguageMode, OutputFormat, Timings};
     use crate::History;
+    use bolo_core::{FormattedOutput, LanguageMode, OutputFormat, Timings};
 
     use super::Journal;
 

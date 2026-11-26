@@ -54,12 +54,12 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent, Wry};
 use tauri_plugin_autostart::ManagerExt;
 
+use bolo_store::Journal;
 use controller::{AppEvent, Controller, Emit};
 use desktop::{Desktop, WinDesktop};
 use form::{Changes, Form};
 use hotkey::{Command, Flags};
 use insert::{Inserter, ThreadTimer};
-use bolo_store::Journal;
 use keyhook::{Handler, KeyHook};
 use overlay::{Clicks, HitRegion, Overlay};
 use rules::{AppRules, Plan, PolishPrefs};

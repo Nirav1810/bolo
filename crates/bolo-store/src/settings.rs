@@ -133,7 +133,9 @@ impl AppProfile {
     pub fn key(&self, kind: AppKind) -> Option<AppKey> {
         match kind {
             AppKind::Exe => Some(exe_name(&self.exe)).filter(|e| e != ".exe").map(AppKey::Exe),
-            AppKind::Package => self.package.as_deref().map(package_name).filter(|p| !p.is_empty()).map(AppKey::Package),
+            AppKind::Package => {
+                self.package.as_deref().map(package_name).filter(|p| !p.is_empty()).map(AppKey::Package)
+            }
         }
     }
 
@@ -839,8 +841,12 @@ format = \"markdown\"
         assert!(!text.contains("exe = \"\""), "{text}");
         let t: Table = text.parse().unwrap();
         assert_eq!(t["apps"][0].get("exe"), None);
-        let (again, _) = Settings::parse(&format!("version = 2
-{text}")).ok().unwrap();
+        let (again, _) = Settings::parse(&format!(
+            "version = 2
+{text}"
+        ))
+        .ok()
+        .unwrap();
         assert_eq!(again, s);
         let desktop = toml::to_string(&Table::try_from(Settings::parse(v2).ok().unwrap().0).unwrap()).unwrap();
         assert!(!desktop.contains("package"), "{desktop}");

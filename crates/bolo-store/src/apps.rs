@@ -415,7 +415,8 @@ mod tests {
     #[test]
     fn the_bundled_desktop_table() {
         use Paste::ShiftInsert;
-        let cases: &[(&str, &str, OutputFormat, bool, bool, Option<Paste>, &str)] = &[
+        type Case<'a> = (&'a str, &'a str, OutputFormat, bool, bool, Option<Paste>, &'a str);
+        let cases: &[Case] = &[
             ("code.exe", "main.rs - bolo - Visual Studio Code", Plain, true, false, None, "VS Code"),
             ("Cursor.exe", "x", Plain, true, false, None, "Cursor"),
             ("idea64.exe", "", Plain, true, false, None, "IntelliJ IDEA"),
@@ -551,7 +552,8 @@ mod tests {
         );
         assert_eq!((r.ctx.format, r.tone.as_str(), r.app_name.as_str()), (Markdown, "formal", "whatsapp"));
 
-        let r = resolve(&AppKey::exe("notepad.exe"), "", &AppRules::bundled(), &[], Defaults { polish: false, tone: "  " });
+        let r =
+            resolve(&AppKey::exe("notepad.exe"), "", &AppRules::bundled(), &[], Defaults { polish: false, tone: "  " });
         assert_eq!(r.tone, "neutral", "a blank global tone is neutral");
     }
 

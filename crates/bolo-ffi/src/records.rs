@@ -299,11 +299,13 @@ mod tests {
 
     #[test]
     fn settings_round_trip_through_the_record() {
-        let mut s = Settings::default();
-        s.language = LanguageMode::Hinglish;
-        s.script = HinglishScript::Devanagari;
-        s.engines = vec!["local:moonshine-tiny".into(), "deepgram".into()];
-        s.dictionary = vec!["Bolo".into()];
+        let mut s = Settings {
+            language: LanguageMode::Hinglish,
+            script: HinglishScript::Devanagari,
+            engines: vec!["local:moonshine-tiny".into(), "deepgram".into()],
+            dictionary: vec!["Bolo".into()],
+            ..Settings::default()
+        };
         s.snippets.push(bolo_store::SnippetRow::new("sig", "Thanks,\nPriya"));
         s.polish.enabled = true;
         s.polish.tone = "casual".into();
@@ -364,21 +366,23 @@ mod tests {
 
     #[test]
     fn app_rows_are_replaced_tidied_and_checked() {
-        let mut s = Settings::default();
-        s.apps = vec![
-            AppProfile { polish: Some(false), ..AppProfile::new("slack.exe") },
-            AppProfile { tone: Some("casual".into()), ..AppProfile::for_app(&AppKey::package("com.old")) },
-            AppProfile {
-                package: Some("com.both".into()),
-                polish: Some(true),
-                unknown: [("emoji".to_owned(), toml::Value::Boolean(true))].into_iter().collect(),
-                ..AppProfile::new("both.exe")
-            },
-            AppProfile {
-                unknown: [("emoji".to_owned(), toml::Value::Boolean(true))].into_iter().collect(),
-                ..AppProfile::for_app(&AppKey::package("com.slack"))
-            },
-        ];
+        let s = Settings {
+            apps: vec![
+                AppProfile { polish: Some(false), ..AppProfile::new("slack.exe") },
+                AppProfile { tone: Some("casual".into()), ..AppProfile::for_app(&AppKey::package("com.old")) },
+                AppProfile {
+                    package: Some("com.both".into()),
+                    polish: Some(true),
+                    unknown: [("emoji".to_owned(), toml::Value::Boolean(true))].into_iter().collect(),
+                    ..AppProfile::new("both.exe")
+                },
+                AppProfile {
+                    unknown: [("emoji".to_owned(), toml::Value::Boolean(true))].into_iter().collect(),
+                    ..AppProfile::for_app(&AppKey::package("com.slack"))
+                },
+            ],
+            ..Settings::default()
+        };
         let mut r = BoloSettings::of(&s);
         r.apps = vec![
             AppProfileEntry {
