@@ -14,7 +14,7 @@ use serde::Serialize;
 
 use crate::hotkey::Flags;
 use crate::insert::{Inserted, Inserter, Swapped};
-use crate::journal::Journal;
+use bolo_store::Journal;
 use crate::pill::View;
 
 /// What the webviews are sent, as the payload of the [`crate::EVENT`] event. Mirrored by
@@ -264,7 +264,7 @@ mod tests {
     use crate::hotkey::Flags;
     use crate::insert::testing::FakeTimer;
     use crate::insert::{Inserter, RESTORE_AFTER, Target};
-    use crate::journal::Journal;
+    use bolo_store::Journal;
     use bolo_core::OutputFormat;
     use bolo_store::History;
 

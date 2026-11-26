@@ -3,9 +3,10 @@
 //! - [`controller`] turns engine events into [`controller::AppEvent`]s for the webviews.
 //! - [`session`] decides what a start, stop or pause does.
 //! - [`desktop`] is the seam to the Windows desktop (window in front, clipboard, keys).
-//! - [`rules`] maps the window in front to a target and a polish decision (app rules).
+//! - [`rules`] maps the window in front to a target and a polish decision (the app
+//!   rules in `bolo_store::apps`).
 //! - [`insert`] pastes the text and swaps in polish (ADR-0018).
-//! - [`journal`] records each dictation in history.
+//! - `bolo_store::Journal` records each dictation in history.
 //! - [`pill`] is the overlay pill's state machine and [`overlay`] the thread and window
 //!   that run it; [`pointer`] is the mouse over it (the idle button, hands-free).
 //! - [`hotkey`] is the push-to-talk state machine and [`keyhook`] the hook that runs it.
@@ -28,7 +29,6 @@ pub mod desktop;
 pub mod form;
 pub mod hotkey;
 pub mod insert;
-pub mod journal;
 pub mod keyhook;
 pub mod keys;
 pub mod mic;
@@ -59,7 +59,7 @@ use desktop::{Desktop, WinDesktop};
 use form::{Changes, Form};
 use hotkey::{Command, Flags};
 use insert::{Inserter, ThreadTimer};
-use journal::Journal;
+use bolo_store::Journal;
 use keyhook::{Handler, KeyHook};
 use overlay::{Clicks, HitRegion, Overlay};
 use rules::{AppRules, Plan, PolishPrefs};

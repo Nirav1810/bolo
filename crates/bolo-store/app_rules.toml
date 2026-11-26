@@ -1,23 +1,27 @@
-# Bolo's app rules: how dictated text goes into each Windows app (M3 spec, ADR-0018).
-# Bundled into the app. The user's `[[apps]]` rows in settings (the Apps tab, ADR-0020)
-# win over `name`, `format` and `polish` field by field, and can add a tone; `code_mode`,
-# `paste` and `multiline_swap_safe` are this table's alone.
+# Bolo's app rules: how dictated text goes into each app (M3 spec, ADR-0018), on Windows
+# and on Android (ADR-0022). Bundled into bolo-store, so the desktop app and the Android
+# keyboard read the same table. The user's `[[apps]]` rows in settings (the Apps tab,
+# ADR-0020) win over `name`, `format` and `polish` field by field, and can add a tone;
+# `code_mode`, `paste` and `multiline_swap_safe` are this table's alone.
 #
-# The first rule that matches wins. A rule matches when the window in front belongs to
-# one of its `exe` names (lower-case image names). A rule with `title` and no `exe`
-# matches the `browsers` below when the window title contains `title`, ignoring case.
-# Apps that no rule matches get the defaults: plain text, Ctrl+V, polish as the global
-# setting says, no multi-line swap.
+# The first rule that matches wins. On Windows a rule matches when the window in front
+# belongs to one of its `exe` names (lower-case image names). A rule with `title` and no
+# `exe` matches the `browsers` below when the window title contains `title`, ignoring
+# case. On Android a rule matches when the text field belongs to one of its `package`
+# names (the app's package, compared ignoring case). Apps that no rule matches get the
+# defaults: plain text, Ctrl+V, polish as the global setting says, no multi-line swap.
 #
 # Fields:
 #   name                 the app's name, given to polish ("Gmail", "Slack")
+#   exe                  Windows image names
+#   package              Android package names
 #   format               plain | markdown | html
 #   code_mode            no sentence capitalisation or trailing period
 #   polish               false turns polish off here; unset follows the global setting
-#   paste                ctrl-v | shift-insert
+#   paste                ctrl-v | shift-insert (Windows)
 #   multiline_swap_safe  the app counts a pasted line break as one Shift+Left, so the
 #                        polish swap may replace multi-line text. Set it only for an app
-#                        checked by hand.
+#                        checked by hand. (Windows)
 
 browsers = ["chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "arc.exe"]
 
@@ -108,4 +112,37 @@ format = "markdown"
 [[rule]]
 name = "Discord"
 exe = ["discord.exe"]
+format = "markdown"
+
+# Android (ADR-0022): by package name. An Android text field takes plain text through the
+# keyboard, so only apps that render Markdown typed into the box get it.
+
+[[rule]]
+name = "WhatsApp"
+package = ["com.whatsapp", "com.whatsapp.w4b"]
+format = "plain"
+
+[[rule]]
+name = "Gmail"
+package = ["com.google.android.gm"]
+format = "plain"
+
+[[rule]]
+name = "Chrome"
+package = ["com.android.chrome"]
+format = "plain"
+
+[[rule]]
+name = "Keep"
+package = ["com.google.android.keep"]
+format = "plain"
+
+[[rule]]
+name = "Messages"
+package = ["com.google.android.apps.messaging"]
+format = "plain"
+
+[[rule]]
+name = "Slack"
+package = ["com.slack"]
 format = "markdown"

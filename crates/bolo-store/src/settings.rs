@@ -7,7 +7,8 @@
 //!   `[[apps]]` profile table instead (ADR-0020).
 //!   [`Settings::load`] migrates older versions step by step and saves the result.
 //!   The `[[snippets]]` table came later in version 2; it is additive, so there was no
-//!   new version for it. Nor for `[audio]`, added after it.
+//!   new version for it. Nor for `[audio]`, added after it, nor for the `package` key of
+//!   `[[apps]]` rows (the Android keyboard's app profiles, ADR-0022).
 //! - Keys this version doesn't know are kept through a load and save, so a newer Bolo's
 //!   settings survive a run of an older one.
 //! - A file that doesn't parse, or whose values have the wrong types, is renamed to
@@ -24,6 +25,7 @@ use bolo_core::{ANTHROPIC, ApiKeys, EngineConfig, HinglishScript, LanguageMode, 
 use serde::{Deserialize, Serialize};
 use toml::{Table, Value};
 
+use crate::apps::{AppKey, AppKind};
 use crate::{Result, Secrets, StoreError, io_err};
 
 /// The settings layout this build writes.
@@ -76,10 +78,19 @@ impl Default for PolishSettings {
 /// One `[[apps]]` row: the user's choices for one app (ADR-0020). Each field the user
 /// set wins over the bundled app rule's; an unset field falls back to the rule, then to
 /// the default (plain text, the global polish switch, the global tone).
+///
+/// A row names a Windows program by `exe` or an Android app by `package` (ADR-0022). The
+/// desktop's rows have only `exe` and the keyboard's only `package`; `package` came later
+/// in version 2 and is additive, so files written before it load unchanged. A row that
+/// names both matches either app.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct AppProfile {
-    /// The lower-case image name, e.g. `slack.exe`.
+    /// The lower-case image name, e.g. `slack.exe`. Empty in an Android row.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub exe: String,
+    /// The Android package name, e.g. `com.whatsapp`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
     /// The app's name, shown in the window and given to polish.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -100,12 +111,48 @@ impl AppProfile {
     pub fn new(exe: &str) -> Self {
         Self { exe: exe_name(exe), ..Self::default() }
     }
+
+    /// An empty row for `app`.
+    pub fn for_app(app: &AppKey) -> Self {
+        match app {
+            AppKey::Exe(exe) => Self::new(exe),
+            AppKey::Package(p) => Self { package: Some(package_name(p)), ..Self::default() },
+        }
+    }
+
+    /// This row is for `app`: its exe (tidied by [`exe_name`]) or its package (tidied by
+    /// [`package_name`]) is `app`'s.
+    pub fn matches(&self, app: &AppKey) -> bool {
+        match app {
+            AppKey::Exe(exe) => !self.exe.trim().is_empty() && exe_name(&self.exe) == *exe,
+            AppKey::Package(p) => !p.is_empty() && self.package.as_deref().is_some_and(|q| package_name(q) == *p),
+        }
+    }
+
+    /// The app of `kind` this row names, tidied; `None` if it names none.
+    pub fn key(&self, kind: AppKind) -> Option<AppKey> {
+        match kind {
+            AppKind::Exe => Some(exe_name(&self.exe)).filter(|e| e != ".exe").map(AppKey::Exe),
+            AppKind::Package => self.package.as_deref().map(package_name).filter(|p| !p.is_empty()).map(AppKey::Package),
+        }
+    }
+
+    /// The row sets at least one field.
+    pub fn is_set(&self) -> bool {
+        self.name.is_some() || self.polish.is_some() || self.tone.is_some() || self.format.is_some()
+    }
 }
 
 /// `exe` as the app rules match it: trimmed, lower case, ending in `.exe`.
 pub fn exe_name(exe: &str) -> String {
     let exe = exe.trim().to_lowercase();
     if exe.ends_with(".exe") { exe } else { format!("{exe}.exe") }
+}
+
+/// An Android package as the app rules match it: trimmed and lower case. (Package names
+/// are case-sensitive, but no two installed apps differ only by case.)
+pub fn package_name(package: &str) -> String {
+    package.trim().to_lowercase()
 }
 
 /// One `[[snippets]]` row: say `trigger`, and Bolo inserts `text` in its place.
@@ -308,8 +355,9 @@ pub struct Loaded {
 
 impl Settings {
     /// `%APPDATA%\Bolo\settings.toml`.
+    #[cfg(not(target_os = "android"))]
     pub fn default_path() -> Result<PathBuf> {
-        Ok(crate::config_dir()?.join("settings.toml"))
+        Ok(crate::Paths::desktop()?.settings_file())
     }
 
     /// Reads `path`. A missing file gives the defaults and writes nothing. See the module
@@ -752,6 +800,50 @@ nightly = false
             Settings::parse("version = 1\n[polish.apps]\n\"slack.exe\" = \"off\"\n"),
             Err(Bad::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn android_rows_are_additive_and_old_files_load_unchanged() {
+        let v2 = "version = 2
+[[apps]]
+exe = \"slack.exe\"
+polish = false
+";
+        let (s, v) = Settings::parse(v2).ok().unwrap();
+        assert_eq!(v, 2);
+        assert_eq!(s.apps, [AppProfile { polish: Some(false), ..AppProfile::new("slack.exe") }]);
+
+        let (s, v) = Settings::parse(
+            "version = 2
+[[apps]]
+package = \" com.WhatsApp \"
+tone = \"casual\"
+
+             [[apps]]
+exe = \"slack.exe\"
+package = \"com.slack\"
+format = \"markdown\"
+",
+        )
+        .ok()
+        .unwrap();
+        assert_eq!(v, 2, "no version bump for package rows");
+        let whatsapp = AppKey::package("com.whatsapp");
+        assert!(s.apps[0].matches(&whatsapp) && !s.apps[0].matches(&AppKey::exe("whatsapp.exe")));
+        assert_eq!(s.apps[0].key(AppKind::Exe), None);
+        assert_eq!(s.apps[0].key(AppKind::Package), Some(whatsapp));
+        assert!(s.apps[1].matches(&AppKey::exe("slack.exe")) && s.apps[1].matches(&AppKey::package("com.Slack")));
+
+        // An Android row is written without an empty `exe`; a desktop row without `package`.
+        let text = toml::to_string(&Table::try_from(&s).unwrap()).unwrap();
+        assert!(!text.contains("exe = \"\""), "{text}");
+        let t: Table = text.parse().unwrap();
+        assert_eq!(t["apps"][0].get("exe"), None);
+        let (again, _) = Settings::parse(&format!("version = 2
+{text}")).ok().unwrap();
+        assert_eq!(again, s);
+        let desktop = toml::to_string(&Table::try_from(Settings::parse(v2).ok().unwrap().0).unwrap()).unwrap();
+        assert!(!desktop.contains("package"), "{desktop}");
     }
 
     #[test]
