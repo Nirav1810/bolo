@@ -6,7 +6,7 @@
 
 **Secrets.** Kotlin implements `SecretStore` (`get`, `set`, `delete`) as a foreign trait. Values are encrypted with an AES-GCM key held in the Android Keystore and stored in private SharedPreferences. `bolo-ffi` wraps the trait in a `keyring_core::CredentialStore`, so `bolo_store::Secrets::with_store` works unchanged.
 
-**TLS.** Cloud engines use `rustls-platform-verifier`. On Android it needs its Kotlin component (the Maven artifact shipped inside the crate) and a one-time `init_with_env` from JNI. `Bolo`'s constructor does that from the `Context` Kotlin passes in.
+**TLS.** Cloud engines, polish and model downloads use `rustls-platform-verifier`. On Android it needs its Kotlin component and a one-time `init_with_env` from JNI. The component (`org.rustls:rustls-platform-verifier`) isn't in the crate: its maintainers publish it in a Maven repository on their GitHub (`maven-archive` branch), and Gradle takes it from there at the version of the `rustls-platform-verifier-android` crate in `Cargo.lock`, so the Kotlin and Rust halves always match. UniFFI loads `libbolo_ffi.so` through JNA, which has no `JNIEnv`, so `bolo-ffi` also exports one plain JNI function, `Java_dev_bolo_android_Native_initTls`. Kotlin's `Native.init(context)` calls it with the application context once per process (idempotent), and `Bolo`'s constructor refuses to open on Android until it has run: a connection without the verifier panics, which aborts a release build.
 
 ## Considered Options
 

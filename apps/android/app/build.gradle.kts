@@ -15,6 +15,15 @@ val boloVersion: String = run {
         ?: error("no version in [workspace.package] of Cargo.toml")
 }
 
+// rustls-platform-verifier's Kotlin component must match its Rust side exactly: use the
+// version of the rustls-platform-verifier-android crate that Cargo.lock resolved.
+val rustlsVerifierVersion: String = run {
+    val crate = "rustls-platform-verifier-android"
+    val lock = repoRoot.resolve("Cargo.lock").readText()
+    Regex("""\[\[package]]\s*name = "${Regex.escape(crate)}"\s*version = "([^"]+)"""").find(lock)?.groupValues?.get(1)
+        ?: error("no $crate in Cargo.lock")
+}
+
 // major.minor.patch → MMmmpp00; the last two digits are left for rebuilds of one version.
 val boloVersionCode: Int = run {
     val (major, minor, patch) = boloVersion.substringBefore('-').split('.').map { it.toInt() }
@@ -108,6 +117,7 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     debugImplementation(libs.compose.ui.tooling)
     implementation(libs.jna) { artifact { type = "aar" } }
+    implementation(libs.rustls.platform.verifier) { version { strictly(rustlsVerifierVersion) } }
 
     testImplementation(libs.junit)
     // Instrumented tests (`connectedDebugAndroidTest`) run on the emulator, not in CI.

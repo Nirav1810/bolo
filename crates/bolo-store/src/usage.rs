@@ -59,6 +59,19 @@ pub struct ProviderUsage {
     pub cost_usd: f64,
 }
 
+/// The meter's totals as the Usage page shows them (desktop and Android).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct UsageSummary {
+    /// Since the viewer's local midnight.
+    pub today: Vec<ProviderUsage>,
+    pub last_30_days: Vec<ProviderUsage>,
+    pub all_time: Vec<ProviderUsage>,
+    /// When the meter's oldest request was recorded.
+    pub since_ms: Option<i64>,
+}
+
+const MS_PER_DAY: i64 = 86_400_000;
+
 /// The provider that bills an engine id: `deepgram-stream:nova-3` → `deepgram`.
 pub fn provider_of(engine_id: &str) -> &str {
     let name = engine_id.split(':').next().unwrap_or(engine_id);
@@ -115,6 +128,17 @@ impl History {
     /// When the oldest usage row was recorded, if there is one.
     pub fn usage_started(&self) -> Result<Option<i64>> {
         Ok(self.conn.query_row("SELECT MIN(at_ms) FROM usage", [], |r| r.get(0))?)
+    }
+
+    /// The Usage page's totals: since `today_start_ms` (the viewer's local midnight, which
+    /// only the UI knows), the 30 days before `now_ms`, and all time.
+    pub fn usage_summary(&self, today_start_ms: i64, now_ms: i64) -> Result<UsageSummary> {
+        Ok(UsageSummary {
+            today: self.usage_since(today_start_ms)?,
+            last_30_days: self.usage_since(now_ms - 30 * MS_PER_DAY)?,
+            all_time: self.usage_since(0)?,
+            since_ms: self.usage_started()?,
+        })
     }
 
     /// Deletes every usage row (the meter's Reset).
@@ -180,6 +204,23 @@ mod tests {
         let recent = h.usage_since(5_000).unwrap();
         assert_eq!(recent[1].requests, 1);
         assert!(h.usage_since(8_000).unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_summary_splits_today_the_last_30_days_and_all_time() {
+        let h = History::open_in_memory().unwrap();
+        let now = 100 * MS_PER_DAY;
+        h.record_usage(&speech(now - 40 * MS_PER_DAY, "groq:whisper-large-v3-turbo", 3.0, 0.0001)).unwrap();
+        h.record_usage(&speech(now - 2 * MS_PER_DAY, "deepgram:nova-3", 2.0, 0.0002)).unwrap();
+        h.record_usage(&polish(now - 1_000, 100, 20, 0.00003)).unwrap();
+
+        let s = h.usage_summary(now - 3_600_000, now).unwrap();
+        let names = |v: &[ProviderUsage]| v.iter().map(|p| p.provider.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&s.today), ["anthropic"]);
+        assert_eq!(names(&s.last_30_days), ["anthropic", "deepgram"]);
+        assert_eq!(names(&s.all_time), ["anthropic", "deepgram", "groq"]);
+        assert_eq!(s.since_ms, Some(now - 40 * MS_PER_DAY));
+        assert_eq!(History::open_in_memory().unwrap().usage_summary(0, now).unwrap(), UsageSummary::default());
     }
 
     #[test]

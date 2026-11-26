@@ -52,8 +52,12 @@ import dev.bolo.ffi.Dictation
 import dev.bolo.ffi.ErrorKind
 import dev.bolo.ffi.FfiException
 import dev.bolo.ffi.FieldKind
+import dev.bolo.ffi.Notice
 import dev.bolo.ffi.State
 import java.io.File
+import java.time.LocalDate
+import java.time.ZoneId
+import java.util.Locale
 
 /**
  * Ticket 01's debug screen: hold the button to dictate with the engine. The model must
@@ -61,7 +65,8 @@ import java.io.File
  * itself is ticket 06.
  *
  * Bolo reads `settings.toml` from `filesDir` and its keys from [KeystoreSecretStore]
- * (ticket 04); the engine field writes the settings' engine chain.
+ * (ticket 04); the engine field writes the settings' engine chain. The bottom line is the
+ * usage meter's today/30-day totals (ticket 08; the real Usage page is ticket 07).
  */
 class MainActivity : ComponentActivity() {
     private val main = Handler(Looper.getMainLooper())
@@ -73,6 +78,7 @@ class MainActivity : ComponentActivity() {
     private var text by mutableStateOf("")
     private var level by mutableFloatStateOf(0f)
     private var listening by mutableStateOf(false)
+    private var usage by mutableStateOf("")
     @Volatile private var replaying = false
 
     private val askMic = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -88,13 +94,45 @@ class MainActivity : ComponentActivity() {
             Log.i(TAG, "final stt_ms=${dictation.sttMs} total_ms=${dictation.totalMs} engine=${dictation.engineId}")
             // The debug replay prints its text so a run can be checked from logcat.
             if (replaying) Log.i(TAG, "replay text [${dictation.language}]: ${dictation.plain}")
+            refreshUsage()
         }
-        override fun onPolished(dictation: Dictation) = post { text = dictation.plain }
+        override fun onPolished(dictation: Dictation) = post {
+            text = dictation.plain
+            if (replaying) Log.i(TAG, "replay polished: ${dictation.plain}")
+            refreshUsage()
+        }
         override fun onState(state: State) = post { if (state == State.PROCESSING) status = "Finishing…" }
-        override fun onError(kind: ErrorKind, message: String) = post { status = "Error ($kind): $message" }
+        override fun onError(kind: ErrorKind, message: String) = post {
+            status = "Error ($kind): $message"
+            Log.w(TAG, "error ($kind): $message")
+        }
         override fun onSettingsChanged(settings: BoloSettings) {
             Log.i(TAG, "settings changed: engines=${settings.engines} language=${settings.language}")
         }
+        override fun onNotice(notice: Notice) = post {
+            Log.i(TAG, "notice: $notice")
+            status = when (notice) {
+                Notice.OFFLINE -> "Offline, using the local model"
+            }
+        }
+    }
+
+    /** The usage meter's line: what today and the last 30 days cost, per provider. */
+    private fun refreshUsage() {
+        val b = bolo ?: return
+        val midnight = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val summary = try {
+            b.usageSummary(midnight)
+        } catch (e: FfiException) {
+            usage = "Usage: ${e.message}"
+            return
+        }
+        fun line(totals: List<dev.bolo.ffi.ProviderTotals>) = totals.joinToString { t ->
+            val amount = if (t.audioSecs > 0) "%.0f s".format(Locale.ROOT, t.audioSecs) else "${t.inputTokens + t.outputTokens} tok"
+            "${t.provider} ${t.requests}× $amount $%.4f".format(Locale.ROOT, t.costUsd)
+        }.ifEmpty { "nothing" }
+        usage = "Usage today: ${line(summary.today)}\n30 days: ${line(summary.last30Days)}"
+        Log.i(TAG, usage.replace('\n', ';'))
     }
 
     private fun post(block: () -> Unit) {
@@ -103,16 +141,59 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Native.init(this)
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             askMic.launch(Manifest.permission.RECORD_AUDIO)
         }
         setContent { DebugScreen() }
-        replayFrom(intent)
+        debugIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        debugIntent(intent)
+    }
+
+    private fun debugIntent(intent: Intent?) {
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return
+        importKeys(intent)
+        intent?.takeIf { it.hasExtra("polish") }?.let { setPolish(it.getBooleanExtra("polish", false)) }
         replayFrom(intent)
+    }
+
+    /**
+     * Debuggable builds only: `--es import_keys <file>` stores the `provider=key` lines of
+     * a file in the app's `filesDir` through [KeystoreSecretStore], then deletes the file.
+     * The key never appears on a command line (see apps/android/README.md).
+     */
+    private fun importKeys(intent: Intent?) {
+        val name = intent?.getStringExtra("import_keys") ?: return
+        val file = File(filesDir, name)
+        try {
+            val b = engineFor(engine.trim())
+            // PowerShell pipes start with a byte order mark.
+            val stored = file.readText().removePrefix("\uFEFF").lines().mapNotNull { line ->
+                val (provider, key) = line.split('=', limit = 2).takeIf { it.size == 2 } ?: return@mapNotNull null
+                b.setApiKey(provider.trim(), key.trim())
+                provider.trim()
+            }
+            Log.i(TAG, "imported keys for $stored")
+        } catch (e: Exception) {
+            Log.w(TAG, "key import failed: ${e.javaClass.simpleName}")
+        } finally {
+            file.delete()
+        }
+    }
+
+    /** Debuggable builds only: `--ez polish true|false` turns Claude polish on or off. */
+    private fun setPolish(on: Boolean) {
+        try {
+            val b = engineFor(engine.trim())
+            b.saveSettings(b.settings().copy(polish = on))
+            Log.i(TAG, "polish ${if (on) "on" else "off"}")
+        } catch (e: FfiException) {
+            Log.w(TAG, "could not set polish: ${e.message}")
+        }
     }
 
     /**
@@ -123,7 +204,6 @@ class MainActivity : ComponentActivity() {
      */
     private fun replayFrom(intent: Intent?) {
         val path = intent?.getStringExtra("replay") ?: return
-        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return
         intent.getStringExtra("engine")?.let { engine = it }
         val pcm = try {
             WavFile.readPcm16Mono16k(File(path))
@@ -183,7 +263,10 @@ class MainActivity : ComponentActivity() {
         bolo = null
     }
 
-    /** The one `Bolo`, opened on first use, with `spec` as its engine chain. */
+    /**
+     * The one `Bolo`, opened on first use, with `spec` as its engine chain: comma-separated
+     * specs, primary first (`deepgram-stream,local:moonshine-tiny`).
+     */
     private fun engineFor(spec: String): Bolo {
         val b = bolo ?: Bolo(
             BoloPaths(
@@ -193,9 +276,13 @@ class MainActivity : ComponentActivity() {
             ),
             KeystoreSecretStore(this),
             listener,
-        ).also { bolo = it }
+        ).also {
+            bolo = it
+            refreshUsage()
+        }
+        val engines = spec.split(',').map { it.trim() }.filter { it.isNotEmpty() }
         val settings = b.settings()
-        if (settings.engines != listOf(spec)) b.saveSettings(settings.copy(engines = listOf(spec)))
+        if (settings.engines != engines) b.saveSettings(settings.copy(engines = engines))
         return b
     }
 
@@ -276,6 +363,7 @@ class MainActivity : ComponentActivity() {
                             Text(if (listening) "Listening" else "Hold", color = Color.White)
                         }
                     }
+                    Text(usage, style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(8.dp))
                 }
             }

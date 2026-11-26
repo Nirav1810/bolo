@@ -29,11 +29,16 @@ bolo-stt = { workspace = true }
 keyring-core = "1"
 uniffi = "0.33"
 thiserror = { workspace = true }
+# probe_https's runtime (the engine runs its own).
+tokio = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 tracing-android = "0.2"
+# Native.initTls: the verifier's Android init takes a JNIEnv (UniFFI's JNA has none).
+jni = "0.22"
+rustls-platform-verifier = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }
