@@ -14,9 +14,12 @@
 //!
 //! Every listener call comes from a Rust thread (or, for `on_settings_changed`, the
 //! thread that saved): Kotlin posts it to the main thread.
+//!
+//! On Android, `Native.initTls(context)` must run once before the first `Bolo` opens
+//! (see [`tls`]).
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Once, PoisonError, Weak};
 use std::time::SystemTime;
 
@@ -29,9 +32,13 @@ use bolo_store::{History, Journal, Paths, Secrets, Settings, StoreError};
 pub mod push;
 pub mod records;
 pub mod secrets;
+pub mod tls;
 
 use push::PushRing;
-pub use records::{AppEntry, AppProfileEntry, BoloSettings, Format, HistoryEntry, Language, Script, SnippetEntry};
+pub use records::{
+    AppEntry, AppProfileEntry, BoloSettings, Format, HistoryEntry, Language, ProviderTotals, Script, SnippetEntry,
+    UsageSummary,
+};
 pub use secrets::{SecretError, SecretStore};
 
 uniffi::setup_scaffolding!();
@@ -164,6 +171,9 @@ pub enum FfiError {
     /// The field is a password or incognito field: Bolo doesn't listen there.
     #[error("Bolo doesn't dictate into password or incognito fields")]
     SensitiveField,
+    /// A connection failed: no network, or the server's certificate was refused.
+    #[error("{detail}")]
+    Network { detail: String },
 }
 
 impl From<BoloError> for FfiError {
@@ -192,6 +202,15 @@ fn kind_of(e: &BoloError) -> ErrorKind {
     }
 }
 
+/// Something the keyboard says once, next to the text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum Notice {
+    /// The cloud engine failed (the network is gone, usually) and the local model
+    /// transcribed this dictation: "Offline, using the local model". Said once until a
+    /// cloud engine works again.
+    Offline,
+}
+
 /// Engine and settings events, implemented in Kotlin.
 #[uniffi::export(with_foreign)]
 pub trait BoloListener: Send + Sync {
@@ -208,6 +227,8 @@ pub trait BoloListener: Send + Sync {
     /// The settings changed (saved through any `Bolo` in this process, or reloaded from
     /// the file): the settings as they are now.
     fn on_settings_changed(&self, settings: BoloSettings);
+    /// A one-time notice for the panel, sent just before the `on_final` it is about.
+    fn on_notice(&self, notice: Notice);
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -220,6 +241,23 @@ struct Events {
     journal: Arc<Journal>,
     retention_days: Arc<AtomicU32>,
     last_prune_ms: Arc<AtomicI64>,
+    /// The engine chain starts with a cloud engine.
+    cloud_first: Arc<AtomicBool>,
+    /// [`Notice::Offline`] was sent and no cloud engine has worked since.
+    offline_told: AtomicBool,
+}
+
+impl Events {
+    /// Tells the listener once when the local model stood in for the cloud engine, and
+    /// forgets that once a cloud engine transcribes again.
+    fn note_engine(&self, engine_id: &str) {
+        if !engine_id.starts_with(LOCAL_PREFIX) {
+            self.offline_told.store(false, Ordering::Relaxed);
+        } else if self.cloud_first.load(Ordering::Relaxed) && !self.offline_told.swap(true, Ordering::Relaxed) {
+            tracing::info!(engine_id, "the cloud engine failed; the local model took over");
+            self.listener.on_notice(Notice::Offline);
+        }
+    }
 }
 
 impl EngineEvents for Events {
@@ -230,6 +268,7 @@ impl EngineEvents for Events {
         self.listener.on_partial(text);
     }
     fn on_final(&self, out: FormattedOutput) {
+        self.note_engine(&out.engine_id);
         self.journal.finished(&out);
         prune_daily(&self.journal, &self.retention_days, &self.last_prune_ms);
         self.listener.on_final(out.into());
@@ -263,6 +302,15 @@ fn prune_daily(journal: &Journal, retention_days: &AtomicU32, last_prune_ms: &At
         Some(Err(e)) => tracing::warn!(%e, "could not prune history"),
         _ => {}
     }
+}
+
+/// Engine specs and ids of local engines start with this (`local:moonshine-tiny`).
+const LOCAL_PREFIX: &str = "local:";
+
+/// Whether `settings`' engine chain starts with a cloud engine, so a local result means
+/// the cloud failed.
+fn cloud_first(settings: &Settings) -> bool {
+    settings.engines.first().is_some_and(|e| !e.starts_with(LOCAL_PREFIX))
 }
 
 /// The engine config for `settings` on Android: the models in `paths.models_dir` (the
@@ -301,6 +349,7 @@ struct Inner {
     secrets: Mutex<Secrets>,
     journal: Arc<Journal>,
     retention_days: Arc<AtomicU32>,
+    cloud_first: Arc<AtomicBool>,
     listener: Arc<dyn BoloListener>,
 }
 
@@ -325,6 +374,7 @@ impl Inner {
         *lock(&self.seen) = modified(&self.paths);
         let old = std::mem::replace(&mut *lock(&self.settings), new.clone());
         let changes = bolo_store::form::changes(&old, &new);
+        self.cloud_first.store(cloud_first(&new), Ordering::Relaxed);
         if changes.engine {
             // The model reloads at the next dictation; the keyboard never warms it
             // before a mic tap (ADR-0022), so `changes.warm` is ignored.
@@ -383,6 +433,10 @@ impl Bolo {
         listener: Arc<dyn BoloListener>,
     ) -> Result<Arc<Self>, FfiError> {
         init_logging();
+        if !tls::ready() {
+            // A connection without the verifier would abort the process.
+            return Err(tls::not_ready());
+        }
         Self::open(paths.into(), secret_store, listener, None)
     }
 
@@ -524,6 +578,20 @@ impl Bolo {
     pub fn clear_history(&self) -> Result<(), FfiError> {
         Ok(self.inner.journal.with_history(|h| h.clear()).transpose().map(drop)?)
     }
+
+    /// The usage meter (paid cloud requests: speech engines and Claude polish), as the
+    /// desktop's Usage page shows it. `today_start_ms` is the phone's local midnight in
+    /// Unix milliseconds. Empty when history couldn't be opened.
+    pub fn usage_summary(&self, today_start_ms: i64) -> Result<UsageSummary, FfiError> {
+        let now = bolo_store::history::now_ms();
+        let summary = self.inner.journal.with_history(|h| h.usage_summary(today_start_ms, now)).transpose()?;
+        Ok(summary.map(UsageSummary::from).unwrap_or_default())
+    }
+
+    /// Empties the usage meter (the Usage section's Reset).
+    pub fn reset_usage(&self) -> Result<(), FfiError> {
+        Ok(self.inner.journal.with_history(|h| h.clear_usage()).transpose().map(drop)?)
+    }
 }
 
 impl Bolo {
@@ -552,6 +620,7 @@ impl Bolo {
         let journal = Arc::new(Journal::new(history));
         let retention_days = Arc::new(AtomicU32::new(settings.history.retention_days));
         let last_prune_ms = Arc::new(AtomicI64::new(0));
+        let cloud_first = Arc::new(AtomicBool::new(cloud_first(&settings)));
         prune_daily(&journal, &retention_days, &last_prune_ms);
 
         let ring = PushRing::new();
@@ -561,6 +630,8 @@ impl Bolo {
             journal: journal.clone(),
             retention_days: retention_days.clone(),
             last_prune_ms,
+            cloud_first: cloud_first.clone(),
+            offline_told: AtomicBool::new(false),
         });
         let engine = match stt {
             None => Engine::with_audio_source(config.clone(), events, ring.factory())?,
@@ -577,6 +648,7 @@ impl Bolo {
             secrets: Mutex::new(secrets),
             journal,
             retention_days,
+            cloud_first,
             listener,
         });
         let mut open = lock(&OPEN);
@@ -604,7 +676,7 @@ impl Bolo {
 }
 
 /// Route `tracing` to logcat (tag `bolo`) once per process.
-fn init_logging() {
+pub(crate) fn init_logging() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         #[cfg(target_os = "android")]

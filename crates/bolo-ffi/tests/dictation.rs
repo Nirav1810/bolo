@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -11,9 +12,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use bolo_ffi::{
     AppProfileEntry, Bolo, BoloListener, BoloPaths, BoloSettings, Dictation, ErrorKind, FfiError, FieldKind, Format,
-    Language, SecretError, SecretStore, State,
+    Language, Notice, SecretError, SecretStore, State,
 };
-use bolo_stt::{SttEngine, SttOptions, Transcript};
+use bolo_stt::fallback::FallbackEngine;
+use bolo_stt::{Billed, SttEngine, SttError, SttOptions, Transcript};
 
 /// Returns fixed text for any audio, and records how much audio it was given.
 struct FakeStt {
@@ -28,6 +30,47 @@ impl SttEngine for FakeStt {
     async fn transcribe(&self, audio: &[f32], _opts: &SttOptions) -> bolo_stt::Result<Transcript> {
         *self.heard.lock().unwrap() += audio.len();
         Ok(Transcript { text: "testing one two three".into(), engine_id: "fake".into(), ..Transcript::default() })
+    }
+}
+
+/// A paid cloud engine that works while `online` is set, and fails like a dropped
+/// network otherwise.
+struct FakeCloud {
+    online: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl SttEngine for FakeCloud {
+    fn id(&self) -> &str {
+        "deepgram:nova-3"
+    }
+    async fn transcribe(&self, audio: &[f32], _opts: &SttOptions) -> bolo_stt::Result<Transcript> {
+        if !self.online.load(Ordering::SeqCst) {
+            return Err(SttError::Network("dns error: no network".into()));
+        }
+        Ok(Transcript {
+            text: "from the cloud".into(),
+            engine_id: "deepgram:nova-3".into(),
+            billed: Billed::audio(audio.len(), 0.258),
+            ..Transcript::default()
+        })
+    }
+}
+
+/// The local model at the end of the chain.
+struct FakeLocal;
+
+#[async_trait]
+impl SttEngine for FakeLocal {
+    fn id(&self) -> &str {
+        "local:moonshine-tiny"
+    }
+    async fn transcribe(&self, _audio: &[f32], _opts: &SttOptions) -> bolo_stt::Result<Transcript> {
+        Ok(Transcript {
+            text: "from the phone".into(),
+            engine_id: "local:moonshine-tiny".into(),
+            ..Transcript::default()
+        })
     }
 }
 
@@ -53,6 +96,7 @@ enum Event {
     Error(ErrorKind, String),
     State(State),
     Settings(BoloSettings),
+    Notice(Notice),
 }
 
 struct Recorder(Mutex<Sender<Event>>);
@@ -79,6 +123,9 @@ impl BoloListener for Recorder {
     fn on_settings_changed(&self, settings: BoloSettings) {
         self.send(Event::Settings(settings));
     }
+    fn on_notice(&self, notice: Notice) {
+        self.send(Event::Notice(notice));
+    }
 }
 
 fn paths(dir: &Path) -> BoloPaths {
@@ -93,11 +140,29 @@ struct Rig {
 }
 
 fn open(dir: &Path, store: &Arc<MemoryStore>) -> Rig {
-    let (tx, events) = mpsc::channel();
     let heard = Arc::new(Mutex::new(0));
-    let stt = Arc::new(FakeStt { heard: heard.clone() });
+    open_on(dir, store, Arc::new(FakeStt { heard: heard.clone() }), heard)
+}
+
+fn open_on(dir: &Path, store: &Arc<MemoryStore>, stt: Arc<dyn SttEngine>, heard: Arc<Mutex<usize>>) -> Rig {
+    let (tx, events) = mpsc::channel();
     let bolo = Bolo::with_stt(paths(dir), store.clone(), Arc::new(Recorder(Mutex::new(tx))), stt).expect("opens");
     Rig { bolo, events, heard }
+}
+
+/// A `Bolo` whose chain is Deepgram, then the local model (`deepgram` →
+/// `local:moonshine-tiny`), with the network switched by the returned flag.
+fn cloud_rig(dir: &Path) -> (Rig, Arc<AtomicBool>) {
+    let online = Arc::new(AtomicBool::new(true));
+    let chain = FallbackEngine::new(vec![
+        (Arc::new(FakeCloud { online: online.clone() }) as Arc<dyn SttEngine>, Duration::from_secs(2)),
+        (Arc::new(FakeLocal), Duration::from_secs(5)),
+    ])
+    .unwrap();
+    let r = open_on(dir, &Arc::default(), Arc::new(chain), Arc::default());
+    let engines = vec!["deepgram".into(), "local:moonshine-tiny".into()];
+    r.bolo.save_settings(BoloSettings { engines, language: Language::English, ..r.bolo.settings() }).unwrap();
+    (r, online)
 }
 
 /// A `Bolo` on fresh files, its engine set to the fake.
@@ -115,6 +180,12 @@ fn frame(n: usize) -> Vec<u8> {
 
 /// Dictates one second of tone into `package` and returns the final text.
 fn dictate(r: &Rig, package: &str) -> Dictation {
+    dictate_noting(r, package).0
+}
+
+/// [`dictate`], with the notices that came before the final text.
+fn dictate_noting(r: &Rig, package: &str) -> (Dictation, Vec<Notice>) {
+    let mut notices = Vec::new();
     r.bolo.start(package.into(), FieldKind::Normal).expect("starts");
     assert_eq!(r.bolo.state(), State::Listening);
     for n in 0..50 {
@@ -125,8 +196,9 @@ fn dictate(r: &Rig, package: &str) -> Dictation {
     r.bolo.stop().expect("stops");
     loop {
         match r.events.recv_timeout(Duration::from_secs(10)).expect("an event within 10 s") {
-            Event::Final(d) => return d,
+            Event::Final(d) => return (d, notices),
             Event::Error(kind, msg) => panic!("dictation failed: {kind:?} {msg}"),
+            Event::Notice(n) => notices.push(n),
             Event::State(_) | Event::Settings(_) => {}
         }
     }
@@ -307,4 +379,71 @@ fn history_can_be_searched_deleted_and_cleared_and_respects_the_switch() {
     r.bolo.save_settings(BoloSettings { history: false, ..r.bolo.settings() }).unwrap();
     dictate(&r, "com.whatsapp");
     assert!(r.bolo.history(10).unwrap().is_empty(), "history off: nothing written");
+}
+
+#[test]
+fn a_lost_network_falls_back_to_the_local_model_and_says_so_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let (r, online) = cloud_rig(dir.path());
+
+    let (d, notices) = dictate_noting(&r, "com.whatsapp");
+    assert_eq!((d.plain.as_str(), d.engine_id.as_str()), ("From the cloud.", "deepgram:nova-3"));
+    assert!(notices.is_empty());
+
+    online.store(false, Ordering::SeqCst);
+    let (d, notices) = dictate_noting(&r, "com.whatsapp");
+    assert_eq!((d.plain.as_str(), d.engine_id.as_str()), ("From the phone.", "local:moonshine-tiny"));
+    assert_eq!(notices, [Notice::Offline]);
+    let (d, notices) = dictate_noting(&r, "com.whatsapp");
+    assert_eq!(d.engine_id, "local:moonshine-tiny");
+    assert!(notices.is_empty(), "said once, not every dictation");
+
+    // Back online, then offline again: said again.
+    online.store(true, Ordering::SeqCst);
+    assert!(dictate_noting(&r, "com.whatsapp").1.is_empty());
+    online.store(false, Ordering::SeqCst);
+    assert_eq!(dictate_noting(&r, "com.whatsapp").1, [Notice::Offline]);
+}
+
+#[test]
+fn a_local_first_chain_never_says_offline() {
+    let dir = tempfile::tempdir().unwrap();
+    let (r, online) = cloud_rig(dir.path());
+    online.store(false, Ordering::SeqCst);
+    let engines = vec!["local:moonshine-tiny".into(), "deepgram".into()];
+    r.bolo.save_settings(BoloSettings { engines, ..r.bolo.settings() }).unwrap();
+    // The fake chain still tries the cloud first, so the result is local, but the user
+    // asked for the local model: nothing to say.
+    let (d, notices) = dictate_noting(&r, "com.whatsapp");
+    assert_eq!(d.engine_id, "local:moonshine-tiny");
+    assert!(notices.is_empty());
+}
+
+#[test]
+fn cloud_dictations_reach_the_usage_summary() {
+    let dir = tempfile::tempdir().unwrap();
+    let (r, online) = cloud_rig(dir.path());
+    assert_eq!(r.bolo.usage_summary(0).unwrap(), bolo_ffi::UsageSummary::default());
+
+    dictate(&r, "com.whatsapp");
+    dictate(&r, "com.whatsapp");
+    online.store(false, Ordering::SeqCst);
+    dictate(&r, "com.whatsapp"); // the local model: free, not metered
+
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+    let summary = r.bolo.usage_summary(now - 3_600_000).unwrap();
+    for period in [&summary.today, &summary.last_30_days, &summary.all_time] {
+        let [deepgram] = period.as_slice() else { panic!("one provider: {period:?}") };
+        assert_eq!((deepgram.provider.as_str(), deepgram.requests), ("deepgram", 2));
+        assert!(deepgram.audio_secs > 1.0, "about a second each: {}", deepgram.audio_secs);
+        assert!(deepgram.cost_usd > 0.0);
+    }
+    assert!(summary.since_ms.is_some_and(|t| (now - 60_000..=now).contains(&t)));
+    assert!(r.bolo.usage_summary(now + 3_600_000).unwrap().today.is_empty(), "nothing after a later midnight");
+
+    // Clearing history keeps the meter; Reset empties it.
+    r.bolo.clear_history().unwrap();
+    assert_eq!(r.bolo.usage_summary(0).unwrap().all_time.len(), 1);
+    r.bolo.reset_usage().unwrap();
+    assert_eq!(r.bolo.usage_summary(0).unwrap(), bolo_ffi::UsageSummary::default());
 }

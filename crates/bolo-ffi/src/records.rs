@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use bolo_core::{HinglishScript, LanguageMode, OutputFormat, Snippet};
 use bolo_store::apps::{self, AppKey, AppKind, AppRules, AppView, Defaults};
 use bolo_store::form::{self, AppChange, General};
-use bolo_store::{AppProfile, HistoryRow, Settings};
+use bolo_store::{AppProfile, HistoryRow, ProviderUsage, Settings};
 
 /// Which language a dictation is in (GLOSSARY: Language mode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -285,6 +285,62 @@ impl From<HistoryRow> for HistoryEntry {
             engine: d.engine,
             text: d.final_text,
             polished: d.polished_text,
+        }
+    }
+}
+
+/// One provider's paid requests over a period, from the usage meter.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ProviderTotals {
+    /// Who bills it: `deepgram`, `groq`, `sarvam` or `anthropic`.
+    pub provider: String,
+    pub requests: u64,
+    /// Audio sent to a speech engine.
+    pub audio_secs: f64,
+    /// Claude polish's tokens.
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    /// An estimate at list price.
+    pub cost_usd: f64,
+}
+
+impl From<ProviderUsage> for ProviderTotals {
+    fn from(p: ProviderUsage) -> Self {
+        Self {
+            provider: p.provider,
+            requests: p.requests,
+            audio_secs: p.audio_secs,
+            input_tokens: p.input_tokens,
+            output_tokens: p.output_tokens,
+            cache_read_tokens: p.cache_read_tokens,
+            cache_write_tokens: p.cache_write_tokens,
+            cost_usd: p.cost_usd,
+        }
+    }
+}
+
+/// The Usage section: the meter's totals per provider, sorted by provider, as the
+/// desktop's Usage page shows them.
+#[derive(Debug, Clone, Default, PartialEq, uniffi::Record)]
+pub struct UsageSummary {
+    /// Since the `today_start_ms` asked for (the phone's local midnight).
+    pub today: Vec<ProviderTotals>,
+    pub last_30_days: Vec<ProviderTotals>,
+    pub all_time: Vec<ProviderTotals>,
+    /// When the meter's oldest request was recorded; `None` when it's empty.
+    pub since_ms: Option<i64>,
+}
+
+impl From<bolo_store::UsageSummary> for UsageSummary {
+    fn from(s: bolo_store::UsageSummary) -> Self {
+        let totals = |v: Vec<ProviderUsage>| v.into_iter().map(ProviderTotals::from).collect();
+        Self {
+            today: totals(s.today),
+            last_30_days: totals(s.last_30_days),
+            all_time: totals(s.all_time),
+            since_ms: s.since_ms,
         }
     }
 }

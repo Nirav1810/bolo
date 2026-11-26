@@ -9,6 +9,7 @@ import dev.bolo.ffi.BoloPaths
 import dev.bolo.ffi.BoloSettings
 import dev.bolo.ffi.Dictation
 import dev.bolo.ffi.ErrorKind
+import dev.bolo.ffi.Notice
 import dev.bolo.ffi.SecretException
 import dev.bolo.ffi.State
 import java.io.File
@@ -35,6 +36,7 @@ class KeystoreSecretStoreTest {
 
     @Before
     fun setUp() {
+        Native.init(context)
         cleanUp()
         store = KeystoreSecretStore(context, ALIAS, PREFS)
     }
@@ -112,6 +114,7 @@ class KeystoreSecretStoreTest {
         override fun onState(state: State) {}
         override fun onError(kind: ErrorKind, message: String) {}
         override fun onSettingsChanged(settings: BoloSettings) {}
+        override fun onNotice(notice: Notice) {}
     }
 
     private companion object {

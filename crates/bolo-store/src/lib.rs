@@ -36,7 +36,7 @@ pub use settings::{
     AppProfile, AudioSettings, Channel, HistorySettings, Loaded, OverlaySettings, PolishSettings, PushToTalkKey,
     SETTINGS_VERSION, Settings, SnippetRow, UpdateSettings, VariantSettings, exe_name, package_name,
 };
-pub use usage::{ProviderUsage, UsageEvent, provider_of};
+pub use usage::{ProviderUsage, UsageEvent, UsageSummary, provider_of};
 
 /// Everything that can go wrong in the store. Messages never contain an API key.
 #[derive(Debug, thiserror::Error)]
