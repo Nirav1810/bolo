@@ -45,12 +45,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import dev.bolo.ffi.Bolo
-import dev.bolo.ffi.BoloConfig
 import dev.bolo.ffi.BoloListener
+import dev.bolo.ffi.BoloPaths
+import dev.bolo.ffi.BoloSettings
 import dev.bolo.ffi.Dictation
 import dev.bolo.ffi.ErrorKind
 import dev.bolo.ffi.FfiException
-import dev.bolo.ffi.Language
+import dev.bolo.ffi.FieldKind
 import dev.bolo.ffi.State
 import java.io.File
 
@@ -58,11 +59,13 @@ import java.io.File
  * Ticket 01's debug screen: hold the button to dictate with the engine. The model must
  * already be in `noBackupFilesDir/models` (see apps/android/README.md). The keyboard
  * itself is ticket 06.
+ *
+ * Bolo reads `settings.toml` from `filesDir` and its keys from [KeystoreSecretStore]
+ * (ticket 04); the engine field writes the settings' engine chain.
  */
 class MainActivity : ComponentActivity() {
     private val main = Handler(Looper.getMainLooper())
     private var bolo: Bolo? = null
-    private var engineSpec: String? = null
     private val recorder = Recorder { frame -> bolo?.pushAudio(frame) }
 
     private var engine by mutableStateOf("local:moonshine-tiny")
@@ -89,6 +92,9 @@ class MainActivity : ComponentActivity() {
         override fun onPolished(dictation: Dictation) = post { text = dictation.plain }
         override fun onState(state: State) = post { if (state == State.PROCESSING) status = "Finishing…" }
         override fun onError(kind: ErrorKind, message: String) = post { status = "Error ($kind): $message" }
+        override fun onSettingsChanged(settings: BoloSettings) {
+            Log.i(TAG, "settings changed: engines=${settings.engines} language=${settings.language}")
+        }
     }
 
     private fun post(block: () -> Unit) {
@@ -136,7 +142,7 @@ class MainActivity : ComponentActivity() {
         replaying = true
         Thread({
             try {
-                b.start("dev.bolo.replay")
+                b.start("dev.bolo.replay", FieldKind.NORMAL)
                 post { listening = true }
                 val silence = ByteArray(Recorder.FRAME_BYTES * 15)
                 for (chunk in listOf(pcm, silence)) {
@@ -177,20 +183,20 @@ class MainActivity : ComponentActivity() {
         bolo = null
     }
 
+    /** The one `Bolo`, opened on first use, with `spec` as its engine chain. */
     private fun engineFor(spec: String): Bolo {
-        bolo?.takeIf { engineSpec == spec }?.let { return it }
-        bolo?.destroy()
-        val models = File(noBackupFilesDir, "models").apply { mkdirs() }
-        val config = BoloConfig(
-            modelsDir = models.absolutePath,
-            engines = listOf(spec),
-            language = Language.AUTO,
-            threads = null,
-        )
-        return Bolo(config, listener).also {
-            bolo = it
-            engineSpec = spec
-        }
+        val b = bolo ?: Bolo(
+            BoloPaths(
+                configDir = filesDir.absolutePath,
+                dataDir = filesDir.absolutePath,
+                modelsDir = File(noBackupFilesDir, "models").apply { mkdirs() }.absolutePath,
+            ),
+            KeystoreSecretStore(this),
+            listener,
+        ).also { bolo = it }
+        val settings = b.settings()
+        if (settings.engines != listOf(spec)) b.saveSettings(settings.copy(engines = listOf(spec)))
+        return b
     }
 
     private fun press() {
@@ -201,7 +207,7 @@ class MainActivity : ComponentActivity() {
         try {
             val b = engineFor(engine.trim())
             recorder.start()
-            b.start(packageName)
+            b.start(packageName, FieldKind.NORMAL)
             listening = true
             text = ""
             status = "Listening…"

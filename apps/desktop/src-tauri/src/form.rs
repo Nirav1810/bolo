@@ -2,41 +2,31 @@
 //! change to it means for the running app.
 //!
 //! The window sends the whole [`Form`] on every change (Windows Settings style: no Save
-//! button). [`Form::apply`] tidies it into the stored settings, keeping everything the
-//! form doesn't cover (the overlay, the models directory, unknown keys), and [`changes`]
-//! says which parts of the app have to follow. Both are pure, so they're tested here.
+//! button). The settings both apps share, and how they're tidied, are
+//! `bolo_store::form`'s [`General`]; this adds the desktop's own fields around it (the
+//! push-to-talk key, autostart, the microphone, updates). [`Form::apply`] keeps
+//! everything the form doesn't cover (the overlay, the models directory, unknown keys),
+//! and [`changes`] says which parts of the app have to follow. Both are pure, so they're
+//! tested here.
 //!
 //! The Apps tab edits the `[[apps]]` rows one field at a time instead ([`set_app`],
-//! [`reset_app`], [`add_app`]).
+//! [`reset_app`], [`add_app`]), by program name.
 
-use bolo_core::{HinglishScript, LanguageMode, OutputFormat, Snippet};
-use bolo_store::{AppProfile, Channel, PushToTalkKey, Settings, SnippetRow};
+use bolo_store::form::{self as shared, General};
+pub use bolo_store::form::{AppChange, CLOUD_ENGINES, new_exe, provider_of};
+use bolo_store::{AppKey, AppProfile, Channel, PushToTalkKey, Settings, exe_name};
 use serde::{Deserialize, Serialize};
 
 use crate::variant::Variant;
 
-/// The tones polish knows.
-pub const TONES: [&str; 3] = ["neutral", "casual", "formal"];
-
-/// The history retention the window offers, in days.
-pub const RETENTION_DAYS: [u32; 5] = [1, 7, 30, 90, 365];
-
 /// What the settings window edits.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Form {
+    /// Language, engines, dictionary, snippets, polish and history.
+    #[serde(flatten)]
+    pub general: General,
     pub push_to_talk: PushToTalkKey,
     pub autostart: bool,
-    pub language: LanguageMode,
-    pub script: HinglishScript,
-    /// Engine specs, primary first.
-    pub engines: Vec<String>,
-    pub dictionary: Vec<String>,
-    /// The `[[snippets]]` rows, in order.
-    pub snippets: Vec<Snippet>,
-    pub polish: bool,
-    pub tone: String,
-    pub history: bool,
-    pub retention_days: u32,
     /// The microphone by name; `None` for the Windows default.
     #[serde(default)]
     pub input_device: Option<String>,
@@ -49,49 +39,22 @@ pub struct Form {
 impl Form {
     pub fn of(s: &Settings) -> Self {
         Self {
+            general: General::of(s),
             push_to_talk: s.push_to_talk,
             autostart: s.autostart,
-            language: s.language,
-            script: s.script,
-            engines: s.engines.clone(),
-            dictionary: s.dictionary.clone(),
-            snippets: s.snippets.iter().map(|r| Snippet { trigger: r.trigger.clone(), text: r.text.clone() }).collect(),
-            polish: s.polish.enabled,
-            tone: s.polish.tone.clone(),
-            history: s.history.enabled,
-            retention_days: s.history.retention_days,
             input_device: s.audio.input_device.clone(),
             auto_update_check: s.updates.auto_check,
             channel: Variant::followed(s.updates.channel).channel(),
         }
     }
 
-    /// `settings` with this form's values, tidied:
-    /// - engines trimmed, blanks and repeats dropped; none at all keeps the old chain;
-    /// - dictionary terms trimmed, blanks and case-insensitive repeats dropped;
-    /// - snippet triggers trimmed; rows with a blank trigger or text, or a trigger
-    ///   already used (ignoring case), dropped; the text kept as written;
-    /// - an unknown tone becomes `neutral`;
-    /// - retention at least one day;
+    /// `settings` with this form's values, tidied as [`General::apply`] says, and:
     /// - a blank microphone is the Windows default;
     /// - the channel is stored once it differs from the one followed so far.
     pub fn apply(self, settings: &Settings) -> Settings {
-        let mut s = settings.clone();
+        let mut s = self.general.apply(settings);
         s.push_to_talk = self.push_to_talk;
         s.autostart = self.autostart;
-        s.language = self.language;
-        s.script = self.script;
-        let engines = dedupe(self.engines, |e| e.to_owned());
-        if !engines.is_empty() {
-            s.engines = engines;
-        }
-        s.dictionary = dedupe(self.dictionary, str::to_lowercase);
-        s.snippets = snippet_rows(self.snippets, &settings.snippets);
-        s.polish.enabled = self.polish;
-        let tone = self.tone.trim().to_lowercase();
-        s.polish.tone = if TONES.contains(&tone.as_str()) { tone } else { "neutral".into() };
-        s.history.enabled = self.history;
-        s.history.retention_days = self.retention_days.max(1);
         s.audio.input_device = self.input_device.map(|d| d.trim().to_owned()).filter(|d| !d.is_empty());
         s.updates.auto_check = self.auto_update_check;
         if self.channel != Variant::followed(settings.updates.channel).channel() {
@@ -101,108 +64,25 @@ impl Form {
     }
 }
 
-/// One field of an `[[apps]]` row, as the Apps tab sets it; `None` clears it, so the
-/// bundled rule or the default applies again.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(tag = "field", content = "value", rename_all = "lowercase")]
-pub enum AppChange {
-    Name(Option<String>),
-    Polish(Option<bool>),
-    Tone(Option<String>),
-    Format(Option<OutputFormat>),
-}
-
-impl AppChange {
-    /// The change tidied: a blank name or tone clears the field; an unknown tone is an
-    /// error.
-    pub fn tidy(self) -> Result<Self, String> {
-        let text = |s: Option<String>| s.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
-        Ok(match self {
-            Self::Name(n) => Self::Name(text(n)),
-            Self::Tone(t) => match text(t).map(|t| t.to_lowercase()) {
-                Some(t) if !TONES.contains(&t.as_str()) => return Err(format!("unknown tone {t}")),
-                t => Self::Tone(t),
-            },
-            other => other,
-        })
-    }
+/// The row key for a program name as typed: `Slack` → `slack.exe`.
+fn exe_key(exe: &str) -> AppKey {
+    AppKey::Exe(exe_name(exe))
 }
 
 /// `apps` with `change` made to `exe`'s row, which is added if there is none.
 pub fn set_app(apps: &[AppProfile], exe: &str, change: AppChange) -> Vec<AppProfile> {
-    let exe = bolo_store::exe_name(exe);
-    let mut apps = apps.to_vec();
-    let i = match apps.iter().position(|p| bolo_store::exe_name(&p.exe) == exe) {
-        Some(i) => i,
-        None => {
-            apps.push(AppProfile::new(&exe));
-            apps.len() - 1
-        }
-    };
-    let row = &mut apps[i];
-    match change {
-        AppChange::Name(v) => row.name = v,
-        AppChange::Polish(v) => row.polish = v,
-        AppChange::Tone(v) => row.tone = v,
-        AppChange::Format(v) => row.format = v,
-    }
-    apps
+    shared::set_app(apps, &exe_key(exe), change)
 }
 
 /// `apps` without `exe`'s row: a bundled app goes back to its rule, an added one goes.
 pub fn reset_app(apps: &[AppProfile], exe: &str) -> Vec<AppProfile> {
-    let exe = bolo_store::exe_name(exe);
-    apps.iter().filter(|p| bolo_store::exe_name(&p.exe) != exe).cloned().collect()
-}
-
-/// A program name the user typed, as a row's `exe`: `whatsapp` → `whatsapp.exe`. Not a
-/// path, and not blank.
-pub fn new_exe(typed: &str) -> Result<String, String> {
-    let exe = bolo_store::exe_name(typed);
-    if exe == ".exe" {
-        return Err("type the program's name, like whatsapp.exe".into());
-    }
-    if exe.contains(['\\', '/', ':', '*', '?', '"', '<', '>', '|']) {
-        return Err(format!("{} is not a program name; type just the name, like whatsapp.exe", typed.trim()));
-    }
-    Ok(exe)
+    shared::reset_app(apps, &exe_key(exe))
 }
 
 /// `apps` with an empty row for `exe` at the end, unless `listed` (the Apps tab has a
 /// row for it already).
 pub fn add_app(apps: &[AppProfile], exe: &str, listed: bool) -> Vec<AppProfile> {
-    let mut apps = apps.to_vec();
-    if !listed && !apps.iter().any(|p| bolo_store::exe_name(&p.exe) == exe) {
-        apps.push(AppProfile::new(exe));
-    }
-    apps
-}
-
-/// The form's snippets as `[[snippets]]` rows, tidied (see [`Form::apply`]). A row
-/// whose trigger was already stored keeps the keys this version doesn't know.
-fn snippet_rows(snippets: Vec<Snippet>, old: &[SnippetRow]) -> Vec<SnippetRow> {
-    let mut seen = std::collections::HashSet::new();
-    snippets
-        .into_iter()
-        .filter_map(|s| {
-            let trigger = s.trigger.trim();
-            if trigger.is_empty() || s.text.trim().is_empty() || !seen.insert(trigger.to_lowercase()) {
-                return None;
-            }
-            let unknown = old
-                .iter()
-                .find(|r| r.trigger.trim().eq_ignore_ascii_case(trigger))
-                .map(|r| r.unknown.clone())
-                .unwrap_or_default();
-            Some(SnippetRow { trigger: trigger.to_owned(), text: s.text, unknown })
-        })
-        .collect()
-}
-
-/// Trimmed, without blanks, without repeats by `key` (the first one wins).
-fn dedupe(items: Vec<String>, key: impl Fn(&str) -> String) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    items.into_iter().map(|i| i.trim().to_owned()).filter(|i| !i.is_empty() && seen.insert(key(i))).collect()
+    shared::add_app(apps, &exe_key(exe), listed)
 }
 
 /// What a settings change asks of the running app.
@@ -239,37 +119,19 @@ impl Changes {
 
 /// What changed from `old` to `new`.
 pub fn changes(old: &Settings, new: &Settings) -> Changes {
-    let engine = old.engines != new.engines
-        || old.language != new.language
-        || old.script != new.script
-        || old.dictionary != new.dictionary
-        || old.models_dir != new.models_dir;
+    let shared = shared::changes(old, new);
     Changes {
-        engine,
-        polish: old.polish != new.polish || old.apps != new.apps || old.dictionary != new.dictionary,
-        snippets: old.snippets != new.snippets,
+        engine: shared.engine,
+        polish: shared.polish,
+        snippets: shared.snippets,
         mic: old.audio.device() != new.audio.device(),
         key: old.push_to_talk != new.push_to_talk,
         autostart: old.autostart != new.autostart,
-        history: old.history.enabled != new.history.enabled,
-        retention: old.history.retention_days != new.history.retention_days,
+        history: shared.history,
+        retention: shared.retention,
         channel: Variant::followed(old.updates.channel) != Variant::followed(new.updates.channel),
-        warm: engine || (old.onboarding_step.is_some() && new.onboarding_step.is_none()),
+        warm: shared.warm,
     }
-}
-
-/// The engine specs the window offers besides local models, with what they are.
-pub const CLOUD_ENGINES: [(&str, &str, &str); 4] = [
-    ("deepgram-stream", "Deepgram, streaming", "deepgram"),
-    ("deepgram", "Deepgram", "deepgram"),
-    ("groq", "Groq Whisper", "groq"),
-    ("sarvam", "Sarvam", "sarvam"),
-];
-
-/// The provider whose key engine `spec` needs, if any.
-pub fn provider_of(spec: &str) -> Option<&'static str> {
-    let kind = spec.split_once(':').map_or(spec, |(k, _)| k);
-    CLOUD_ENGINES.iter().find(|(s, ..)| *s == kind).map(|(.., p)| *p)
 }
 
 #[cfg(test)]
@@ -297,10 +159,10 @@ mod tests {
     fn apply_tidies_the_values() {
         let s = Settings::default();
         let mut f = Form::of(&s);
-        f.engines = vec![" local:moonshine-tiny ".into(), "".into(), "deepgram".into(), "deepgram".into()];
-        f.dictionary = vec!["Bolo".into(), " bolo ".into(), "  ".into(), "Nirav".into()];
-        f.tone = "Shouty".into();
-        f.retention_days = 0;
+        f.general.engines = vec![" local:moonshine-tiny ".into(), "".into(), "deepgram".into(), "deepgram".into()];
+        f.general.dictionary = vec!["Bolo".into(), " bolo ".into(), "  ".into(), "Nirav".into()];
+        f.general.tone = "Shouty".into();
+        f.general.retention_days = 0;
         let s = f.apply(&s);
         assert_eq!(s.engines, ["local:moonshine-tiny", "deepgram"]);
         assert_eq!(s.dictionary, ["Bolo", "Nirav"]);
@@ -308,8 +170,8 @@ mod tests {
         assert_eq!(s.history.retention_days, 1);
 
         let mut f = Form::of(&s);
-        f.engines = vec![" ".into()];
-        f.tone = "Formal".into();
+        f.general.engines = vec![" ".into()];
+        f.general.tone = "Formal".into();
         let again = f.apply(&s);
         assert_eq!(again.engines, ["local:moonshine-tiny", "deepgram"], "an empty chain keeps the old one");
         assert_eq!(again.polish.tone, "formal");
@@ -333,28 +195,28 @@ mod tests {
         };
         assert!(!changes(&old, &old).any());
         assert_eq!(
-            with(|f| f.language = LanguageMode::Hinglish),
+            with(|f| f.general.language = LanguageMode::Hinglish),
             Changes { engine: true, warm: true, ..Default::default() }
         );
         assert_eq!(
-            with(|f| f.script = HinglishScript::Devanagari),
+            with(|f| f.general.script = HinglishScript::Devanagari),
             Changes { engine: true, warm: true, ..Default::default() }
         );
         assert_eq!(
-            with(|f| f.engines = vec!["deepgram".into()]),
+            with(|f| f.general.engines = vec!["deepgram".into()]),
             Changes { engine: true, warm: true, ..Default::default() }
         );
         assert_eq!(
-            with(|f| f.dictionary = vec!["Bolo".into()]),
+            with(|f| f.general.dictionary = vec!["Bolo".into()]),
             Changes { engine: true, polish: true, warm: true, ..Default::default() }
         );
-        assert_eq!(with(|f| f.polish = true), Changes { polish: true, ..Default::default() });
+        assert_eq!(with(|f| f.general.polish = true), Changes { polish: true, ..Default::default() });
         assert_eq!(
-            with(|f| f.snippets = vec![Snippet { trigger: "sig".into(), text: "Thanks".into() }]),
+            with(|f| f.general.snippets = vec![Snippet { trigger: "sig".into(), text: "Thanks".into() }]),
             Changes { snippets: true, ..Default::default() },
             "snippets don't reload the model"
         );
-        assert_eq!(with(|f| f.tone = "casual".into()), Changes { polish: true, ..Default::default() });
+        assert_eq!(with(|f| f.general.tone = "casual".into()), Changes { polish: true, ..Default::default() });
         assert_eq!(
             with(|f| f.input_device = Some("USB Headset".into())),
             Changes { mic: true, ..Default::default() },
@@ -364,8 +226,8 @@ mod tests {
         assert_eq!(changes(&old, &apps), Changes { polish: true, ..Default::default() }, "app rows replan polish");
         assert_eq!(with(|f| f.push_to_talk = PushToTalkKey::F13), Changes { key: true, ..Default::default() });
         assert_eq!(with(|f| f.autostart = true), Changes { autostart: true, ..Default::default() });
-        assert_eq!(with(|f| f.history = false), Changes { history: true, ..Default::default() });
-        assert_eq!(with(|f| f.retention_days = 7), Changes { retention: true, ..Default::default() });
+        assert_eq!(with(|f| f.general.history = false), Changes { history: true, ..Default::default() });
+        assert_eq!(with(|f| f.general.retention_days = 7), Changes { retention: true, ..Default::default() });
         assert_eq!(
             with(|f| {
                 f.channel = match Variant::current() {
@@ -394,8 +256,8 @@ mod tests {
         let s = Settings { snippets: vec![row], ..Default::default() };
         let snippet = |t: &str, x: &str| Snippet { trigger: t.into(), text: x.into() };
         let mut f = Form::of(&s);
-        assert_eq!(f.snippets, [snippet("sig", "old")]);
-        f.snippets = vec![
+        assert_eq!(f.general.snippets, [snippet("sig", "old")]);
+        f.general.snippets = vec![
             snippet(" SIG ", "Thanks,\nPriya \n"),
             snippet("sig", "again"),
             snippet("  ", "no trigger"),
@@ -417,7 +279,7 @@ mod tests {
             ..Default::default()
         };
         let mut f = Form::of(&s);
-        f.polish = true;
+        f.general.polish = true;
         assert_eq!(f.apply(&s).apps, s.apps);
     }
 

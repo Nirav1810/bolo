@@ -1,6 +1,6 @@
 [package]
 name = "bolo-store"
-description = "Settings (TOML), history (SQLite) and secrets (Credential Manager) for the Bolo desktop app"
+description = "Settings (TOML), history (SQLite), secrets (keyring) and the app rules shared by the Bolo desktop and Android apps"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,7 +11,6 @@ publish.workspace = true
 [dependencies]
 bolo-core = { workspace = true }
 bolo-models = { workspace = true }
-directories = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -21,6 +20,10 @@ tracing = { workspace = true }
 rusqlite = { version = "0.41", features = ["bundled"] }
 # keyring v4 is split: the API (with an in-memory mock store) and one crate per OS store.
 keyring-core = "1"
+
+# The desktop's OS directories; Android gets its paths from Kotlin.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+directories = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = { version = "1.1", default-features = false }

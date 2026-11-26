@@ -1,13 +1,14 @@
-//! Recording dictations in history (`bolo-store`): a row when the instant text goes in,
-//! updated with the polished text and what the swap did when polish arrives.
+//! Recording dictations in history: a row when the instant text goes in, updated with
+//! the polished text and what the swap did (desktop) or the replace did (Android) when
+//! polish arrives. Paid cloud requests go to the usage meter.
 //!
 //! History failures are logged and never get in the way of a dictation. With history
 //! off, or without a database, nothing is written.
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
+use crate::{Dictation, History, UsageEvent, provider_of};
 use bolo_core::{FormattedOutput, LanguageMode, OutputFormat, Usage};
-use bolo_store::{Dictation, History, UsageEvent, provider_of};
 
 #[derive(Debug, Default)]
 struct Current {
@@ -39,7 +40,8 @@ impl Journal {
         self.history.as_ref().map(|h| f(&mut lock(h)))
     }
 
-    /// A dictation started into `app`, whose text goes in as `format`.
+    /// A dictation started into `app` (an exe or a package), whose text goes in as
+    /// `format`.
     pub fn begin(&self, app: &str, format: OutputFormat) {
         *lock(&self.current) = Current { app: app.to_owned(), format, row: None };
     }
@@ -74,8 +76,7 @@ impl Journal {
     /// A paid cloud request finished: add it to the usage meter. Recorded with history
     /// off too, since it holds no text.
     pub fn usage(&self, usage: &Usage) {
-        if let Some(Err(e)) = self.with_history(|h| h.record_usage(&usage_event(usage, bolo_store::history::now_ms())))
-        {
+        if let Some(Err(e)) = self.with_history(|h| h.record_usage(&usage_event(usage, crate::history::now_ms()))) {
             tracing::warn!(%e, "could not record usage");
         }
     }
@@ -118,8 +119,8 @@ fn language(l: LanguageMode) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use crate::History;
     use bolo_core::{FormattedOutput, LanguageMode, OutputFormat, Timings};
-    use bolo_store::History;
 
     use super::Journal;
 
@@ -134,7 +135,7 @@ mod tests {
         }
     }
 
-    fn rows(j: &Journal) -> Vec<bolo_store::Dictation> {
+    fn rows(j: &Journal) -> Vec<crate::Dictation> {
         j.with_history(|h| h.latest(10).unwrap()).unwrap().into_iter().map(|r| r.dictation).collect()
     }
 

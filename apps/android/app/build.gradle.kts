@@ -110,4 +110,8 @@ dependencies {
     implementation(libs.jna) { artifact { type = "aar" } }
 
     testImplementation(libs.junit)
+    // Instrumented tests (`connectedDebugAndroidTest`) run on the emulator, not in CI.
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
 }

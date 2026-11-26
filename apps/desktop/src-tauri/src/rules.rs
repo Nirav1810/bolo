@@ -1,50 +1,16 @@
-//! App rules: the window in front decides how a dictation's text goes in.
+//! App rules on the desktop: the window in front decides how a dictation's text goes in.
 //!
-//! The bundled table (`app_rules.toml`, documented there) maps the foreground exe, and
-//! for browsers the window title, to a [`Resolved`] target: the format and `code_mode`
-//! the engine formats for, the paste chord and multi-line swap safety the inserter uses,
-//! and whether polish runs. The user's `[[apps]]` rows in settings (ADR-0020) win over
-//! the table field by field for the name, polish, tone and format; code mode, the paste
-//! chord and swap safety are the table's alone. [`resolve`] is pure, so the table is
-//! tested without a desktop.
+//! The table and the resolution live in `bolo_store::apps`, shared with the Android
+//! keyboard. Here they're keyed by the foreground exe and window title, and the result
+//! gains what only the desktop has: the inserter's [`Target`] (the paste chord and
+//! multi-line swap safety).
 
-use bolo_core::{OutputFormat, Polish, TargetContext};
-use bolo_store::{AppProfile, exe_name};
-use serde::{Deserialize, Serialize};
+use bolo_core::{Polish, TargetContext};
+use bolo_store::AppProfile;
+use bolo_store::apps::{self, AppKey, AppKind, Paste};
+pub use bolo_store::apps::{AppRules, AppView, Defaults, PolishPrefs};
 
 use crate::insert::{Chord, Target};
-
-/// The table bundled into the app.
-pub const BUNDLED: &str = include_str!("../app_rules.toml");
-
-/// One `[[rule]]` from the table.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Rule {
-    /// The app's name for polish, e.g. "Gmail".
-    pub name: Option<String>,
-    /// Lower-case image names. Empty: the rule is for browsers, by `title`.
-    #[serde(default)]
-    pub exe: Vec<String>,
-    /// Matched case-insensitively as a substring of the window title.
-    pub title: Option<String>,
-    pub format: Option<OutputFormat>,
-    #[serde(default)]
-    pub code_mode: bool,
-    /// `Some(false)` turns polish off in this app; `None` follows the global setting.
-    pub polish: Option<bool>,
-    pub paste: Option<Paste>,
-    #[serde(default)]
-    pub multiline_swap_safe: bool,
-}
-
-/// The `paste` field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Paste {
-    CtrlV,
-    ShiftInsert,
-}
 
 impl From<Paste> for Chord {
     fn from(p: Paste) -> Self {
@@ -52,131 +18,6 @@ impl From<Paste> for Chord {
             Paste::CtrlV => Chord::CtrlV,
             Paste::ShiftInsert => Chord::ShiftInsert,
         }
-    }
-}
-
-/// The whole table.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AppRules {
-    /// Browsers' exe names; their window title is read and title rules apply to them.
-    #[serde(default)]
-    pub browsers: Vec<String>,
-    #[serde(default, rename = "rule")]
-    pub rules: Vec<Rule>,
-}
-
-impl AppRules {
-    pub fn parse(text: &str) -> Result<Self, toml::de::Error> {
-        let mut rules: Self = toml::from_str(text)?;
-        let lower = |names: &mut Vec<String>| names.iter_mut().for_each(|n| *n = n.trim().to_lowercase());
-        lower(&mut rules.browsers);
-        for rule in &mut rules.rules {
-            lower(&mut rule.exe);
-            rule.title = rule.title.take().map(|t| t.to_lowercase());
-        }
-        Ok(rules)
-    }
-
-    /// The bundled table. It's checked by a test, so this can't fail in a release.
-    pub fn bundled() -> Self {
-        Self::parse(BUNDLED).expect("the bundled app_rules.toml parses")
-    }
-
-    fn is_browser(&self, exe: &str) -> bool {
-        self.browsers.iter().any(|b| b == exe)
-    }
-
-    /// The first rule for `exe` (lower-case) with window title `title`.
-    fn find(&self, exe: &str, title: &str) -> Option<&Rule> {
-        let browser = self.is_browser(exe);
-        let title = title.to_lowercase();
-        self.rules.iter().find(|r| {
-            let exe_ok = if r.exe.is_empty() { browser && r.title.is_some() } else { r.exe.iter().any(|e| e == exe) };
-            exe_ok && r.title.as_ref().is_none_or(|t| title.contains(t.as_str()))
-        })
-    }
-}
-
-/// Where a field's value came from: the user's `[[apps]]` row, the bundled rule, or the
-/// default.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Source {
-    User,
-    Bundled,
-    Default,
-}
-
-/// A field's value and where it came from.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Field<T> {
-    pub value: T,
-    pub source: Source,
-}
-
-/// The defaults for an app that neither the user nor the bundled rules decide.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Defaults<'a> {
-    /// The global polish switch.
-    pub polish: bool,
-    /// The global tone; blank means neutral.
-    pub tone: &'a str,
-}
-
-/// The fields a user profile can set, resolved for one app.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Fields {
-    /// The app's name for polish and the window.
-    pub name: Field<String>,
-    pub polish: Field<bool>,
-    pub tone: Field<String>,
-    pub format: Field<OutputFormat>,
-}
-
-/// The user's rows for `exe`, most specific first: its own row, then the row of the
-/// first exe of the bundled rule that lists it (the Apps tab shows one row for, say,
-/// every terminal, stored under the first one).
-fn profiles_for<'a>(exe: &str, rules: &AppRules, profiles: &'a [AppProfile]) -> Vec<&'a AppProfile> {
-    let by = |name: &str| profiles.iter().find(|p| exe_name(&p.exe) == name);
-    let group = rules.rules.iter().find(|r| r.exe.iter().any(|e| e == exe)).map(|r| r.exe[0].as_str());
-    by(exe).into_iter().chain(group.filter(|g| *g != exe).and_then(by)).collect()
-}
-
-/// `exe`'s fields under `rule`. Each comes from the user's rows, then the rule, then
-/// the default; for a browser tab matched by a title rule (Gmail), the rule comes first.
-fn fields(exe: &str, rule: Option<&Rule>, user: &[&AppProfile], defaults: Defaults) -> Fields {
-    let title_rule = rule.is_some_and(|r| r.title.is_some());
-    fn pick<T>(user: Option<T>, bundled: Option<T>, title_rule: bool, default: T) -> Field<T> {
-        let (user, bundled) = ((user, Source::User), (bundled, Source::Bundled));
-        let (first, second) = if title_rule { (bundled, user) } else { (user, bundled) };
-        match (first, second) {
-            ((Some(value), source), _) | (_, (Some(value), source)) => Field { value, source },
-            _ => Field { value: default, source: Source::Default },
-        }
-    }
-    let text = |s: &Option<String>| s.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
-    let tone = defaults.tone.trim();
-    Fields {
-        name: pick(
-            user.iter().find_map(|p| text(&p.name)),
-            rule.and_then(|r| r.name.clone()),
-            title_rule,
-            exe.strip_suffix(".exe").unwrap_or(exe).to_owned(),
-        ),
-        polish: pick(user.iter().find_map(|p| p.polish), rule.and_then(|r| r.polish), title_rule, defaults.polish),
-        tone: pick(
-            user.iter().find_map(|p| text(&p.tone)),
-            None,
-            title_rule,
-            if tone.is_empty() { "neutral" } else { tone }.to_owned(),
-        ),
-        format: pick(
-            user.iter().find_map(|p| p.format),
-            rule.and_then(|r| r.format),
-            title_rule,
-            OutputFormat::default(),
-        ),
     }
 }
 
@@ -196,100 +37,26 @@ pub struct Resolved {
     pub app_name: String,
 }
 
+fn target(r: &apps::Resolved) -> Target {
+    Target {
+        format: r.ctx.format,
+        chord: r.paste.map(Chord::from).unwrap_or_default(),
+        multiline_swap_safe: r.multiline_swap_safe,
+    }
+}
+
 /// The target for the window in front: `exe` is its image name, `title` its title.
 /// `profiles` are the user's `[[apps]]` rows; they win over the bundled rules field by
 /// field (ADR-0020). Code mode, the paste chord and swap safety are the rules' alone.
 pub fn resolve(exe: &str, title: &str, rules: &AppRules, profiles: &[AppProfile], defaults: Defaults) -> Resolved {
-    let exe = exe.trim().to_lowercase();
-    let rule = rules.find(&exe, title);
-    let f = fields(&exe, rule, &profiles_for(&exe, rules, profiles), defaults);
-    Resolved {
-        ctx: TargetContext {
-            window_title: (rules.is_browser(&exe) && !title.is_empty()).then(|| title.to_owned()),
-            app_id: exe,
-            format: f.format.value,
-            code_mode: rule.is_some_and(|r| r.code_mode),
-        },
-        target: Target {
-            format: f.format.value,
-            chord: rule.and_then(|r| r.paste).map(Chord::from).unwrap_or_default(),
-            multiline_swap_safe: rule.is_some_and(|r| r.multiline_swap_safe),
-        },
-        polish: f.polish.value,
-        tone: f.tone.value,
-        app_name: f.name.value,
-    }
+    let r = apps::resolve(&AppKey::exe(exe), title, rules, profiles, defaults);
+    Resolved { target: target(&r), ctx: r.ctx, polish: r.polish, tone: r.tone, app_name: r.app_name }
 }
 
-/// One row of the Apps tab: an app the bundled rules know or the user added.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct AppView {
-    /// The exe the user's row is stored under.
-    pub exe: String,
-    /// Every exe the row covers (a bundled rule may list several).
-    pub exes: Vec<String>,
-    #[serde(flatten)]
-    pub fields: Fields,
-    /// The fields without the user's row: what clearing a field goes back to.
-    pub inherited: Fields,
-    /// Bundled: code mode, which the user can't change.
-    pub code_mode: bool,
-    /// The bundled rules know this app; resetting it keeps it listed.
-    pub bundled: bool,
-    /// The user set at least one field here.
-    pub custom: bool,
-}
-
-/// The Apps tab's rows: the bundled rules' apps in table order, then the apps only the
-/// user's rows name, in the order they were added.
+/// The Apps tab's rows: the bundled rules' programs in table order, then the programs
+/// only the user's rows name, in the order they were added.
 pub fn app_views(rules: &AppRules, profiles: &[AppProfile], defaults: Defaults) -> Vec<AppView> {
-    let row = |exe: &str, exes: Vec<String>, bundled: bool| {
-        let rule = rules.rules.iter().find(|r| r.title.is_none() && r.exe.iter().any(|e| e == exe));
-        let user = profiles_for(exe, rules, profiles);
-        let custom = user.first().is_some_and(|p| exe_name(&p.exe) == exe && is_set(p));
-        let inherited: Vec<&AppProfile> = user.iter().copied().filter(|p| exe_name(&p.exe) != exe).collect();
-        AppView {
-            exe: exe.to_owned(),
-            exes,
-            fields: fields(exe, rule, &user, defaults),
-            inherited: fields(exe, rule, &inherited, defaults),
-            code_mode: rule.is_some_and(|r| r.code_mode),
-            bundled,
-            custom,
-        }
-    };
-    let mut rows: Vec<AppView> = rules
-        .rules
-        .iter()
-        .filter(|r| r.title.is_none() && !r.exe.is_empty())
-        .map(|r| row(&r.exe[0], r.exe.clone(), true))
-        .collect();
-    for p in profiles {
-        let exe = exe_name(&p.exe);
-        if exe != ".exe" && !rows.iter().any(|r| r.exe == exe) {
-            rows.push(row(&exe, vec![exe.clone()], false));
-        }
-    }
-    rows
-}
-
-/// The row sets at least one field.
-fn is_set(p: &AppProfile) -> bool {
-    p.name.is_some() || p.polish.is_some() || p.tone.is_some() || p.format.is_some()
-}
-
-/// The user's polish settings, as far as the app rules need them.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct PolishPrefs {
-    /// The global switch.
-    pub enabled: bool,
-    /// The global tone.
-    pub tone: String,
-    pub dictionary: Vec<String>,
-    /// The user's `[[apps]]` rows; they win over the table, the switch and the tone.
-    pub apps: Vec<AppProfile>,
-    /// The Anthropic key is stored. Without it polish never runs.
-    pub has_key: bool,
+    apps::app_views(AppKind::Exe, rules, profiles, defaults)
 }
 
 /// What a dictation into one window needs: the engine's target context and polish
@@ -303,14 +70,8 @@ pub struct Plan {
 
 /// The [`Plan`] for the window `exe` / `title`.
 pub fn plan(exe: &str, title: &str, rules: &AppRules, prefs: &PolishPrefs) -> Plan {
-    let defaults = Defaults { polish: prefs.enabled, tone: &prefs.tone };
-    let r = resolve(exe, title, rules, &prefs.apps, defaults);
-    let polish = if r.polish && prefs.has_key {
-        Polish::On { tone: r.tone, app: r.app_name, dictionary: prefs.dictionary.clone() }
-    } else {
-        Polish::Off
-    };
-    Plan { ctx: r.ctx, polish, target: r.target }
+    let p = apps::plan(&AppKey::exe(exe), title, rules, prefs);
+    Plan { target: target(&p.resolved), ctx: p.resolved.ctx, polish: p.polish }
 }
 
 #[cfg(test)]
@@ -319,7 +80,9 @@ mod tests {
     use bolo_core::Polish;
     use bolo_store::AppProfile;
 
-    use super::{AppRules, Defaults, PolishPrefs, Resolved, Source, app_views, plan, resolve};
+    use bolo_store::apps::Source;
+
+    use super::{AppRules, Defaults, PolishPrefs, Resolved, app_views, plan, resolve};
     use crate::insert::Chord;
 
     fn defaults(polish: bool) -> Defaults<'static> {
@@ -509,8 +272,8 @@ mod tests {
             AppProfile::new("figma.exe"),
         ];
         let rows = app_views(&rules, &profiles, Defaults { polish: true, tone: "formal" });
-        let bundled_apps = rules.rules.iter().filter(|r| r.title.is_none()).count();
-        assert_eq!(rows.len(), bundled_apps + 2, "Gmail, a title rule, has no row");
+        let bundled_apps = rules.rules.iter().filter(|r| r.title.is_none() && !r.exe.is_empty()).count();
+        assert_eq!(rows.len(), bundled_apps + 2, "Gmail, a title rule, and the Android apps have no row");
 
         let term = rows.iter().find(|r| r.exe == "windowsterminal.exe").unwrap();
         assert!(term.exes.contains(&"pwsh.exe".to_owned()) && term.code_mode && term.bundled && !term.custom);

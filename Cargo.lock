@@ -606,8 +606,12 @@ version = "0.5.1"
 dependencies = [
  "async-trait",
  "bolo-core",
+ "bolo-store",
  "bolo-stt",
+ "keyring-core",
+ "tempfile",
  "thiserror 2.0.21",
+ "toml 1.2.1+spec-1.1.0",
  "tracing",
  "tracing-android",
  "tracing-subscriber",

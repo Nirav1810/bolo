@@ -9,11 +9,11 @@
 | `bolo-stt` | `SttEngine` trait; local (sherpa-onnx), Groq, Deepgram (batch and live WebSocket), Sarvam; fallback chain with per-engine timeout | ✅ |
 | `bolo-models` | `models/manifest.json` registry; resumable SHA-256-verified downloader (GitHub API fallback); RAM-tier recommendation | ✅ |
 | `bolo-format` | Devanagari and Urdu → Roman transliteration, loanword lexicon, language detector, Layer 1 rules pipeline (`rules`), LLM cleanup request and guard | ✅ |
-| `bolo-store` | Versioned settings TOML (migrations, bad-file backup), SQLite history (30-day prune), API keys in the OS credential store | ✅ |
-| `bolo-ffi` | UniFFI → Kotlin | M5 (not a default workspace member) |
+| `bolo-store` | Versioned settings TOML (migrations, bad-file backup), SQLite history (30-day prune) and usage meter, API keys in a `keyring_core` store, and the app logic both apps share: app rules and profiles (`apps`, by exe or Android package), the settings form's tidying (`form`), history journaling (`journal`). Paths are injected (`Paths`) | ✅ |
+| `bolo-ffi` | UniFFI → Kotlin: one `Bolo` object (engine + store), `BoloListener` and `SecretStore` foreign traits (ADR-0023) | M5 (not a default workspace member) |
 | `bolo` | CLI: `dictate` and `replay` on the engine, plus the benchmark subcommands (`run`, `transcribe`, `download`, …) | ✅ |
 
-Dependency direction: `core → {audio, stt, format}`, `stt → {audio, models}`, `bolo (CLI) → {core, audio, stt, models, format}`, `store → core`. Only `apps/*` contain platform UI code.
+Dependency direction: `core → {audio, stt, format}`, `stt → {audio, models}`, `bolo (CLI) → {core, audio, stt, models, format}`, `store → {core, models}`, `ffi → {core, store, stt}`. Only `apps/*` contain platform UI code; anything both apps decide the same way lives in `bolo-store`, and the desktop crate keeps only what's Windows-only (the paste chord, window titles, Win32).
 
 ## Windows app (`apps/desktop`, M3–M4)
 
@@ -22,9 +22,9 @@ Tauri v2 hosts one `Engine` in-process; the Svelte webviews only render.
 ```
 WH_KEYBOARD_LL hook ─► hotkey state machine ─► Start / Stop / Cancel
    (Caps Lock, ADR-0017)                          │
-foreground exe + title ─► app rules + app profiles (ADR-0020) ─► TargetContext + polish plan ─► Engine
+foreground exe + title ─► app rules + app profiles (bolo_store::apps, ADR-0020) ─► TargetContext + polish plan ─► Engine
 Engine events ─► controller ─► inserter: clipboard paste, restore, polish swap (ADR-0018)
-                             ├► journal: SQLite history
+                             ├► journal (bolo_store::Journal): SQLite history
                              └► overlay: pill state machine ─► pill webview (waveform, partials)
 ```
 
@@ -33,6 +33,22 @@ Engine events ─► controller ─► inserter: clipboard paste, restore, polis
 - Snippets are expanded last, after the rules and after polish (`bolo_format::snippets`).
 - The settings window is built on demand and destroyed on close (M4 ticket 04). Only the pill's webview lives for the whole session.
 - The per-user NSIS installer bundles the sherpa-onnx DLLs. Models are downloaded on first run (onboarding), not shipped. Releases and nightlies update themselves (ADR-0019), and they are Authenticode-signed through SignPath once that's approved (ADR-0021).
+
+## Android app (`apps/android`, M5)
+
+Kotlin holds one `Bolo` (UniFFI, ADR-0023) per component that needs it: the keyboard (ticket 06) and the settings app (ticket 07).
+
+```
+AudioRecord (VOICE_RECOGNITION) ─► Bolo.push_audio ─► PushRing ─► Engine
+EditorInfo.packageName + field kind ─► Bolo.start ─► app rules + profiles (bolo_store::apps, by package) ─► TargetContext + polish plan
+                                         └─ password / incognito field: refused, nothing recorded
+Engine events ─► Events: Journal (history, usage) ─► BoloListener (Kotlin, posts to the main thread)
+filesDir/settings.toml, filesDir/history.sqlite, noBackupFilesDir/models   (BoloPaths, from Kotlin)
+API keys ─► Secrets ─► ForeignStore (keyring_core) ─► SecretStore (Kotlin: Keystore AES-GCM + SharedPreferences)
+```
+
+- A save through any `Bolo` is adopted by every `Bolo` on the same file in the process (`on_settings_changed`); `reload_settings` picks up another process's write by the file's modification time.
+- Android's budgets come from `bolo-ffi`: `idle_unload_secs = 20`, `mic_warm_secs = 30`; the settings' `models_dir` is the desktop's and is ignored.
 
 ## Pipeline
 

@@ -1,11 +1,12 @@
 //! Dictation history: text only (never audio), in SQLite at
-//! `%LOCALAPPDATA%\Bolo\history.sqlite`.
+//! `%LOCALAPPDATA%\Bolo\history.sqlite` on Windows and in the app's files dir on Android
+//! ([`crate::Paths::history_file`]).
 //!
 //! The app prunes rows older than the retention period at startup and daily. Turning
 //! history off ([`History::set_enabled`]) stops writes and keeps the existing rows;
 //! [`History::clear`] deletes them and vacuums the file.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OptionalExtension, params};
@@ -72,8 +73,9 @@ impl std::fmt::Debug for History {
 
 impl History {
     /// `%LOCALAPPDATA%\Bolo\history.sqlite`.
-    pub fn default_path() -> Result<PathBuf> {
-        Ok(crate::data_local_dir()?.join("history.sqlite"))
+    #[cfg(not(target_os = "android"))]
+    pub fn default_path() -> Result<std::path::PathBuf> {
+        Ok(crate::Paths::desktop()?.history_file())
     }
 
     /// Opens (or creates) the database at `path`, with recording on.
