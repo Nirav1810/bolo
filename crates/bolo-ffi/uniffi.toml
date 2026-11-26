@@ -1,0 +1,6 @@
+[bindings.kotlin]
+package_name = "dev.bolo.ffi"
+cdylib_name = "bolo_ffi"
+# Android mode: android.system.SystemCleaner behind an SDK_INT >= 33 check (JNA's cleaner
+# below that), instead of java.lang.ref.Cleaner, which minSdk 28 doesn't have.
+android = true

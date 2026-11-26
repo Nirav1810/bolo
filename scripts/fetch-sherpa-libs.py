@@ -7,7 +7,11 @@ Unpacking outside target/ keeps CI caches from restoring a build-script result w
 extracted libraries were pruned.
 
 Usage: python -I scripts/fetch-sherpa-libs.py [archive-name ...]
+       python -I scripts/fetch-sherpa-libs.py --android
 Default archive: the one for this host (Windows x64 shared MT Release).
+--android fetches the Android archive and unpacks jniLibs/<abi>/*.so to
+.cache/sherpa-lib-android/<abi>, leaving the host's .cache/sherpa-lib alone.
+scripts/build-android.py points SHERPA_ONNX_LIB_DIR there per ABI.
 Uses the GitHub API asset route, which keeps working when github.com/.../download 504s.
 """
 import hashlib, json, os, pathlib, shutil, sys, tarfile, urllib.request
@@ -21,6 +25,9 @@ DEFAULTS = {
 CACHE = pathlib.Path(__file__).resolve().parent.parent / ".cache"
 DEST = CACHE / "sherpa-archives"
 LIB_DIR = CACHE / "sherpa-lib"
+ANDROID_ARCHIVE = f"sherpa-onnx-v{VERSION}-android.tar.bz2"
+ANDROID_DIR = CACHE / "sherpa-lib-android"
+ANDROID_ABIS = ("arm64-v8a", "x86_64")
 
 
 def get(url, accept="application/vnd.github+json"):
@@ -30,7 +37,7 @@ def get(url, accept="application/vnd.github+json"):
     return urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=120)
 
 
-def main(names):
+def main(names, unpack_with=None):
     release = json.load(get(f"https://api.github.com/repos/{REPO}/releases/tags/v{VERSION}"))
     assets = {a["name"]: a for a in release["assets"]}
     DEST.mkdir(parents=True, exist_ok=True)
@@ -54,7 +61,7 @@ def main(names):
             sys.exit(f"{name}: sha256 mismatch (got {h.hexdigest()}, want {want or 'no digest'})")
         tmp.replace(out)
         print(f"{name}: {a['size']} bytes, sha256 ok")
-    unpack(DEST / names[0])
+    (unpack_with or unpack)(DEST / names[0])
 
 
 def unpack(archive):
@@ -73,5 +80,30 @@ def unpack(archive):
     print(f"unpacked {sum(1 for _ in LIB_DIR.rglob('*') if _.is_file())} files to {LIB_DIR}")
 
 
+def unpack_android(archive):
+    """Extract jniLibs/<abi>/*.so for the ABIs we build into ANDROID_DIR/<abi>."""
+    if ANDROID_DIR.exists():
+        shutil.rmtree(ANDROID_DIR)
+    count = 0
+    with tarfile.open(archive, "r:bz2") as tar:
+        for m in tar.getmembers():
+            parts = pathlib.PurePosixPath(m.name).parts
+            if parts and parts[0] == ".":
+                parts = parts[1:]
+            if (len(parts) == 3 and parts[0] == "jniLibs" and parts[1] in ANDROID_ABIS
+                    and parts[2].endswith(".so") and m.isfile()):
+                out = ANDROID_DIR / parts[1] / parts[2]
+                out.parent.mkdir(parents=True, exist_ok=True)
+                with tar.extractfile(m) as src, open(out, "wb") as f:
+                    shutil.copyfileobj(src, f)
+                count += 1
+    if count == 0:
+        sys.exit(f"{archive.name}: no jniLibs/<abi>/*.so for {ANDROID_ABIS}")
+    print(f"unpacked {count} files to {ANDROID_DIR}")
+
+
 if __name__ == "__main__":
-    main(sys.argv[1:] or [DEFAULTS.get(sys.platform) or sys.exit(f"no default archive for {sys.platform}")])
+    if sys.argv[1:] == ["--android"]:
+        main([ANDROID_ARCHIVE], unpack_android)
+    else:
+        main(sys.argv[1:] or [DEFAULTS.get(sys.platform) or sys.exit(f"no default archive for {sys.platform}")])

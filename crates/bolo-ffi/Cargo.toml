@@ -1,6 +1,6 @@
 [package]
 name = "bolo-ffi"
-description = "UniFFI bindings to Kotlin for the Android app (M5)"
+description = "UniFFI bindings to Kotlin for the Android app (ADR-0023)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,5 +12,26 @@ publish.workspace = true
 crate-type = ["lib", "cdylib"]
 name = "bolo_ffi"
 
+# Generates the Kotlin bindings from the built library:
+# `cargo run -p bolo-ffi --features bindgen --bin uniffi-bindgen -- generate --library <.so> --language kotlin --out-dir <dir>`
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+bindgen = ["uniffi/cli"]
+
 [dependencies]
 bolo-core = { workspace = true }
+bolo-stt = { workspace = true }
+uniffi = "0.33"
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+tracing-android = "0.2"
+
+[dev-dependencies]
+async-trait = { workspace = true }

@@ -4,6 +4,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+#[cfg(feature = "capture")]
 use bolo_audio::capture::Capture;
 
 use crate::BoloError;
@@ -39,11 +40,13 @@ pub trait AudioSource {
 pub type AudioFactory = Arc<dyn Fn(Option<&str>) -> Result<Box<dyn AudioSource>, BoloError> + Send + Sync>;
 
 /// The live microphone: the device chosen by name, or the default.
+#[cfg(feature = "capture")]
 pub struct MicSource {
     capture: Capture,
     wanted: Option<String>,
 }
 
+#[cfg(feature = "capture")]
 impl MicSource {
     /// Open `device` (`None`: the default), falling back to the default when it isn't
     /// plugged in.
@@ -57,6 +60,7 @@ impl MicSource {
     }
 }
 
+#[cfg(feature = "capture")]
 impl AudioSource for MicSource {
     fn sample_rate(&self) -> u32 {
         self.capture.sample_rate()
