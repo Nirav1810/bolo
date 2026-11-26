@@ -24,6 +24,7 @@ import dev.bolo.ffi.DownloadPhase
 import dev.bolo.ffi.ErrorKind
 import dev.bolo.ffi.FfiException
 import dev.bolo.ffi.ModelDownload
+import dev.bolo.ffi.Notice
 import dev.bolo.ffi.State
 import java.util.Locale
 import java.util.concurrent.Executors
@@ -117,6 +118,7 @@ class ModelDownloadService : Service() {
 
     private val listener = object : BoloListener {
         override fun onDownload(download: ModelDownload) = show(download)
+        override fun onNotice(notice: Notice) {}
         override fun onLevel(rms: Float) {}
         override fun onPartial(text: String) {}
         override fun onFinal(dictation: Dictation) {}
