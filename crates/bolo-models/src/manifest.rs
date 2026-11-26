@@ -230,9 +230,14 @@ mod tests {
         assert_eq!(m.recommend(Platform::Desktop, 16_000, true).unwrap().id, "nemotron-stream");
         assert_eq!(m.recommend(Platform::Android, 8_000, false).unwrap().id, "nemotron-stream");
         assert_eq!(m.recommend(Platform::Android, 4_000, false).unwrap().id, "moonshine-tiny");
-        // whisper-base-hinglish needs export; until then a 4 GB phone wanting Hinglish
-        // gets nothing local (cloud only) rather than an English-only model.
-        assert!(m.recommend(Platform::Android, 4_000, true).is_none());
+        // A 4 GB phone wanting Hinglish gets the Roman-Hinglish Whisper-base export,
+        // never the English-only Moonshine.
+        assert_eq!(m.recommend(Platform::Android, 4_000, true).unwrap().id, "whisper-base-hinglish");
+        assert_eq!(m.recommend(Platform::Android, 3_000, true).unwrap().id, "whisper-base-hinglish");
+        let whisper = m.get("whisper-base-hinglish").unwrap();
+        assert_eq!(whisper.status, ModelStatus::Available);
+        assert_eq!(whisper.family, Family::OfflineWhisper);
+        assert!(whisper.download.as_ref().unwrap().url.contains("/Nirav1810/bolo/releases/download/models-"));
     }
 
     #[test]
