@@ -12,6 +12,9 @@
 //! (`on_settings_changed`); [`Bolo::reload_settings`] picks up a file written by another
 //! process.
 //!
+//! Models (ticket 05, [`models`]): the list for the phone's RAM tier, the
+//! recommendation, and downloads that Kotlin runs in a foreground service.
+//!
 //! Every listener call comes from a Rust thread (or, for `on_settings_changed`, the
 //! thread that saved): Kotlin posts it to the main thread.
 //!
@@ -26,14 +29,19 @@ use std::time::SystemTime;
 use bolo_core::{
     ANTHROPIC, BoloError, DictationState, Engine, EngineConfig, EngineEvents, FormattedOutput, Polish, Usage,
 };
+use bolo_models::Manifest;
 use bolo_store::apps::{self, AppKey, AppRules, PolishPrefs};
 use bolo_store::{History, Journal, Paths, Secrets, Settings, StoreError};
 
+mod device;
+pub mod models;
 pub mod push;
 pub mod records;
 pub mod secrets;
 pub mod tls;
 
+use device::Device;
+pub use models::{DeviceTier, DownloadPhase, ModelDownload, ModelInfo};
 use push::PushRing;
 pub use records::{
     AppEntry, AppProfileEntry, BoloSettings, Format, HistoryEntry, Language, ProviderTotals, Script, SnippetEntry,
@@ -44,7 +52,8 @@ pub use secrets::{SecretError, SecretStore};
 uniffi::setup_scaffolding!();
 
 /// Android's budgets (ADR-0022): the model unloads 20 s after the last dictation, and
-/// the mic stays warm for 30 s while the keyboard is shown.
+/// the mic stays warm for 30 s while the keyboard is shown. Inference runs on
+/// `min(4, big cores)` threads ([`Device::threads`]).
 const IDLE_UNLOAD_SECS: u32 = 20;
 const MIC_WARM_SECS: u32 = 30;
 
@@ -174,6 +183,16 @@ pub enum FfiError {
     /// A connection failed: no network, or the server's certificate was refused.
     #[error("{detail}")]
     Network { detail: String },
+    /// A model download failed: the network, the checksum or the disk.
+    #[error("{detail}")]
+    Download { detail: String },
+    /// Not enough free storage for a model download (bytes).
+    #[error("the download needs {} MB free, and there are {} MB", mb(*needed), mb(*available))]
+    NoSpace { needed: u64, available: u64 },
+}
+
+fn mb(bytes: u64) -> u64 {
+    bytes.div_ceil(1_000_000)
 }
 
 impl From<BoloError> for FfiError {
@@ -229,6 +248,9 @@ pub trait BoloListener: Send + Sync {
     fn on_settings_changed(&self, settings: BoloSettings);
     /// A one-time notice for the panel, sent just before the `on_final` it is about.
     fn on_notice(&self, notice: Notice);
+    /// A model download's progress (about 10 Hz), then `Done`, `Failed` or `Cancelled`.
+    /// Every `Bolo` on the same models directory hears every download.
+    fn on_download(&self, download: ModelDownload);
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -313,14 +335,25 @@ fn cloud_first(settings: &Settings) -> bool {
     settings.engines.first().is_some_and(|e| !e.starts_with(LOCAL_PREFIX))
 }
 
-/// The engine config for `settings` on Android: the models in `paths.models_dir` (the
-/// settings' own `models_dir` is the desktop's) and Android's budgets.
-fn engine_config(settings: &Settings, secrets: &Secrets, paths: &Paths) -> EngineConfig {
+/// The engine config for `settings` on this phone: the models in `paths.models_dir` (the
+/// settings' own `models_dir` is the desktop's), models the phone's tier can run
+/// ([`models::fit_engines`]: Auto on a low-tier phone is the Hinglish model), and
+/// Android's budgets.
+fn engine_config(
+    settings: &Settings,
+    secrets: &Secrets,
+    paths: &Paths,
+    manifest: &Manifest,
+    device: &Device,
+) -> EngineConfig {
+    let config = settings.engine_config(secrets);
     EngineConfig {
+        engines: models::fit_engines(&config.engines, manifest, device, config.language),
         models_dir: paths.models_dir.clone(),
         idle_unload_secs: IDLE_UNLOAD_SECS,
         mic_warm_secs: MIC_WARM_SECS,
-        ..settings.engine_config(secrets)
+        threads: Some(device.threads()),
+        ..config
     }
 }
 
@@ -351,6 +384,8 @@ struct Inner {
     retention_days: Arc<AtomicU32>,
     cloud_first: Arc<AtomicBool>,
     listener: Arc<dyn BoloListener>,
+    manifest: Manifest,
+    device: Mutex<Device>,
 }
 
 impl Inner {
@@ -366,7 +401,7 @@ impl Inner {
     }
 
     fn config(&self) -> EngineConfig {
-        engine_config(&lock(&self.settings), &lock(&self.secrets), &self.paths)
+        engine_config(&lock(&self.settings), &lock(&self.secrets), &self.paths, &self.manifest, &lock(&self.device))
     }
 
     /// Takes `new` as the settings: the engine, history and the listener follow.
@@ -623,8 +658,10 @@ impl Bolo {
         let cloud_first = Arc::new(AtomicBool::new(cloud_first(&settings)));
         prune_daily(&journal, &retention_days, &last_prune_ms);
 
+        let manifest = Manifest::bundled().map_err(|e| FfiError::Invalid { detail: e.to_string() })?;
+        let device = Device::detect();
         let ring = PushRing::new();
-        let config = engine_config(&settings, &secrets, &paths);
+        let config = engine_config(&settings, &secrets, &paths, &manifest, &device);
         let events = Box::new(Events {
             listener: listener.clone(),
             journal: journal.clone(),
@@ -650,6 +687,8 @@ impl Bolo {
             retention_days,
             cloud_first,
             listener,
+            manifest,
+            device: Mutex::new(device),
         });
         let mut open = lock(&OPEN);
         open.retain(|w| w.strong_count() > 0);

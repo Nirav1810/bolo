@@ -57,7 +57,14 @@ Release builds (M6) that turn on R8 need these keep rules: the verifier's Kotlin
 
 ## Models
 
-There's no model download yet (ticket 05). Push models from a desktop install. Bolo looks for them in `noBackupFilesDir/models/<model-id>/`.
+Bolo keeps models in `noBackupFilesDir/models/<model-id>/`. The debug screen's Models section (ticket 05) shows the phone's tier and the recommended model, and downloads, cancels and deletes models. Downloads run in `ModelDownloadService`, a `dataSync` foreground service with a progress notification, through `bolo-models` (resume, SHA-256 check, atomic unpack). The phone's tier comes from `MemTotal`: 5000 MiB or more is high tier (Nemotron), less is low tier (Moonshine-tiny for English, Whisper-base Hinglish for Hinglish and Auto). To download from adb, which skips the mobile-data question:
+
+```sh
+adb shell am start -n dev.bolo.android/.MainActivity --es download moonshine-tiny
+adb logcat -s bolo:*      # ... download moonshine-tiny: Downloaded in 9.6 s
+```
+
+To skip the network, push models from a desktop install instead:
 
 ```sh
 adb push %LOCALAPPDATA%\Bolo\data\models\moonshine-tiny /data/local/tmp/models/

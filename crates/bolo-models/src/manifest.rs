@@ -8,6 +8,8 @@ use crate::{ModelError, Result};
 /// The manifest shipped with this build.
 pub const BUNDLED_MANIFEST: &str = include_str!("../../../models/manifest.json");
 pub const SUPPORTED_SCHEMA: u32 = 1;
+/// The `android-high` RAM threshold (MiB) when the manifest doesn't set one.
+pub const ANDROID_HIGH_MB: u64 = 5000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
@@ -151,13 +153,16 @@ impl Manifest {
         Ok(())
     }
 
-    /// Device tier from platform and total RAM (`GlobalMemoryStatusEx` on Windows,
-    /// `ActivityManager.MemoryInfo.totalMem` on Android).
+    /// Device tier from platform and total RAM in MiB (`GlobalMemoryStatusEx` on Windows,
+    /// `ActivityManager.MemoryInfo.totalMem` or `/proc/meminfo`'s `MemTotal` on Android).
+    ///
+    /// Phones report less than they're sold with (the kernel keeps some), so the
+    /// `android-high` threshold sits well below 6 GB: a "6 GB" phone reports 5.5–5.8 GiB.
     pub fn tier(&self, platform: Platform, total_ram_mb: u64) -> Tier {
         match platform {
             Platform::Desktop => Tier::Desktop,
             Platform::Android => {
-                let high = self.tier_thresholds_mb.get("android-high").copied().unwrap_or(6000);
+                let high = self.tier_thresholds_mb.get("android-high").copied().unwrap_or(ANDROID_HIGH_MB);
                 if total_ram_mb >= high { Tier::AndroidHigh } else { Tier::AndroidLow }
             }
         }
@@ -234,10 +239,49 @@ mod tests {
         // never the English-only Moonshine.
         assert_eq!(m.recommend(Platform::Android, 4_000, true).unwrap().id, "whisper-base-hinglish");
         assert_eq!(m.recommend(Platform::Android, 3_000, true).unwrap().id, "whisper-base-hinglish");
+        // A 6 GB phone that wants Hinglish (or Auto) gets Nemotron, which speaks Hindi.
+        assert_eq!(m.recommend(Platform::Android, 5_600, true).unwrap().id, "nemotron-stream");
         let whisper = m.get("whisper-base-hinglish").unwrap();
         assert_eq!(whisper.status, ModelStatus::Available);
         assert_eq!(whisper.family, Family::OfflineWhisper);
         assert!(whisper.download.as_ref().unwrap().url.contains("/Nirav1810/bolo/releases/download/models-"));
+    }
+
+    #[test]
+    fn six_gb_phones_are_high_tier() {
+        let m = Manifest::bundled().unwrap();
+        // What phones report as `MemTotal` (MiB): the 6 GB emulator (6 072 060 kB), real
+        // "6 GB" phones (5.5-5.8 GiB), and an 8 GB one.
+        for ram in [6_072_060 / 1024, 5_632, 5_939, 7_680] {
+            assert_eq!(m.tier(Platform::Android, ram), Tier::AndroidHigh, "{ram} MiB");
+            assert_eq!(m.recommend(Platform::Android, ram, false).unwrap().id, "nemotron-stream", "{ram} MiB");
+        }
+        // "4 GB" and "3 GB" phones (3.6-3.8 and 2.7-2.9 GiB reported) stay low tier.
+        for ram in [3_700, 3_850, 2_800] {
+            assert_eq!(m.tier(Platform::Android, ram), Tier::AndroidLow, "{ram} MiB");
+            assert_eq!(m.recommend(Platform::Android, ram, false).unwrap().id, "moonshine-tiny", "{ram} MiB");
+            assert_eq!(m.recommend(Platform::Android, ram, true).unwrap().id, "whisper-base-hinglish", "{ram} MiB");
+        }
+        assert_eq!(m.tier(Platform::Desktop, 2_000), Tier::Desktop);
+    }
+
+    #[test]
+    fn the_threshold_defaults_when_the_manifest_has_none() {
+        let mut v: serde_json::Value = serde_json::from_str(BUNDLED_MANIFEST).unwrap();
+        v["tier_thresholds_mb"] = serde_json::json!({});
+        let m = Manifest::parse(&v.to_string()).unwrap();
+        assert_eq!(m.tier(Platform::Android, ANDROID_HIGH_MB), Tier::AndroidHigh);
+        assert_eq!(m.tier(Platform::Android, ANDROID_HIGH_MB - 1), Tier::AndroidLow);
+    }
+
+    #[test]
+    fn low_tier_models_never_run_dual_pass() {
+        // Auto runs English + Hindi passes only on a model with a per-stream language
+        // option (ADR-0014). The low tier has none, so Auto there is one pass.
+        let m = Manifest::bundled().unwrap();
+        for e in m.models.iter().filter(|e| e.tiers.contains(&Tier::AndroidLow)) {
+            assert!(!e.options.contains_key("stream_language_option"), "{}", e.id);
+        }
     }
 
     #[test]

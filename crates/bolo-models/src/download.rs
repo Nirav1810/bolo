@@ -57,9 +57,8 @@ impl Downloader {
             .as_ref()
             .ok_or_else(|| ModelError::NotAvailable(entry.id.clone(), format!("{:?}", entry.status)))?;
 
-        let tmp = self.root.join(".downloads");
-        tokio::fs::create_dir_all(&tmp).await?;
-        let part = tmp.join(format!("{}.part", entry.id));
+        let part = part_file(&self.root, entry);
+        tokio::fs::create_dir_all(&self.root.join(".downloads")).await?;
 
         self.fetch(dl, &part, progress).await?;
 
@@ -85,13 +84,28 @@ impl Downloader {
         Ok(dir)
     }
 
-    /// Delete an installed model.
-    pub async fn remove(&self, entry: &ModelEntry) -> Result<()> {
-        let dir = entry.install_dir(&self.root);
-        if dir.exists() {
-            tokio::fs::remove_dir_all(dir).await?;
+    /// [`Self::install`] `entry`, then `vad` (the pause detector the engine pairs with
+    /// every ASR model) if it isn't installed yet. Progress is `entry`'s, and its `Done`
+    /// comes once both are in; the VAD (under 1 MB) downloads silently.
+    pub async fn install_with_vad(
+        &self,
+        entry: &ModelEntry,
+        vad: Option<&ModelEntry>,
+        progress: &(dyn Fn(DownloadProgress) + Sync),
+    ) -> Result<PathBuf> {
+        let dir = self
+            .install(entry, &|p| {
+                if p.phase != Phase::Done {
+                    progress(p);
+                }
+            })
+            .await?;
+        if let Some(vad) = vad.filter(|v| !v.is_installed(&self.root)) {
+            self.install(vad, &|_| {}).await?;
         }
-        Ok(())
+        let total = entry.download.as_ref().map_or(0, |d| d.size_bytes);
+        progress(DownloadProgress { phase: Phase::Done, downloaded: total, total });
+        Ok(dir)
     }
 
     async fn fetch(&self, dl: &Download, part: &Path, progress: &(dyn Fn(DownloadProgress) + Sync)) -> Result<()> {
@@ -170,6 +184,29 @@ impl Downloader {
             .iter()
             .find(|a| a["name"].as_str() == Some(name))
             .and_then(|a| a["url"].as_str().map(str::to_owned))
+    }
+}
+
+/// Where a download of `entry` under `models_root` keeps its bytes until they're verified.
+fn part_file(models_root: &Path, entry: &ModelEntry) -> PathBuf {
+    models_root.join(".downloads").join(format!("{}.part", entry.id))
+}
+
+/// Bytes of `entry`'s archive that a cancelled or broken download left under
+/// `models_root`; the next [`Downloader::install`] resumes from there.
+pub fn partial_bytes(models_root: &Path, entry: &ModelEntry) -> u64 {
+    std::fs::metadata(part_file(models_root, entry)).map_or(0, |m| m.len())
+}
+
+/// Delete an installed model, and any partial download of it.
+pub fn uninstall(models_root: &Path, entry: &ModelEntry) -> Result<()> {
+    let dir = entry.install_dir(models_root);
+    if dir.exists() {
+        std::fs::remove_dir_all(dir)?;
+    }
+    match std::fs::remove_file(part_file(models_root, entry)) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+        _ => Ok(()),
     }
 }
 

@@ -46,13 +46,13 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import dev.bolo.ffi.Bolo
 import dev.bolo.ffi.BoloListener
-import dev.bolo.ffi.BoloPaths
 import dev.bolo.ffi.BoloSettings
 import dev.bolo.ffi.Dictation
 import dev.bolo.ffi.ErrorKind
 import dev.bolo.ffi.FfiException
 import dev.bolo.ffi.FieldKind
 import dev.bolo.ffi.Notice
+import dev.bolo.ffi.ModelDownload
 import dev.bolo.ffi.State
 import java.io.File
 import java.time.LocalDate
@@ -65,13 +65,15 @@ import java.util.Locale
  * itself is ticket 06.
  *
  * Bolo reads `settings.toml` from `filesDir` and its keys from [KeystoreSecretStore]
- * (ticket 04); the engine field writes the settings' engine chain. The bottom line is the
- * usage meter's today/30-day totals (ticket 08; the real Usage page is ticket 07).
+ * (ticket 04); the engine field writes the settings' engine chain. [ModelsPanel]
+ * downloads models (ticket 05). The bottom line is the usage meter's today/30-day
+ * totals (ticket 08; the real Usage page is ticket 07).
  */
 class MainActivity : ComponentActivity() {
     private val main = Handler(Looper.getMainLooper())
     private var bolo: Bolo? = null
     private val recorder = Recorder { frame -> bolo?.pushAudio(frame) }
+    private val models = ModelsPanel(this) { open() }
 
     private var engine by mutableStateOf("local:moonshine-tiny")
     private var status by mutableStateOf("Hold the button and speak.")
@@ -115,6 +117,7 @@ class MainActivity : ComponentActivity() {
                 Notice.OFFLINE -> "Offline, using the local model"
             }
         }
+        override fun onDownload(download: ModelDownload) = post { models.onDownload(download) }
     }
 
     /** The usage meter's line: what today and the last 30 days cost, per provider. */
@@ -147,6 +150,7 @@ class MainActivity : ComponentActivity() {
         }
         setContent { DebugScreen() }
         debugIntent(intent)
+        models.refresh()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -159,6 +163,19 @@ class MainActivity : ComponentActivity() {
         importKeys(intent)
         intent?.takeIf { it.hasExtra("polish") }?.let { setPolish(it.getBooleanExtra("polish", false)) }
         replayFrom(intent)
+        downloadFrom(intent)
+    }
+
+    /**
+     * Debuggable builds only: download a model through the foreground service, as the
+     * Download button does but without the metered-network question:
+     * `adb shell am start -n dev.bolo.android/.MainActivity --es download moonshine-tiny`.
+     */
+    private fun downloadFrom(intent: Intent?) {
+        val id = intent?.getStringExtra("download") ?: return
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return
+        Log.i(TAG, "debug download of $id")
+        ModelDownloadService.start(this, id)
     }
 
     /**
@@ -263,23 +280,18 @@ class MainActivity : ComponentActivity() {
         bolo = null
     }
 
+    /** The one `Bolo`, opened on first use. */
+    private fun open(): Bolo = bolo ?: Bolo(BoloFiles.paths(this), KeystoreSecretStore(this), listener).also {
+        bolo = it
+        refreshUsage()
+    }
+
     /**
-     * The one `Bolo`, opened on first use, with `spec` as its engine chain: comma-separated
-     * specs, primary first (`deepgram-stream,local:moonshine-tiny`).
+     * The `Bolo`, with `spec` as its engine chain: comma-separated specs, primary first
+     * (`deepgram-stream,local:moonshine-tiny`).
      */
     private fun engineFor(spec: String): Bolo {
-        val b = bolo ?: Bolo(
-            BoloPaths(
-                configDir = filesDir.absolutePath,
-                dataDir = filesDir.absolutePath,
-                modelsDir = File(noBackupFilesDir, "models").apply { mkdirs() }.absolutePath,
-            ),
-            KeystoreSecretStore(this),
-            listener,
-        ).also {
-            bolo = it
-            refreshUsage()
-        }
+        val b = open()
         val engines = spec.split(',').map { it.trim() }.filter { it.isNotEmpty() }
         val settings = b.settings()
         if (settings.engines != engines) b.saveSettings(settings.copy(engines = engines))
@@ -337,6 +349,7 @@ class MainActivity : ComponentActivity() {
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    models.Content()
                     Text(status, style = MaterialTheme.typography.bodyMedium)
                     Text(
                         text.ifEmpty { "…" },

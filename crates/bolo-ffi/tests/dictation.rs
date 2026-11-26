@@ -12,7 +12,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use bolo_ffi::{
     AppProfileEntry, Bolo, BoloListener, BoloPaths, BoloSettings, Dictation, ErrorKind, FfiError, FieldKind, Format,
-    Language, Notice, SecretError, SecretStore, State,
+    Language, ModelDownload, Notice, SecretError, SecretStore, State,
 };
 use bolo_stt::fallback::FallbackEngine;
 use bolo_stt::{Billed, SttEngine, SttError, SttOptions, Transcript};
@@ -126,6 +126,7 @@ impl BoloListener for Recorder {
     fn on_notice(&self, notice: Notice) {
         self.send(Event::Notice(notice));
     }
+    fn on_download(&self, _download: ModelDownload) {}
 }
 
 fn paths(dir: &Path) -> BoloPaths {
