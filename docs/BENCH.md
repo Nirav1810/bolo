@@ -92,13 +92,13 @@ Responses are cached in `bench-cache/<engine>/<sha256(audio ‖ options)>.json` 
 2. **Sarvam `mode=translit` on `saaras:v4`.** The docs contradict each other. The first bench run will show whether the output is Roman.
 3. **RSS isolation.** All engines run in one process, sequentially, and each local model is released after its pass. Allocator retention can inflate later engines' baselines. If the numbers look odd, run one engine per invocation.
 4. **Streaming partials** are measured for cost (RTF) but not for quality. `bolo replay` measures release → text through the live engine (§7, §8), but not time to first partial.
-5. **Not yet benchmarkable:** `qwen3-asr-hinglish` (Srota) and `whisper-base-hinglish` (Oriserve Swift). Neither has a sherpa-onnx export, and we will export both ourselves (`status: needs-export` in the manifest).
+5. **Not yet benchmarkable:** `qwen3-asr-hinglish` (Srota) has no sherpa-onnx export (`status: needs-export` in the manifest). `whisper-base-hinglish` (Oriserve Swift) was exported and hosted in M5 (§22).
 
 ## 6. Decision rule (proposed)
 
 - **Desktop default (local)**: the most accurate Hinglish engine with p50 < 500 ms and peak RSS < 1.5 GB.
 - **Android ≥ 6 GB**: same rule, with p50 < 1.2 s on a mid-range phone (M5 re-runs the bench on-device).
-- **Android 3–4 GB**: Moonshine-tiny for English and Whisper-base-Hinglish (once exported) for Hinglish.
+- **Android 3–4 GB**: Moonshine-tiny for English and Whisper-base-Hinglish for Hinglish (§22).
 - **Cloud default suggestion**: the lowest Hinglish WER among providers with p95 < 1.2 s.
 
 ## 7. Auto language mode (ADR-0014)
@@ -486,3 +486,39 @@ The installed apps' working sets are tiny because Windows had trimmed them after
 - **Most of what's left is the pill's WebView2,** which the always-on idle button needs (spec). That's the browser process (about 36 MB), the GPU process (73–98 MB), the network and storage utilities (about 20 MB), crashpad (4 MB) and one renderer (24–27 MB). The GPU process keeps 10–25 MB of the closed window's memory. With the settings window never opened, the floor is about 158 MB.
 - **The GPU process is the biggest single item.** A one-off run with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--disable-gpu ..."` cut it from 73 MB to 12 MB, and the tree to **99 MB**. It isn't shipped. The pill is a transparent, animated, always-on-top window, and with software compositing a person has to check how it looks and how much CPU it takes while dictating. It's a candidate follow-up.
 - Each open after a close now starts a webview again. That wasn't timed. It's the same path the first open always took.
+
+## 22. Whisper-base Hinglish for low-tier phones (M5 ticket 02)
+
+`whisper-base-hinglish` is [Oriserve/Whisper-Hindi2Hinglish-Swift](https://huggingface.co/Oriserve/Whisper-Hindi2Hinglish-Swift), a Whisper-base fine-tune that writes Hinglish in Roman script. `scripts/export-whisper-hinglish.py` converts it to sherpa-onnx's Whisper layout and int8-quantizes it (steps in `scripts/export-whisper-hinglish.md`). It's hosted on this repo's `models-whisper-base-hinglish-v1` release: a 136 MB download, 161 MB unpacked. sherpa-onnx 2.0.1 loads it with no code change, `bolo download` installs it from the release, and every output on the 40 clips is in Latin script.
+
+It's the Android 3–4 GB recommendation for Hinglish and Auto. The other options at that tier are Moonshine-tiny (English only) and, on a ≥ 6 GB phone, Nemotron. All numbers are from this Windows desktop (2026-11-26, 40 clips, default 4 threads, other apps open), not a phone. Ticket 09 measures on the emulator.
+
+**Through the live engine (`bolo replay --speed 50`, Layer 1):**
+
+| engine | mode | WER en | fmt WER en | WER hinglish | fmt WER hinglish |
+|---|---|---|---|---|---|
+| `local:whisper-base-hinglish` | Auto | 14.5% | 11.3% | **26.8%** | **30.0%** |
+| `local:moonshine-tiny` | English | 40.1%* | 39.5%* | 94.6% | 97.2% |
+| `local:nemotron-stream` | Auto | 10.3% | 9.0% | 27.7% | 30.9% |
+
+\* Moonshine drops the first words of most English clips at 50× ("You." for "Sounds good, see you tomorrow."), the batch-engine replay artifact §19 saw with Deepgram. At real time (`--speed 1`, `en/` only) it reads 24.0% / 23.4%. Whisper is unaffected: its 40 outputs at real time match the 50× run, and so do its WERs.
+
+**`bolo run --runs 3` (whole-clip decode, one engine per process):**
+
+| engine | WER en | fmt WER en | WER hinglish | fmt WER hinglish | p50 / p95 ms | RTF | load ms | peak RSS MB | download MB |
+|---|---|---|---|---|---|---|---|---|---|
+| `local:whisper-base-hinglish` | 16.0% | 12.9% | 30.8% | 30.4% | 645 / 1186 | 0.133 | 1016 | 419 | 136 |
+| `local:moonshine-tiny` | 16.8% | 17.2% | 95.1% | 98.2% | 117 / 174 | 0.022 | 1370 | 132 | 30 |
+| `local:nemotron-stream` | 10.3% | 9.0% | 31.2% | 34.6% | 259 / 456 | 0.051† | 4188 | 750 | 475 |
+
+RTF is total latency over total audio (217 s). † Nemotron's latency is finish-only: the clip is streamed in first, so its RTF isn't comparable with the batch engines'.
+
+**Real time (`bolo replay --speed 1`):** whisper-base-hinglish's release → text is p50 668 ms, p95 1108 ms over the 40 clips. There's no partial text while speaking, because it's a batch model. One of three real-time runs stopped silently after 34 clips, with no error message and no crash entry in the Windows event log. The next two runs (the 20 Hinglish clips, then all 40) finished cleanly, so the cause is unknown.
+
+**Findings.**
+- **Hinglish accuracy matches Nemotron** (26.8% vs 27.7% through the engine) at about half of Nemotron's RAM (419 vs 750 MB peak) and under a third of its download. It's the only low-tier model that understands Hinglish at all. Moonshine is at 95%.
+- **English is worse than Nemotron but beats Moonshine on formatted text** (12.9% vs 17.2% fmt WER in `bolo run`). Its raw English WER is close to Moonshine's (16.0% vs 16.8%). So Auto on a low-tier phone can use this model alone, as the spec says (Auto = the Hinglish model).
+- **Its romanization has its own style.** "vaala", "zyaada", "achchha", "lie", "nahin" score as errors against references written as "wala", "zyada", "accha", "liye", "nahi". A few `aliases.tsv` entries would lower the Hinglish WER without changing the output. They weren't added here, so the numbers stay comparable with earlier sections.
+- **Whisper failure modes on this set:** one clip hallucinated "Welcome to" in `bolo run` (hinglish/04, 3.7 s) but came out partly right through the engine. en/06's "$1,250" came out as a long run of zeros. It's about 5× slower than Moonshine (RTF 0.13), so on a phone a 10 s dictation may take a few seconds after release. Ticket 09 measures that.
+- **Language option.** `whisper_language` is `en`, as on the model card. The fine-tune was trained to write Hinglish under the `en` token. Auto-detect (`""`) gave exactly the same WER on all 40 clips, and `en` skips the detection pass.
+- **`min_ram_mb` went from 350 to 800.** The measured peak (419 MB) was above the old value. 800 is the same ~1.9× headroom as Moonshine (132 → 250) and Nemotron (750 → 1400). A 3 GB phone still qualifies, because the rule is ≤ half of RAM.

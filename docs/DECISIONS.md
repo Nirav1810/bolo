@@ -23,7 +23,7 @@ ADR-style log: newest at the bottom. Each entry records deviations from the orig
 | Parakeet TDT 0.6B v3 is English-only | v3 covers **25 European languages** and has no Hindi. v2 is the English-only model, with lower English WER. | Kept `parakeet-v3` and added `parakeet-v2-en` |
 | Qwen3-ASR Srota Hinglish fine-tune "(ONNX)" | Real (`moorlee/qwen3-asr-0.6b-hinglish`, Apache-2.0), but **safetensors only**: no ONNX anywhere. Output mixes Devanagari and Latin. | `status: needs-export`. Added the base `qwen3-asr` (sherpa export exists) as a stand-in. |
 | Moonshine v2 Tiny int8 | Exists as "quantized" `.ort` (MIT, English). Non-English Moonshine models are **non-commercial**. | `moonshine-tiny`; never add non-English Moonshine |
-| Whisper-base Hinglish fine-tune | `Oriserve/Whisper-Hindi2Hinglish-Swift` (Apache-2.0) emits **Roman** Hinglish, which is ideal, but no sherpa-format export exists (the HF ONNX copies use the optimum layout). | `status: needs-export` via HF → OpenAI `.pt` → sherpa `export-onnx.py` |
+| Whisper-base Hinglish fine-tune | `Oriserve/Whisper-Hindi2Hinglish-Swift` (Apache-2.0) emits **Roman** Hinglish, which is ideal, but no sherpa-format export exists (the HF ONNX copies use the optimum layout). | Exported in M5 ticket 02 via HF → OpenAI `.pt` → sherpa `export-onnx.py` (`scripts/export-whisper-hinglish.py`), int8, hosted on this repo's `models-whisper-base-hinglish-v1` release: `status: available` since 2026-11-26 (BENCH.md §22) |
 | (VAD) | Silero VAD (MIT) is in the `asr-models` release. TEN-VAD is Apache-2.0 **plus non-compete terms**. | Silero only; TEN-VAD rejected |
 
 Licenses of all shipped-by-download models allow redistribution. We still download from upstream URLs and mirror only our own exports.

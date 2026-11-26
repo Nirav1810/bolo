@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "manifest_version": "2026.11.09",
+  "manifest_version": "2026.11.26",
   "sherpa_onnx_version": "2.0.1",
   "verified_at": "2026-11-09",
   "notes": "Sizes and sha256 from the GitHub release API `digest` field (k2-fsa/sherpa-onnx, tag asr-models) and HF tree API. sherpa re-uploads packages occasionally (e.g. Parakeet on 2026-11-07); a hash mismatch means re-verify, never skip verification. Models are never bundled; they are downloaded on demand.",
@@ -237,8 +237,9 @@
       "streaming": false,
       "languages": ["en", "hi", "auto"],
       "hindi_script": "roman",
-      "status": "needs-export",
+      "status": "available",
       "min_sherpa_onnx": "2.0.0",
+      "verified_at": "2026-11-26",
       "license": {
         "id": "Apache-2.0",
         "redistributable": true,
@@ -253,13 +254,19 @@
         "source_sha256": "235b2a5dfee28f64da3659954f8f644decc82dada8a07971b9a2246ded9594cb",
         "source_size_bytes": 290403936
       },
-      "download": null,
+      "download": {
+        "url": "https://github.com/Nirav1810/bolo/releases/download/models-whisper-base-hinglish-v1/sherpa-onnx-whisper-base-hinglish-swift-int8.tar.bz2",
+        "sha256": "db12583cbc87847842778e17f9193bcbd91d7eb050f9a1c6ac01440453895176",
+        "size_bytes": 135755362,
+        "archive": "tar.bz2",
+        "root_dir": "sherpa-onnx-whisper-base-hinglish-swift-int8"
+      },
       "files": { "encoder": "base-encoder.int8.onnx", "decoder": "base-decoder.int8.onnx", "tokens": "base-tokens.txt" },
-      "options": { "whisper_language": "", "whisper_task": "transcribe" },
-      "unpacked_size_bytes": null,
-      "min_ram_mb": 350,
+      "options": { "whisper_language": "en", "whisper_task": "transcribe" },
+      "unpacked_size_bytes": 160592756,
+      "min_ram_mb": 800,
       "tiers": ["android-low", "desktop"],
-      "notes": "Outputs Roman-script Hinglish natively, which is exactly what we want. Existing HF ONNX copies use the optimum/transformers.js layout, which sherpa can't load. Export path: HF->OpenAI .pt (the repo's convert_hf2openai), then sherpa scripts/whisper/export-onnx.py patched to load a local .pt, reusing the multilingual base-tokens.txt. Then int8 and host on GitHub Releases with NOTICE."
+      "notes": "Outputs Roman-script Hinglish natively, which is exactly what we want. Existing HF ONNX copies use the optimum/transformers.js layout, which sherpa can't load, so we export and host it ourselves: scripts/export-whisper-hinglish.py (HF -> OpenAI .pt via the repo's convert_hf2openai, sherpa v2.0.1 scripts/whisper/export-onnx.py patched to load the local .pt, int8), hosted on this repo's models-whisper-base-hinglish-v1 release with LICENSE and NOTICE. whisper_language is `en`, as on the model card: the fine-tune writes Hinglish under the en token, and auto-detect scored the same on the 40 clips (BENCH.md §22)."
     },
     {
       "id": "silero-vad",
