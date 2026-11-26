@@ -2,7 +2,7 @@
 
 A Kotlin + Jetpack Compose voice keyboard (`InputMethodService`, ticket 06) that loads `libbolo_ffi.so` through UniFFI (ADR-0023). It targets minSdk 28 and ships arm64-v8a, plus x86_64 in debug builds for the emulator. The plan is in `.scratch/m5-android/`.
 
-Today the app is a debug screen. Hold the button to dictate with the engine, or replay a WAV file. Since ticket 04, `Bolo` reads `filesDir/settings.toml` (the desktop's schema), records history in `filesDir/history.sqlite`, and keeps API keys in `KeystoreSecretStore` (AES-GCM, key in the Android Keystore). The engine field writes the settings' engine chain (comma-separated, primary first: `deepgram-stream,local:moonshine-tiny`). Since ticket 08, the cloud engines (Deepgram batch and stream, Groq, Sarvam) and Claude polish work, the bottom line shows the usage meter, and the status line shows "Offline, using the local model" when the local model stands in for a cloud engine.
+Today the app is a debug screen. Hold the button to dictate with the engine, or replay a WAV file. Since ticket 04, `Bolo` reads `filesDir/settings.toml` (the desktop's schema), records history in `filesDir/history.sqlite`, and keeps API keys in `KeystoreSecretStore` (AES-GCM, key in the Android Keystore). The engine field writes the settings' engine chain (comma-separated, primary first: `deepgram-stream,local:moonshine-tiny`). Since ticket 08, the cloud engines (Deepgram batch and stream, Groq, Sarvam) and Claude polish work, the bottom line shows the usage meter, and the status line shows "Offline, using the local model" when the local model stands in for a cloud engine. Since ticket 05, its Models section downloads models through a foreground service.
 
 ## Build
 
@@ -61,10 +61,10 @@ Bolo keeps models in `noBackupFilesDir/models/<model-id>/`. The debug screen's M
 
 ```sh
 adb shell am start -n dev.bolo.android/.MainActivity --es download moonshine-tiny
-adb logcat -s bolo:*      # ... download moonshine-tiny: Downloaded in 9.6 s
+adb logcat -s bolo:*      # ... download moonshine-tiny: Downloaded in 98.7 s
 ```
 
-To skip the network, push models from a desktop install instead:
+The download service calls `Native.init` itself before it opens its `Bolo`. To skip the network, push models from a desktop install instead:
 
 ```sh
 adb push %LOCALAPPDATA%\Bolo\data\models\moonshine-tiny /data/local/tmp/models/

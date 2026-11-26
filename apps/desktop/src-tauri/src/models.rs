@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use bolo_models::{DownloadProgress, Downloader, Manifest, ModelEntry, Phase, Platform, Tier};
 pub use bolo_models::{ModelView, VAD_MODEL};
+use serde::Serialize;
 
 /// The ASR models a Windows PC can download, recommended first, then by size.
 pub fn views(manifest: &Manifest, root: &Path, recommended: Option<&str>) -> Vec<ModelView> {
