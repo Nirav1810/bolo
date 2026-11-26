@@ -1,5 +1,6 @@
-//! API keys in the OS credential store: Windows Credential Manager, service `bolo`, one
-//! entry per provider (the provider name is the entry's user name).
+//! API keys in a credential store, service `bolo`, one entry per provider (the provider
+//! name is the entry's user name): Windows Credential Manager on the desktop, the
+//! Keystore-backed `SecretStore` that `bolo-ffi` wraps on Android (ADR-0023).
 //!
 //! Keys are loaded into [`ApiKeys`] for the engine. They never reach the settings file,
 //! a log line or a `Debug` string; errors carry only the store's own message.
@@ -48,6 +49,11 @@ impl Secrets {
             }
         }
         Ok(Self { store, keys })
+    }
+
+    /// The store the keys come from (to read them again after another process wrote).
+    pub fn store(&self) -> Arc<CredentialStore> {
+        self.store.clone()
     }
 
     /// The keys for [`EngineConfig::api_keys`](bolo_core::EngineConfig::api_keys).

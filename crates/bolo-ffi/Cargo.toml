@@ -24,7 +24,9 @@ bindgen = ["uniffi/cli"]
 
 [dependencies]
 bolo-core = { workspace = true }
+bolo-store = { workspace = true }
 bolo-stt = { workspace = true }
+keyring-core = "1"
 uniffi = "0.33"
 thiserror = { workspace = true }
 tracing = { workspace = true }
@@ -35,3 +37,5 @@ tracing-android = "0.2"
 
 [dev-dependencies]
 async-trait = { workspace = true }
+tempfile = "3"
+toml = { workspace = true }
