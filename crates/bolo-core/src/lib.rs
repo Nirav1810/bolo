@@ -40,7 +40,9 @@ mod polish;
 mod segment;
 mod worker;
 
-pub use audio::{AudioFactory, AudioSource, MicSource, WavSource};
+#[cfg(feature = "capture")]
+pub use audio::MicSource;
+pub use audio::{AudioFactory, AudioSource, WavSource};
 pub use bolo_format::snippets::Snippet;
 pub use bolo_stt::{HinglishScript, Language};
 pub use build::{BuiltStt, build_one, build_stt};
@@ -305,6 +307,7 @@ impl fmt::Debug for Engine {
 
 impl Engine {
     /// Engine on the default microphone.
+    #[cfg(feature = "capture")]
     pub fn new(config: EngineConfig, events: Box<dyn EngineEvents>) -> Result<Self, BoloError> {
         Self::with_audio_source(config, events, MicSource::factory())
     }

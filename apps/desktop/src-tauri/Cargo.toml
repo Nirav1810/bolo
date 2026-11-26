@@ -21,7 +21,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 bolo-audio = { workspace = true }
-bolo-core = { workspace = true }
+bolo-core = { workspace = true, features = ["capture"] }
 bolo-models = { workspace = true }
 bolo-store = { workspace = true }
 bolo-stt = { workspace = true }
